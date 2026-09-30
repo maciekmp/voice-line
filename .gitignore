@@ -1,0 +1,4 @@
+.chatgpt-button/
+.chatgpt-button-session.json
+.env
+*.wav
