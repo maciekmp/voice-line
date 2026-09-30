@@ -55,32 +55,38 @@ async function processSpeech(token: number, releasedAt: number) {
   try {
     wav = await recorder.stop();
     if (token !== generation) return;
-    logTime('Recording finalization', releasedAt);
+    const recordingDoneAt = performance.now();
     if (debug) console.log(`[audio] ${recorder.lastDurationSeconds.toFixed(2)} s, RMS ${recorder.lastRmsDbfs.toFixed(1)} dBFS, peak ${recorder.lastPeakDbfs.toFixed(1)} dBFS`);
     console.log('Transcribing...');
-    const sttStartedAt = performance.now();
     const raw = await stt.transcribe(wav, controller.signal);
-    logTime('STT', sttStartedAt);
+    const sttDoneAt = performance.now();
     if (!raw || !raw.replace(/\*[^*]+\*/g, '').trim()) { console.log('No intelligible speech recognized. Check the microphone or save the WAV with SAVE_AUDIO=1.'); return; }
     if (debug) console.log(`\n[Raw transcription]\n${raw}\n`);
     console.log('Preparing answer...');
-    const codexStartedAt = performance.now();
     const { prompt, answer, startupMs, turnMs } = await codex.respond(raw, controller.signal);
     if (token !== generation) return;
-    logTime('Codex (cleanup + answer)', codexStartedAt);
-    logMilliseconds('Codex: request accepted', startupMs);
-    logMilliseconds('Codex: turn to final answer', turnMs);
+    const codexDoneAt = performance.now();
     console.log(`\n[Question]\n${prompt}\n`);
     if (debug) console.log(`Thread: ${codex.currentThreadId}`);
     console.log(`\n[Answer]\n${answer}\n`);
-    const ttsStartedAt = performance.now();
-    logTime('Key release to TTS call', releasedAt, ttsStartedAt);
     console.log('Speaking...');
-    await speaker.speak(answer, controller.signal, () => {
-      if (token === generation) logTime('TTS startup (before speech synthesis)', ttsStartedAt);
+    let playbackStartedAt: number | undefined;
+    const playbackWasReported = await speaker.speak(answer, controller.signal, () => {
+      if (token !== generation || playbackStartedAt !== undefined) return;
+      playbackStartedAt = performance.now();
+      if (!debug) return;
+      console.log();
+      logTime('Recording end to playback start (SAPI)', releasedAt, playbackStartedAt);
+      logTime('Recording finalization', releasedAt, recordingDoneAt);
+      logTime('STT', recordingDoneAt, sttDoneAt);
+      logTime('Codex (cleanup + answer)', sttDoneAt, codexDoneAt);
+      logMilliseconds('  Codex: request accepted', startupMs);
+      logMilliseconds('  Codex: turn to final answer', turnMs);
+      logTime('TTS startup to playback', codexDoneAt, playbackStartedAt);
     });
     if (token === generation) {
-      logTime('TTS startup and full playback', ttsStartedAt);
+      if (debug && !playbackWasReported) console.log('[time] Playback start unavailable: SAPI did not report an active audio queue.');
+      if (playbackStartedAt !== undefined) logTime('Playback duration after SAPI start', playbackStartedAt);
       logTime('Full cycle after key release', releasedAt);
       console.log('Ready.');
     }
@@ -121,10 +127,10 @@ function handle(event: KeyEvent) {
 const keyboard = startKeyboard(handle, message => console.error(message));
 if (debugKeys) console.log('Keyboard events (Ctrl+C exits). Hold Copilot and note its vk.');
 else {
-  console.log(`Starting microphone, Whisper${process.env.WHISPER_THREADS ? ` (${process.env.WHISPER_THREADS} threads)` : ''}, and Codex${process.env.CODEX_MODEL ? ` (${process.env.CODEX_MODEL})` : ''}...`);
-  void Promise.all([recorder.startCapture(), stt.start(), codex.start()]).then(() => {
+  console.log(`Starting microphone, Whisper${process.env.WHISPER_THREADS ? ` (${process.env.WHISPER_THREADS} threads)` : ''}, Codex${process.env.CODEX_MODEL ? ` (${process.env.CODEX_MODEL})` : ''}, and TTS...`);
+  void Promise.all([recorder.startCapture(), stt.start(), codex.start(), speaker.start()]).then(() => {
     servicesReady = true;
     console.log(`Ready. Hold Copilot (vk=${key}); Ctrl+Shift+N resets; Ctrl+C exits.`);
   }).catch(error => console.error(error));
 }
-process.on('SIGINT', () => { interrupt(); recorder.shutdown(); stt.stop(); codex.stop(); keyboard.stop(); process.exit(0); });
+process.on('SIGINT', () => { interrupt(); recorder.shutdown(); stt.stop(); codex.stop(); speaker.shutdown(); keyboard.stop(); process.exit(0); });

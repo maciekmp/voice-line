@@ -8,7 +8,8 @@
     "debug": "node --env-file=.env --experimental-strip-types src/main.ts --debug",
     "keys": "node --experimental-strip-types src/main.ts --debug-keys",
     "devices": "ffmpeg -hide_banner -list_devices true -f dshow -i dummy",
-    "bench-stt": "node --env-file=.env --experimental-strip-types scripts/bench-stt.ts"
+    "bench-stt": "node --env-file=.env --experimental-strip-types scripts/bench-stt.ts",
+    "test:speaker": "node --experimental-strip-types scripts/test-speaker.ts"
   },
   "engines": { "node": ">=22.18.0" }
 }

@@ -1,6 +1,5 @@
 $ErrorActionPreference = 'Stop'
 [Console]::InputEncoding = [System.Text.Encoding]::UTF8
-$text = [Console]::In.ReadToEnd()
 $voice = New-Object -ComObject SAPI.SpVoice
 $voices = @($voice.GetVoices())
 if ($env:CHATGPT_BUTTON_VOICE) {
@@ -16,4 +15,19 @@ if ($rate -lt -10 -or $rate -gt 10) { throw 'CHATGPT_BUTTON_TTS_RATE must be bet
 $voice.Rate = $rate
 [Console]::Out.WriteLine('READY')
 [Console]::Out.Flush()
-[void]$voice.Speak($text, 0)
+while ($null -ne ($line = [Console]::In.ReadLine())) {
+  $request = ConvertFrom-Json -InputObject $line
+  [void]$voice.Speak([string]$request.text, 1) # SVSFlagsAsync
+  $playbackReported = $false
+  while ($true) {
+    # SRSEIsSpeaking (2): SAPI has claimed the audio queue for this voice.
+    if (-not $playbackReported -and $voice.Status.RunningState -eq 2) {
+      [Console]::Out.WriteLine('PLAYBACK_STARTED')
+      [Console]::Out.Flush()
+      $playbackReported = $true
+    }
+    if ($voice.WaitUntilDone(10)) { break }
+  }
+  [Console]::Out.WriteLine('DONE')
+  [Console]::Out.Flush()
+}
