@@ -7,6 +7,7 @@ import { WhisperTranscriber } from './stt/transcriber.ts';
 import { CodexClient } from './codex.ts';
 import { CodexAppServer } from './codex-app-server.ts';
 import { Speaker } from './speaker.ts';
+import { PiperSpeaker } from './piper-speaker.ts';
 
 const debugKeys = process.argv.includes('--debug-keys');
 const debug = process.argv.includes('--debug');
@@ -16,7 +17,13 @@ const device = process.env.MIC_DEVICE ?? '';
 const model = process.env.WHISPER_MODEL ?? '';
 const binary = process.env.WHISPER_BIN ?? 'whisper-cli.exe';
 const language = process.env.STT_LANGUAGE ?? 'pl';
+const ttsMode = process.env.TTS_MODE ?? 'sapi';
 const cwd = resolve('.');
+
+if (!debugKeys && ttsMode !== 'sapi' && ttsMode !== 'piper') {
+  console.error('TTS_MODE must be sapi or piper.');
+  process.exit(1);
+}
 
 if (!debugKeys && (!device || !model)) {
   console.error('Set MIC_DEVICE and WHISPER_MODEL. Run npm run devices and npm run keys first.');
@@ -26,7 +33,7 @@ if (!debugKeys && (!device || !model)) {
 const recorder = new Recorder(device, tmpdir());
 const stt = new WhisperTranscriber(binary, model, language);
 const codex = process.env.CODEX_MODE === 'cli' ? new CodexClient(cwd) : new CodexAppServer(cwd);
-const speaker = new Speaker();
+const speaker = ttsMode === 'piper' ? new PiperSpeaker() : new Speaker();
 let held = false, generation = 0, current: AbortController | null = null;
 let recordingStartedAt = 0;
 let servicesReady = false;
@@ -76,7 +83,7 @@ async function processSpeech(token: number, releasedAt: number) {
       playbackStartedAt = performance.now();
       if (!debug) return;
       console.log();
-      logTime('Recording end to playback start (SAPI)', releasedAt, playbackStartedAt);
+      logTime(`Recording end to playback start (${ttsMode === 'piper' ? 'FFplay' : 'SAPI'})`, releasedAt, playbackStartedAt);
       logTime('Recording finalization', releasedAt, recordingDoneAt);
       logTime('STT', recordingDoneAt, sttDoneAt);
       logTime('Codex (cleanup + answer)', sttDoneAt, codexDoneAt);
@@ -85,8 +92,8 @@ async function processSpeech(token: number, releasedAt: number) {
       logTime('TTS startup to playback', codexDoneAt, playbackStartedAt);
     });
     if (token === generation) {
-      if (debug && !playbackWasReported) console.log('[time] Playback start unavailable: SAPI did not report an active audio queue.');
-      if (playbackStartedAt !== undefined) logTime('Playback duration after SAPI start', playbackStartedAt);
+      if (debug && !playbackWasReported) console.log('[time] Playback start unavailable: audio player did not report a running audio clock.');
+      if (playbackStartedAt !== undefined) logTime('Playback duration after player start', playbackStartedAt);
       logTime('Full cycle after key release', releasedAt);
       console.log('Ready.');
     }
@@ -108,7 +115,7 @@ function handle(event: KeyEvent) {
     interrupt(); recorder.cancel(); held = false; codex.reset(); console.log('New conversation.'); return;
   }
   if (event.vk !== key) return;
-  if (!servicesReady) { if (event.event === 'down') console.log('Microphone, Whisper, and Codex are still starting.'); return; }
+  if (!servicesReady) { if (event.event === 'down') console.log('Microphone, Whisper, Codex, and TTS are still starting.'); return; }
   if (event.event === 'down' && !held) {
     held = true;
     interrupt();
@@ -127,7 +134,7 @@ function handle(event: KeyEvent) {
 const keyboard = startKeyboard(handle, message => console.error(message));
 if (debugKeys) console.log('Keyboard events (Ctrl+C exits). Hold Copilot and note its vk.');
 else {
-  console.log(`Starting microphone, Whisper${process.env.WHISPER_THREADS ? ` (${process.env.WHISPER_THREADS} threads)` : ''}, Codex${process.env.CODEX_MODEL ? ` (${process.env.CODEX_MODEL})` : ''}, and TTS...`);
+  console.log(`Starting microphone, Whisper${process.env.WHISPER_THREADS ? ` (${process.env.WHISPER_THREADS} threads)` : ''}, Codex${process.env.CODEX_MODEL ? ` (${process.env.CODEX_MODEL})` : ''}, and TTS (${ttsMode})...`);
   void Promise.all([recorder.startCapture(), stt.start(), codex.start(), speaker.start()]).then(() => {
     servicesReady = true;
     console.log(`Ready. Hold Copilot (vk=${key}); Ctrl+Shift+N resets; Ctrl+C exits.`);

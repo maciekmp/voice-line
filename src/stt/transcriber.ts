@@ -35,7 +35,7 @@ export class WhisperTranscriber {
     this.useCli = process.env.STT_MODE === 'cli';
     const configuredThreads = process.env.WHISPER_THREADS;
     const threads = configuredThreads === undefined ? null : Number(configuredThreads);
-    if (configuredThreads !== undefined && (!Number.isInteger(threads) || threads < 1)) throw new Error('WHISPER_THREADS must be a positive integer');
+    if (threads !== null && (!Number.isInteger(threads) || threads < 1)) throw new Error('WHISPER_THREADS must be a positive integer');
     this.threads = threads;
   }
 

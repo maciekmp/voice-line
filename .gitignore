@@ -2,3 +2,4 @@
 .chatgpt-button-session.json
 .env
 *.wav
+node_modules/
