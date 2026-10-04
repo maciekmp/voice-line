@@ -1,6 +1,6 @@
 # ChatGPT Button (Windows prototype)
 
-Hold the Copilot key to record. Release it to transcribe locally, clean the transcript with Codex CLI, ask Codex in a persistent conversation, and hear the reply through Windows SAPI or local Piper TTS. Press the key again while the reply is playing to interrupt it. No GUI, Electron, `OPENAI_API_KEY`, or paid API integration is used.
+Hold the Copilot key to record. Release it to transcribe locally, clean the transcript with Codex CLI, ask Codex in a persistent conversation, and hear the reply through Windows SAPI or local Piper TTS. Press the key again while the reply is playing to interrupt it. The voice loop runs in the terminal without an `OPENAI_API_KEY` or paid API integration. An optional Electron orb is available as a separate visual prototype.
 
 ## Requirements
 
@@ -47,6 +47,28 @@ PIPER_MODEL=C:\path\to\pl_PL-gosia-medium.onnx
 FFplay must be available on `PATH`, or set `FFPLAY_BIN` to its executable. The app pipes Piper's 16-bit mono PCM into FFplay as it is synthesized and reads the sample rate from the voice JSON. Piper runs locally without an API key. Switch back with `TTS_MODE=sapi`. On this machine, the trial files are under `.chatgpt-button/piper/` and are ignored by Git.
 
 To compare Whisper CPU thread counts on exactly the same speech, add `SAVE_AUDIO=1` to `.env`, record one question, and use the printed WAV path with `npm run bench-stt -- "C:\path\to\recording.wav"`. The script loads the configured model with 4 and 8 threads and transcribes the WAV twice per setting. Compare the second run and its text; model loading is shown separately. Set `WHISPER_THREADS` in `.env` to the faster value, then remove `SAVE_AUDIO=1` when finished. The current setting is `WHISPER_THREADS=8`: on one recorded Polish question, 8 threads took 5.08 s and 4.99 s versus 6.14 s and 6.30 s with 4 threads, with identical transcription. Results may vary with longer audio and system load.
+
+## Blue orb visual prototype
+
+Run `npm run preview:orb` and open http://127.0.0.1:4173 to preview a ChatGPT-inspired blue orb. The Polish demo switches between idle, listening, and speaking animations and includes a pause control. It is a standalone visual simulation with no microphone or voice-loop connection, no new dependencies, and reduced-motion support.
+
+Import `preview/voice-orb.js` as a browser module (keep `orb-renderer.js` beside it) and use `<voice-orb state="idle"></voice-orb>`. Set `state` to `idle`, `listening`, or `speaking`, add `paused` to freeze the animation, and customize size with `--orb-size`. WebGL renders flowing blue and white clouds using domain-warped noise, with simulated speech activity and smooth state changes. Reduced motion renders a still frame; unsupported WebGL or context loss displays a static CSS fallback. Animation stops while hidden or offscreen and GPU resources are released when the component is removed.
+
+The orb defaults to 45 CSS px with a 9 × 9 drawing buffer, independent of screen pixel density; the browser scales the interior smoothly. Set `render-scale="0.5"` or `render-scale="1"` for more detail (accepted range 0.1–1, default 0.2, maximum buffer size 256 × 256). Color transitions have asymmetric, varying widths, and speaking gradually blends them into wider flowing currents; activity is still simulated.
+
+Only the orb's color field is rendered at reduced resolution. The circular edge is clipped by CSS at the full display resolution, so lowering `render-scale` softens the interior without pixelating the outline.
+
+### Desktop orb (Electron)
+
+Run `npm run orb` to show the 45 px orb in a transparent, frameless, always-on-top window, 20 px from the bottom-right corner of the primary display's work area (above the taskbar). Its position updates when monitor/work-area settings change. The window does not take keyboard focus or appear in the taskbar.
+
+Right-click the orb or its system-tray icon to choose a test state, pause animation, or select **Zakończ** to exit. This remains a separate visual prototype; it is not connected to the Copilot recording/TTS loop. It loads local files and shares the same `voice-orb` component with the browser preview. The renderer is sandboxed with Node integration disabled and a narrow IPC bridge for visual settings.
+
+The desktop orb fades/slides in over 380 ms. Listening uses a slow breathing pulse; speaking combines a quicker pulse with irregular color mixing. **Zakończ** fades/slides the orb out over 240 ms before quitting; a timeout still allows quitting if the renderer stops responding. Reduced-motion settings disable these animations, and the pause control freezes the breathing/color animation. Restart `npm run orb` after changing the desktop files.
+
+`npm run test:orb` runs an Electron smoke check for positioning, transparent background, WebGL, display/buffer sizes, and state/pause IPC. It saves a capture to the ignored `.chatgpt-button/electron-orb.png` directory and closes the test window. The first Electron launch may download its official runtime binary.
+
+The desktop orb has its own profile and Chromium cache in `.chatgpt-button/electron/desktop/` (cache under `session/`). These paths are configured before Electron starts Chromium, avoiding the shared default Electron cache. Smoke tests use a separate profile per process so they can run while the desktop orb is open. After changing profile configuration, exit the orb via **Zakończ** and run `npm run orb` again.
 
 ## Type checking
 

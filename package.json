@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "orb": "node scripts/launch-orb.cjs",
+    "test:orb": "node scripts/launch-orb.cjs --smoke-test",
+    "preview:orb": "node --experimental-strip-types scripts/preview-orb.ts",
     "typecheck": "tsc --noEmit",
     "start": "node --env-file=.env --experimental-strip-types src/main.ts",
     "debug": "node --env-file=.env --experimental-strip-types src/main.ts --debug",
@@ -17,6 +20,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.20.5",
+    "electron": "^44.5.1",
     "typescript": "^7.0.2"
   }
 }

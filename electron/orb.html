@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pl">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+    <title>Kulka głosowa</title>
+    <style>
+      html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
+      body { display: grid; place-items: center; }
+      voice-orb {
+        --orb-size: 45px;
+        opacity: 0; transform: translateY(10px) scale(.72);
+        transition: opacity 320ms ease, transform 380ms cubic-bezier(.2, .7, .25, 1);
+      }
+      body[data-presence="visible"] voice-orb { opacity: 1; transform: translateY(0) scale(1); }
+      body[data-presence="leaving"] voice-orb {
+        opacity: 0; transform: translateY(12px) scale(.72); transition-duration: 240ms;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        voice-orb { transition: none; transform: none !important; }
+      }
+    </style>
+    <script type="module" src="./orb-ui.js"></script>
+  </head>
+  <body><voice-orb state="idle" title="Kulka głosowa — menu pod prawym przyciskiem myszy"></voice-orb></body>
+</html>
