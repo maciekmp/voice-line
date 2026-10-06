@@ -25,5 +25,6 @@ orb.addEventListener('transitionend', event => {
 window.orbDesktop.onSettings(({ state, paused }) => {
   orb.state = state;
   orb.toggleAttribute('paused', paused);
+  document.querySelector('button').toggleAttribute('data-paused', paused);
 });
 window.orbDesktop.ready();

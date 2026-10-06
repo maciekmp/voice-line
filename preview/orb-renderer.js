@@ -152,7 +152,8 @@ export class OrbRenderer {
     this.activity += (target - this.activity) * (1 - Math.exp(-delta * 5));
     this.speaking += ((this.host.state === 'speaking' ? 1 : 0) - this.speaking)
       * (1 - Math.exp(-delta * 3));
-    this.time += delta * (.9 + this.activity * 1.5);
+    // Speech accelerates the cloud flow fourfold, easing with the speaking blend.
+    this.time += delta * (.9 + this.activity * 1.5) * (1 + this.speaking * 3);
     const gl = this.gl;
     const size = this.renderSize;
     if (this.canvas.width !== size || this.canvas.height !== size) {

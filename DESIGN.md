@@ -67,7 +67,13 @@ the sole state indicator: panel text and orb tooltip name the current operation.
 
 The orb enters and exits gently; it is hidden during idle and startup and remains
 visible through transcription, answer generation and playback. Interrupted or
-failed cycles also hide it. Reduced motion suppresses transitions and breathing.
+failed cycles also hide it. While transcribing, thinking and preparing speech,
+the desktop orb has a rotating blue ring: clockwise at one turn per second during
+transcription, counterclockwise at two turns per second while preparing the answer
+and speech. Speech accelerates
+the shared cloud flow fourfold, with a smooth transition between speeds.
+Reduced motion suppresses transitions, breathing, ring rotation and cloud motion;
+the pause control freezes both the orb and its ring.
 The tray and window menus are native platform surfaces. Renderer Node access is
 disabled; a sandboxed preload exposes only explicit commands and state events.
 The desktop orb does not steal focus. The panel opens on initial launch and from

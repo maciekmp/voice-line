@@ -232,7 +232,51 @@ async function verify() {
   assert.equal(orbWindow.isVisible(), true, 'Recording reveals the orb');
   sendVoice({ state: 'thinking', question: 'Test <script>unsafe</script>' }); updateVisibility(true);
   assert.equal(orbWindow.isVisible(), true, 'Processing keeps the orb visible');
+  await orbWindow.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+  const ring = () => orbWindow.webContents.executeJavaScript(`(() => {
+    const style = getComputedStyle(document.querySelector('button'), '::after');
+    return { content: style.content, animation: style.animationName, paused: style.animationPlayState,
+      direction: style.animationDirection, duration: style.animationDuration,
+      border: style.borderTopStyle, visibility: style.visibility };
+  })()`);
+  for (const waitingState of ['transcribing', 'thinking', 'preparing-speech']) {
+    sendVoice({ state: waitingState });
+    const waitingRing = await ring();
+    assert.equal(waitingRing.animation, reducedMotion ? 'none' : 'wait-spin');
+    assert.equal(waitingRing.border, 'solid');
+    assert.equal(waitingRing.visibility, 'visible');
+  }
+  paused = true; sendSettings();
+  assert.equal((await ring()).paused, 'paused');
+  paused = false; sendSettings();
+  orbWindow.webContents.debugger.attach('1.3');
+  try {
+    await orbWindow.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
+    });
+    assert.equal((await ring()).animation, 'wait-spin');
+    for (const waitingState of ['transcribing', 'thinking', 'preparing-speech']) {
+      sendVoice({ state: waitingState });
+      const waitingRing = await ring();
+      assert.equal(waitingRing.direction, waitingState === 'transcribing' ? 'normal' : 'reverse');
+      assert.equal(waitingRing.duration, waitingState === 'transcribing' ? '1s' : '0.5s');
+    }
+    const rotation = () => orbWindow.webContents.executeJavaScript("getComputedStyle(document.querySelector('button'), '::after').transform");
+    const firstRotation = await rotation();
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.notEqual(await rotation(), firstRotation, 'Waiting ring actually rotates');
+    await orbWindow.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
+      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
+    });
+    assert.equal((await ring()).animation, 'none', 'Reduced motion stops the waiting ring');
+  } finally {
+    await orbWindow.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
+    orbWindow.webContents.debugger.detach();
+  }
+  const waitingOutput = path.join(__dirname, '..', '.chatgpt-button', 'electron-orb-waiting.png');
+  await fs.writeFile(waitingOutput, (await orbWindow.webContents.capturePage()).toPNG());
   sendVoice({ state: 'speaking', answer: 'Odpowiedź testowa.' }); updateVisibility(true);
+  assert.equal((await ring()).content, 'none', 'Playback removes the waiting ring');
   const panel = await panelWindow.webContents.executeJavaScript(`(() => ({
     status: document.querySelector('#status').textContent,
     question: document.querySelector('#question').textContent,
@@ -301,6 +345,9 @@ if (!smokeTest && !app.requestSingleInstanceLock()) {
         nodeIntegration: false, contextIsolation: true, sandbox: true,
       },
     });
+    // Keep the overlay above other windows, including full-screen applications.
+    orbWindow.setAlwaysOnTop(true, 'screen-saver');
+    orbWindow.on('show', () => orbWindow.setAlwaysOnTop(true, 'screen-saver'));
     orbWindow.setMenu(null);
     orbWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     orbWindow.webContents.on('will-navigate', event => event.preventDefault());
