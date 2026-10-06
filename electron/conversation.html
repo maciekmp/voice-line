@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>Voice Line — rozmowa</title>
+  <link rel="stylesheet" href="conversation.css">
+  <script type="module" src="conversation.js"></script>
+</head>
+<body>
+  <header><strong>Voice Line</strong><button id="hide" type="button">Ukryj do kulki</button></header>
+  <main>
+    <section class="presence" aria-labelledby="status">
+      <voice-orb state="idle" render-scale="0.5"></voice-orb>
+      <h1 id="status" role="status">Uruchamiam usługi…</h1>
+      <p id="hint">Przygotowuję mikrofon i rozmowę.</p>
+    </section>
+    <section id="error" class="error" role="alert" hidden></section>
+    <section id="transcript" aria-label="Ostatnie pytanie i odpowiedź" tabindex="0">
+      <div id="empty"><h2>O co chcesz zapytać?</h2><p>Przytrzymaj Copilot i mów. Zwolnij klawisz, aby otrzymać odpowiedź.</p><p>Możesz też użyć przycisku poniżej.</p></div>
+      <article id="question-block" hidden><h2>Twoje pytanie</h2><p id="question"></p></article>
+      <article id="answer-block" hidden><h2>Odpowiedź</h2><p id="answer"></p></article>
+    </section>
+  </main>
+  <footer>
+    <div class="actions"><button id="record" class="primary" type="button" disabled>Nagraj pytanie</button><button id="cancel" type="button" disabled>Przerwij</button></div>
+    <div class="secondary"><button id="reset" type="button" disabled>Nowa rozmowa</button><span>Copilot · przytrzymaj, aby mówić</span></div>
+    <p class="privacy">Mikrofon jest aktywny podczas pracy aplikacji. Nagranie jest zbierane tylko podczas nagrywania pytania.</p>
+  </footer>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # ChatGPT Button (Windows prototype)
 
-Hold the Copilot key to record. Release it to transcribe locally, clean the transcript with Codex CLI, ask Codex in a persistent conversation, and hear the reply through Windows SAPI or local Piper TTS. Press the key again while the reply is playing to interrupt it. The voice loop runs in the terminal without an `OPENAI_API_KEY` or paid API integration. An optional Electron orb is available as a separate visual prototype.
+Hold the Copilot key to record. Release it to transcribe locally, clean the transcript with Codex CLI, ask Codex in a persistent conversation, and hear the reply through Windows SAPI or local Piper TTS. Press the key again while the reply is playing to interrupt it. `npm start` runs the voice loop together with an Electron conversation panel and desktop orb, without an `OPENAI_API_KEY` or paid API integration. `npm run start:cli` runs the terminal-only loop.
 
 ## Requirements
 
@@ -22,7 +22,7 @@ Hold and release Copilot. Read the `vk` of its DOWN and UP events. F23 is `134`,
 npm.cmd run devices
 ```
 
-Set the exact DirectShow audio device name from the output. FFmpeg returns a nonzero code after listing devices; that is normal. Copy `.env.example` to `.env` and edit the four values. Node loads `.env` automatically when you run `npm start` or `npm run debug`; no shell exports are needed. `.env` is ignored by Git.
+Set the exact DirectShow audio device name from the output. FFmpeg returns a nonzero code after listing devices; that is normal. Copy `.env.example` to `.env` and edit the four values. Node loads `.env` automatically when you run `npm start` or `npm run debug`; no shell exports are needed. `.env` is ignored by Git. Missing or invalid setup is reported in the panel with a restart action; detailed service diagnostics remain in the terminal.
 
 ```powershell
 npm.cmd start
@@ -60,13 +60,27 @@ Only the orb's color field is rendered at reduced resolution. The circular edge 
 
 ### Desktop orb (Electron)
 
+`npm start` opens the conversation panel and starts the real voice services. The
+orb is hidden while idle and during startup. It appears when recording starts,
+stays visible through transcription, answer generation and speech, then fades
+away when playback finishes. Cancellation and errors also hide the orb. Click
+the tray icon to reopen the panel at any time. Click the visible orb to open it.
+The panel shows the latest question and answer, named processing states, errors,
+**Nagraj pytanie / Zakończ nagranie**, **Przerwij**, and **Nowa rozmowa**.
+Closing the panel hides it without stopping services; **Zakończ** in the tray
+menu quits and shuts down the microphone, keyboard hook and voice workers.
+The microphone remains active between questions, as in terminal mode; only
+question recording retains samples. The transcript is not stored in the renderer.
+
+The following `npm run orb` mode remains an isolated animation preview:
+
 Run `npm run orb` to show the 45 px orb in a transparent, frameless, always-on-top window, 20 px from the bottom-right corner of the primary display's work area (above the taskbar). Its position updates when monitor/work-area settings change. The window does not take keyboard focus or appear in the taskbar.
 
 Right-click the orb or its system-tray icon to choose a test state, pause animation, or select **Zakończ** to exit. This remains a separate visual prototype; it is not connected to the Copilot recording/TTS loop. It loads local files and shares the same `voice-orb` component with the browser preview. The renderer is sandboxed with Node integration disabled and a narrow IPC bridge for visual settings.
 
 The desktop orb fades/slides in over 380 ms. Listening uses a slow breathing pulse; speaking combines a quicker pulse with irregular color mixing. **Zakończ** fades/slides the orb out over 240 ms before quitting; a timeout still allows quitting if the renderer stops responding. Reduced-motion settings disable these animations, and the pause control freezes the breathing/color animation. Restart `npm run orb` after changing the desktop files.
 
-`npm run test:orb` runs an Electron smoke check for positioning, transparent background, WebGL, display/buffer sizes, and state/pause IPC. It saves a capture to the ignored `.chatgpt-button/electron-orb.png` directory and closes the test window. The first Electron launch may download its official runtime binary.
+`npm run test:orb` checks positioning, transparency, WebGL, state/pause IPC, conversation snapshots, safe text rendering, error recovery labels, reset, keyboard focus, narrow layout, and orb visibility through a simulated voice cycle. It runs without microphone or Codex calls and saves captures under the ignored `.chatgpt-button/` directory. The first Electron launch may download its official runtime binary.
 
 The desktop orb has its own profile and Chromium cache in `.chatgpt-button/electron/desktop/` (cache under `session/`). These paths are configured before Electron starts Chromium, avoiding the shared default Electron cache. Smoke tests use a separate profile per process so they can run while the desktop orb is open. After changing profile configuration, exit the orb via **Zakończ** and run `npm run orb` again.
 

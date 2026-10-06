@@ -11,6 +11,10 @@ import { PiperSpeaker } from './piper-speaker.ts';
 
 const debugKeys = process.argv.includes('--debug-keys');
 const debug = process.argv.includes('--debug');
+const desktop = process.argv.includes('--desktop');
+function publish(state: string, extra: Record<string, unknown> = {}) {
+  if (desktop && process.connected) process.send?.({ type: 'voice', state, ...extra });
+}
 const saveAudio = process.env.SAVE_AUDIO === '1';
 const key = Number(process.env.COPILOT_VK ?? '134'); // F23; verify with --debug-keys.
 const device = process.env.MIC_DEVICE ?? '';
@@ -55,6 +59,12 @@ function interrupt() {
   speaker.stop();
 }
 
+function resetConversation() {
+  interrupt(); recorder.cancel(); held = false; codex.reset();
+  publish(servicesReady ? 'idle' : 'starting', { reset: true });
+  console.log('New conversation.');
+}
+
 async function processSpeech(token: number, releasedAt: number) {
   const controller = new AbortController();
   current = controller;
@@ -65,11 +75,14 @@ async function processSpeech(token: number, releasedAt: number) {
     const recordingDoneAt = performance.now();
     if (debug) console.log(`[audio] ${recorder.lastDurationSeconds.toFixed(2)} s, RMS ${recorder.lastRmsDbfs.toFixed(1)} dBFS, peak ${recorder.lastPeakDbfs.toFixed(1)} dBFS`);
     console.log('Transcribing...');
+    publish('transcribing');
     const raw = await stt.transcribe(wav, controller.signal);
+    if (token !== generation) return;
     const sttDoneAt = performance.now();
-    if (!raw || !raw.replace(/\*[^*]+\*/g, '').trim()) { console.log('No intelligible speech recognized. Check the microphone or save the WAV with SAVE_AUDIO=1.'); return; }
+    if (!raw || !raw.replace(/\*[^*]+\*/g, '').trim()) { publish('error', { message: 'Nie rozpoznano mowy. Sprawdź mikrofon i spróbuj ponownie.', ready: true }); console.log('No intelligible speech recognized. Check the microphone or save the WAV with SAVE_AUDIO=1.'); return; }
     if (debug) console.log(`\n[Raw transcription]\n${raw}\n`);
     console.log('Preparing answer...');
+    publish('thinking', { question: raw });
     const { prompt, answer, startupMs, turnMs } = await codex.respond(raw, controller.signal);
     if (token !== generation) return;
     const codexDoneAt = performance.now();
@@ -77,10 +90,12 @@ async function processSpeech(token: number, releasedAt: number) {
     if (debug) console.log(`Thread: ${codex.currentThreadId}`);
     console.log(`\n[Answer]\n${answer}\n`);
     console.log('Speaking...');
+    publish('preparing-speech', { question: prompt, answer });
     let playbackStartedAt: number | undefined;
     const playbackWasReported = await speaker.speak(answer, controller.signal, () => {
       if (token !== generation || playbackStartedAt !== undefined) return;
       playbackStartedAt = performance.now();
+      publish('speaking');
       if (!debug) return;
       console.log();
       logTime(`Recording end to playback start (${ttsMode === 'piper' ? 'FFplay' : 'SAPI'})`, releasedAt, playbackStartedAt);
@@ -96,9 +111,10 @@ async function processSpeech(token: number, releasedAt: number) {
       if (playbackStartedAt !== undefined) logTime('Playback duration after player start', playbackStartedAt);
       logTime('Full cycle after key release', releasedAt);
       console.log('Ready.');
+      publish('idle');
     }
   } catch (error) {
-    if (token === generation) console.error(error);
+    if (token === generation) { console.error(error); publish('error', { message: 'Nie udało się przygotować lub odczytać odpowiedzi. Spróbuj nagrać pytanie ponownie. Szczegóły są w terminalu.', ready: servicesReady }); }
   } finally {
     if (wav) {
       if (saveAudio) console.log(`Saved WAV recording: ${wav}`);
@@ -112,7 +128,7 @@ function handle(event: KeyEvent) {
   if (debugKeys) { console.log(`${event.event.toUpperCase()} vk=${event.vk} scan=${event.scan} flags=${event.flags}`); return; }
   if (event.event === 'down') pressed.add(event.vk); else pressed.delete(event.vk);
   if (event.event === 'down' && event.vk === 78 && (pressed.has(17) || pressed.has(162) || pressed.has(163)) && (pressed.has(16) || pressed.has(160) || pressed.has(161))) {
-    interrupt(); recorder.cancel(); held = false; codex.reset(); console.log('New conversation.'); return;
+    resetConversation(); return;
   }
   if (event.vk !== key) return;
   if (!servicesReady) { if (event.event === 'down') console.log('Microphone, Whisper, Codex, and TTS are still starting.'); return; }
@@ -122,6 +138,7 @@ function handle(event: KeyEvent) {
     recordingStartedAt = performance.now();
     recorder.start();
     console.log('Recording...');
+    publish('listening', { question: '', answer: '' });
   } else if (event.event === 'up' && held) {
     held = false;
     const releasedAt = performance.now();
@@ -131,13 +148,28 @@ function handle(event: KeyEvent) {
   }
 }
 
-const keyboard = startKeyboard(handle, message => console.error(message));
+const keyboard = startKeyboard(handle, message => { console.error(message); publish('error', { message: 'Skrót Copilot jest niedostępny. Użyj przycisku nagrywania w panelu.', ready: servicesReady }); });
 if (debugKeys) console.log('Keyboard events (Ctrl+C exits). Hold Copilot and note its vk.');
 else {
+  publish('starting');
   console.log(`Starting microphone, Whisper${process.env.WHISPER_THREADS ? ` (${process.env.WHISPER_THREADS} threads)` : ''}, Codex${process.env.CODEX_MODEL ? ` (${process.env.CODEX_MODEL})` : ''}, and TTS (${ttsMode})...`);
   void Promise.all([recorder.startCapture(), stt.start(), codex.start(), speaker.start()]).then(() => {
     servicesReady = true;
+    publish('idle', { ready: true });
     console.log(`Ready. Hold Copilot (vk=${key}); Ctrl+Shift+N resets; Ctrl+C exits.`);
-  }).catch(error => console.error(error));
+  }).catch(error => { console.error(error); publish('error', { message: 'Nie udało się uruchomić usług. Sprawdź mikrofon, Whisper, Codex i ustawienia .env, a następnie uruchom usługi ponownie.', ready: false }); });
 }
-process.on('SIGINT', () => { interrupt(); recorder.shutdown(); stt.stop(); codex.stop(); speaker.shutdown(); keyboard.stop(); process.exit(0); });
+function shutdown() { interrupt(); recorder.shutdown(); stt.stop(); codex.stop(); speaker.shutdown(); keyboard.stop(); process.exit(0); }
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+if (desktop) {
+  process.on('disconnect', shutdown);
+  process.on('message', (message: unknown) => {
+    const command = (message as { command?: string })?.command;
+    if (command === 'shutdown') shutdown();
+    else if (command === 'reset') resetConversation();
+    else if (command === 'cancel') { interrupt(); recorder.cancel(); held = false; publish(servicesReady ? 'idle' : 'starting'); }
+    else if (command === 'record') handle({ event: 'down', vk: key, scan: 0, flags: 0 });
+    else if (command === 'release') handle({ event: 'up', vk: key, scan: 0, flags: 0 });
+  });
+}

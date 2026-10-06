@@ -8,13 +8,18 @@
     <style>
       html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: transparent; }
       body { display: grid; place-items: center; }
+      button { border: 0; padding: 0; background: transparent; cursor: pointer; display: grid; place-items: center; width: 54px; height: 54px; border-radius: 50%; }
+      button:hover { background: #ffffff30; }
+      button:focus-visible { outline: 2px solid #2457d6; }
+      button[data-state="error"] { outline: 2px solid #a12932; }
+      button[data-state="thinking"], button[data-state="transcribing"], button[data-state="starting"], button[data-state="preparing-speech"] { outline: 2px dotted #2457d6; }
       voice-orb {
         --orb-size: 45px;
         opacity: 0; transform: translateY(10px) scale(.72);
         transition: opacity 320ms ease, transform 380ms cubic-bezier(.2, .7, .25, 1);
       }
       body[data-presence="visible"] voice-orb { opacity: 1; transform: translateY(0) scale(1); }
-      body[data-presence="leaving"] voice-orb {
+      body[data-presence="leaving"] voice-orb, body[data-presence="hidden"] voice-orb {
         opacity: 0; transform: translateY(12px) scale(.72); transition-duration: 240ms;
       }
       @media (prefers-reduced-motion: reduce) {
@@ -23,5 +28,5 @@
     </style>
     <script type="module" src="./orb-ui.js"></script>
   </head>
-  <body><voice-orb state="idle" title="Kulka głosowa — menu pod prawym przyciskiem myszy"></voice-orb></body>
+  <body><button type="button" aria-label="Otwórz rozmowę"><voice-orb state="idle"></voice-orb></button></body>
 </html>
