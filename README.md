@@ -60,13 +60,31 @@ Only the orb's color field is rendered at reduced resolution. The circular edge 
 
 ### Desktop orb (Electron)
 
-`npm start` opens the conversation panel and starts the real voice services. The
+`npm start` starts the real voice services with the conversation popup hidden. The
 orb is hidden while idle and during startup. It appears when recording starts,
-stays visible through transcription, answer generation and speech, then fades
-away when playback finishes. Cancellation and errors also hide the orb. Click
-the tray icon to reopen the panel at any time. Click the visible orb to open it.
-The panel shows the latest question and answer, named processing states, errors,
-**Nagraj pytanie / Zakończ nagranie**, **Przerwij**, and **Nowa rozmowa**.
+stays visible through transcription, answer generation and speech. It remains
+visible while the pointer is over the orb or popup; leaving both hides them after
+one second. A new recording cancels stale hide requests. Click
+the tray icon to reopen the popup at any time. Hover over the visible orb to show
+the frameless conversation popup above it without taking focus. Move into the
+popup to read or use its controls; leaving both surfaces dismisses it after a
+short delay. Press the orb to open text chat; press it again to return to the
+compact latest-exchange view, preserving the draft. Press Escape to dismiss it.
+Window focus changes do not close the conversation.
+The dark hover popup shows the latest question and answer, with no answer-generation
+status text. A short Copilot press (under 250 ms) shows the orb and a focused popup
+containing only the text input, hiding earlier messages until the next question.
+Holding Copilot for at least 250 ms records a voice question; audio is collected
+from key-down to preserve its beginning, and a short tap discards it without transcription.
+Clicking the orb or tray reveals the conversation and a text composer: Enter sends,
+Shift+Enter adds a newline. Typed questions continue the same Codex conversation
+and receive a text reply without speech playback. The composer has no send or cancel button.
+Recording uses Copilot; **Nowa rozmowa** remains in the tray menu.
+While the voice application runs, its keyboard hook consumes the configured
+`COPILOT_VK` press and release, preventing the corresponding Windows action.
+Other keys pass through. Exiting releases the hook, including after an unexpected
+Node process exit. `npm run keys` only observes keys and does not suppress them;
+the isolated orb preview does not install a keyboard hook.
 Closing the panel hides it without stopping services; **Zakończ** in the tray
 menu quits and shuts down the microphone, keyboard hook and voice workers.
 The microphone remains active between questions, as in terminal mode; only
@@ -85,6 +103,18 @@ The desktop orb fades/slides in over 380 ms. Listening uses a slow breathing pul
 The desktop orb has its own profile and Chromium cache in `.chatgpt-button/electron/desktop/` (cache under `session/`). These paths are configured before Electron starts Chromium, avoiding the shared default Electron cache. Smoke tests use a separate profile per process so they can run while the desktop orb is open. After changing profile configuration, exit the orb via **Zakończ** and run `npm run orb` again.
 
 ## Type checking
+
+`npm run test:overlay` exercises the overlay controller and native cursor tracker
+with deterministic timers: next-question cycles, stale hide cancellation, surface
+crossing and rapid reopening. `npm run test:orb` also sends mouse down/up through
+Chromium and checks the normal visibility path and input-only popup.
+`npm run test:copilot` verifies taps, holds, repeats, cancellation and delayed timers
+without microphone or Codex calls. On Windows, `npm run test:keyboard` uses native
+hooks and synthetic F24/F22 events to verify selective suppression, event delivery,
+restoration after stop, and cleanup after the owning Node process dies.
+It does not press the physical Copilot key or start voice services.
+`npm run debug` prints `[overlay]`
+mode/visibility changes and open requests without logging input text in those entries.
 
 Install development dependencies and check all TypeScript files in `src/` and `scripts/`:
 
@@ -110,6 +140,6 @@ Debug mode also prints captured WAV duration and sound levels (RMS and peak in d
 
 ## Known limitations
 
-- The keyboard hook observes global keys but does not suppress the normal Windows Copilot action. Some keyboards may emit only a synthetic shortcut or may not expose a held F23 event; check `npm.cmd run keys` first.
+- The keyboard hook suppresses only the configured `COPILOT_VK` while the voice application runs. Some keyboards may emit a different shortcut or may not expose a held F23 event; check `npm.cmd run keys` first and configure the virtual key your keyboard reports.
 - Windows SAPI voice quality depends on installed voices. Piper requires a separate executable and voice download; neither is bundled in Git.
 - Microphone, local model, and signed-in Codex CLI are required for the full voice loop. This repository does not bundle an STT model or download one automatically.

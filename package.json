@@ -6,6 +6,9 @@
   "scripts": {
     "orb": "node scripts/launch-orb.cjs --preview",
     "test:orb": "node scripts/launch-orb.cjs --smoke-test",
+    "test:overlay": "node --test scripts/test-overlay.cjs",
+    "test:copilot": "node --experimental-strip-types --test scripts/test-copilot.ts",
+    "test:keyboard": "node --experimental-strip-types --test scripts/test-keyboard.ts",
     "preview:orb": "node --experimental-strip-types scripts/preview-orb.ts",
     "typecheck": "tsc --noEmit",
     "start": "node scripts/launch-orb.cjs",

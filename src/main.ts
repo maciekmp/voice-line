@@ -2,6 +2,7 @@ import { unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startKeyboard, type KeyEvent } from './keyboard/copilot-key.ts';
+import { createCopilotGesture } from './keyboard/copilot-gesture.ts';
 import { Recorder } from './audio/recorder.ts';
 import { WhisperTranscriber } from './stt/transcriber.ts';
 import { CodexClient } from './codex.ts';
@@ -60,6 +61,7 @@ function interrupt() {
 }
 
 function resetConversation() {
+  desktopCopilot.cancel();
   interrupt(); recorder.cancel(); held = false; codex.reset();
   publish(servicesReady ? 'idle' : 'starting', { reset: true });
   console.log('New conversation.');
@@ -124,6 +126,54 @@ async function processSpeech(token: number, releasedAt: number) {
   }
 }
 
+async function processText(text: string) {
+  if (!servicesReady || current || held) return;
+  interrupt();
+  const token = generation;
+  const controller = new AbortController();
+  current = controller;
+  publish('thinking', { question: text, answer: '' });
+  try {
+    const { answer } = await codex.respond(text, controller.signal);
+    if (token === generation) publish('idle', { question: text, answer });
+  } catch (error) {
+    if (token === generation) {
+      console.error(error);
+      publish('error', { ready: servicesReady, message: 'Nie udało się przygotować odpowiedzi. Wyślij wiadomość ponownie.' });
+    }
+  } finally { if (current === controller) current = null; }
+}
+
+const desktopCopilot = createCopilotGesture({
+  down() {
+    if (!servicesReady) return;
+    held = true;
+    interrupt();
+    recordingStartedAt = performance.now();
+    recorder.start();
+  },
+  hold() {
+    if (!held) return;
+    console.log('Recording...');
+    publish('listening', { question: '', answer: '' });
+  },
+  tap() {
+    if (held) {
+      recorder.cancel();
+      held = false;
+      publish('idle');
+    }
+    if (process.connected) process.send?.({ type: 'ui', action: 'compose' });
+  },
+  release() {
+    if (!held) return;
+    held = false;
+    const releasedAt = performance.now();
+    logTime('Key hold', recordingStartedAt, releasedAt);
+    void processSpeech(generation, releasedAt);
+  },
+});
+
 function handle(event: KeyEvent) {
   if (debugKeys) { console.log(`${event.event.toUpperCase()} vk=${event.vk} scan=${event.scan} flags=${event.flags}`); return; }
   if (event.event === 'down') pressed.add(event.vk); else pressed.delete(event.vk);
@@ -131,6 +181,11 @@ function handle(event: KeyEvent) {
     resetConversation(); return;
   }
   if (event.vk !== key) return;
+  if (desktop) {
+    if (event.event === 'down') desktopCopilot.down();
+    else desktopCopilot.up();
+    return;
+  }
   if (!servicesReady) { if (event.event === 'down') console.log('Microphone, Whisper, Codex, and TTS are still starting.'); return; }
   if (event.event === 'down' && !held) {
     held = true;
@@ -148,7 +203,7 @@ function handle(event: KeyEvent) {
   }
 }
 
-const keyboard = startKeyboard(handle, message => { console.error(message); publish('error', { message: 'Skrót Copilot jest niedostępny. Użyj przycisku nagrywania w panelu.', ready: servicesReady }); });
+const keyboard = startKeyboard(handle, message => { console.error(message); publish('error', { message: 'Skrót Copilot jest niedostępny. Uruchom aplikację ponownie lub kliknij orb, aby napisać wiadomość.', ready: servicesReady }); }, { suppressVk: debugKeys ? 0 : key });
 if (debugKeys) console.log('Keyboard events (Ctrl+C exits). Hold Copilot and note its vk.');
 else {
   publish('starting');
@@ -159,7 +214,7 @@ else {
     console.log(`Ready. Hold Copilot (vk=${key}); Ctrl+Shift+N resets; Ctrl+C exits.`);
   }).catch(error => { console.error(error); publish('error', { message: 'Nie udało się uruchomić usług. Sprawdź mikrofon, Whisper, Codex i ustawienia .env, a następnie uruchom usługi ponownie.', ready: false }); });
 }
-function shutdown() { interrupt(); recorder.shutdown(); stt.stop(); codex.stop(); speaker.shutdown(); keyboard.stop(); process.exit(0); }
+function shutdown() { desktopCopilot.cancel(); interrupt(); recorder.shutdown(); stt.stop(); codex.stop(); speaker.shutdown(); keyboard.stop(); process.exit(0); }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 if (desktop) {
@@ -167,8 +222,12 @@ if (desktop) {
   process.on('message', (message: unknown) => {
     const command = (message as { command?: string })?.command;
     if (command === 'shutdown') shutdown();
+    else if (command === 'text') {
+      const text = (message as { text?: unknown }).text;
+      if (typeof text === 'string' && text.trim() && text.length <= 12000) void processText(text.trim());
+    }
     else if (command === 'reset') resetConversation();
-    else if (command === 'cancel') { interrupt(); recorder.cancel(); held = false; publish(servicesReady ? 'idle' : 'starting'); }
+    else if (command === 'cancel') { desktopCopilot.cancel(); interrupt(); recorder.cancel(); held = false; publish(servicesReady ? 'idle' : 'starting'); }
     else if (command === 'record') handle({ event: 'down', vk: key, scan: 0, flags: 0 });
     else if (command === 'release') handle({ event: 'up', vk: key, scan: 0, flags: 0 });
   });

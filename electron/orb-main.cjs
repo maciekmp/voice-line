@@ -4,6 +4,8 @@ const fs = require('node:fs/promises');
 const { mkdirSync } = require('node:fs');
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
+const { createOverlayController } = require('./overlay-controller.cjs');
+const { createPointerTracker } = require('./overlay-pointer.cjs');
 
 const smokeTest = process.argv.includes('--smoke-test');
 // Set these before Chromium initializes. Keep the orb away from other Electron
@@ -23,11 +25,22 @@ let tray;
 let panelWindow;
 let engine;
 let voice = { state: 'starting', ready: false, question: '', answer: '', message: '' };
+let conversationHistory = [];
 const preview = process.argv.includes('--preview');
+let testLiveVisibility = false;
+let testNativePointer = false;
+let pointerPoll;
 
 function sendVoice(update = {}) {
-  if (update.reset) update = { ...update, question: '', answer: '' };
-  voice = { ...voice, message: '', ...update };
+  if (update.reset) {
+    conversationHistory = [];
+    update = { ...update, question: '', answer: '' };
+  } else if (voice.answer && (update.state === 'listening'
+    || (typeof update.question === 'string' && (update.question !== voice.question || update.answer === '')))) {
+    conversationHistory.push({ question: voice.question, answer: voice.answer });
+  }
+  voice = { ...voice, message: '', ...update, history: conversationHistory };
+  overlay.voice(voice.state);
   state = voice.state === 'listening' ? 'listening' : voice.state === 'speaking' ? 'speaking' : 'idle';
   for (const window of [orbWindow, panelWindow]) {
     if (window && !window.isDestroyed()) window.webContents.send('voice:snapshot', voice);
@@ -36,6 +49,10 @@ function sendVoice(update = {}) {
   sendSettings();
 }
 
+function onEngineMessage(message) {
+  if (message?.type === 'voice') sendVoice(message);
+  else if (message?.type === 'ui' && message.action === 'compose') overlay.compose();
+}
 function startEngine() {
   if (engine || smokeTest || preview) return;
   sendVoice({ state: 'starting', ready: false });
@@ -44,7 +61,8 @@ function startEngine() {
     { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'inherit', 'inherit', 'ipc'], windowsHide: true });
   engine = child;
   child.on('message', message => {
-    if (engine === child && message?.type === 'voice') sendVoice(message);
+    if (engine !== child) return;
+    onEngineMessage(message);
   });
   child.on('error', error => {
     console.error(error);
@@ -57,17 +75,128 @@ function startEngine() {
   });
 }
 
-function openPanel() {
+const overlay = createOverlayController({
+  onChange(value, { focus }) {
+    if (process.argv.includes('--debug')) console.log('[overlay]', { ...value, focus });
+    if (panelWindow && !panelWindow.isDestroyed()) {
+      if (value.mode === 'hidden') {
+        if (panelWindow.isVisible()) renderHidePanel();
+      } else renderOpenPanel(value.mode, focus);
+    }
+    updateVisibility();
+  },
+});
+function openPanel(focus = true) { overlay.open(Boolean(focus)); }
+function hidePanel() { overlay.dismiss(); }
+const trackPointer = createPointerTracker((surface, entered) => overlay.hover(surface, entered));
+function samplePointer(cursor = screen.getCursorScreenPoint()) {
+  trackPointer(cursor, {
+    orb: orbWindow.isVisible() ? orbWindow.getBounds() : null,
+    panel: panelWindow.isVisible() ? panelWindow.getBounds() : null,
+  });
+}
+
+let panelResetTimer;
+let panelMode = 'peek';
+let panelHeight = 80;
+const panelHeights = { peek: 80, chat: 140, compose: 66 };
+let panelResizeTimer;
+function positionPanel(animate = false) {
   if (!panelWindow || panelWindow.isDestroyed()) return;
-  panelWindow.show(); panelWindow.focus();
+  const orb = orbWindow.getBounds();
+  const area = screen.getDisplayMatching(orb).workArea;
+  const width = Math.min(380, area.width);
+  const height = Math.min(panelHeight, Math.max(1, orb.y - area.y - 8));
+  const target = {
+    x: Math.max(area.x, Math.min(orb.x + orb.width - width, area.x + area.width - width)),
+    y: Math.max(area.y, orb.y - height - 8), width, height,
+  };
+  clearInterval(panelResizeTimer);
+  const initial = panelWindow.getBounds();
+  const done = () => {
+    panelWindow.setBounds(target);
+    panelWindow.webContents.send('voice:resizing', false);
+  };
+  if (!animate || Math.abs(initial.height - height) <= 2) { done(); return; }
+  panelWindow.webContents.send('voice:resizing', true);
+  const startedAt = Date.now();
+  panelResizeTimer = setInterval(() => {
+    if (panelWindow.isDestroyed()) { clearInterval(panelResizeTimer); return; }
+    const progress = Math.min(1, (Date.now() - startedAt) / 220);
+    const eased = 1 - (1 - progress) ** 3;
+    const currentHeight = Math.round(initial.height + (height - initial.height) * eased);
+    panelWindow.setBounds({ ...target, y: orb.y - currentHeight - 8, height: currentHeight });
+    if (progress === 1) { clearInterval(panelResizeTimer); done(); }
+  }, 16);
+}
+function renderHidePanel() {
+  clearInterval(panelResizeTimer);
+  clearTimeout(panelResetTimer);
+  panelWindow?.hide();
+  // Let Windows finish hiding the native surface before changing its contents.
+  panelResetTimer = setTimeout(() => {
+    panelResetTimer = undefined;
+    if (!panelWindow || panelWindow.isDestroyed() || panelWindow.isVisible()) return;
+    panelMode = 'peek';
+    panelHeight = panelHeights.peek;
+    panelWindow.webContents.send('voice:mode', 'peek');
+  }, 180);
+}
+function renderOpenPanel(mode, focus) {
+  if (!panelWindow || panelWindow.isDestroyed()) return;
+  clearTimeout(panelResetTimer);
+  panelResetTimer = undefined;
+  const changed = panelMode !== mode;
+  panelMode = mode;
+  if (!panelWindow.isVisible()) panelHeight = panelHeights[panelMode];
+  if (!changed || !panelWindow.isVisible()) positionPanel();
+  if (focus) { panelWindow.show(); panelWindow.focus(); }
+  else if (!panelWindow.isVisible()) panelWindow.showInactive();
+  // Start native resizing immediately; renderer measurement refines the target.
+  if (changed) {
+    panelHeight = mode === 'chat' ? Math.max(panelHeights.chat, panelHeights.peek + 42) : panelHeights[mode];
+    positionPanel(true);
+  }
+  panelWindow.webContents.send('voice:mode', panelMode);
 }
 function trusted(event) {
   return [orbWindow, panelWindow].some(window => window && !window.isDestroyed() && event.sender === window.webContents);
 }
-ipcMain.on('voice:open', event => { if (trusted(event)) openPanel(); });
+ipcMain.on('voice:open', event => {
+  if (!trusted(event)) return;
+  if (process.argv.includes('--debug')) console.log('[overlay] open request');
+  if (event.sender === orbWindow.webContents) overlay.toggle();
+  else openPanel();
+});
+ipcMain.on('voice:resize', (event, size) => {
+  if (!panelWindow || event.sender !== panelWindow.webContents || exitStarted
+    || !size || !Number.isFinite(size.height) || size.height < 0
+    || !['peek', 'chat', 'compose'].includes(size.mode) || size.mode !== panelMode) return;
+  const measuredHeight = Math.max(64, Math.min(50000, Math.ceil(size.height) + 2));
+  // Keep the hovered surface stable when a new recording clears the transcript.
+  panelHeight = panelWindow.isVisible() && ['listening', 'transcribing', 'thinking'].includes(voice.state)
+    ? Math.max(panelHeight, measuredHeight) : measuredHeight;
+  panelHeights[size.mode] = panelHeight;
+  if (panelResetTimer && !panelWindow.isVisible()) return;
+  positionPanel(panelWindow.isVisible() && !size.reducedMotion);
+});
+ipcMain.handle('voice:text', (event, text) => {
+  if (!trusted(event) || exitStarted || typeof text !== 'string' || !text.trim() || text.length > 12000
+    || !voice.ready || !engine?.connected || !['idle', 'error'].includes(voice.state)) return false;
+  sendVoice({ state: 'thinking', question: text.trim(), answer: '' });
+  engine.send({ command: 'text', text: text.trim() });
+  return true;
+});
+ipcMain.on('voice:hover', (event, entered) => {
+  if (!trusted(event) || exitStarted || typeof entered !== 'boolean') return;
+  // In production use one native cursor sample for both surfaces. Renderer
+  // pointerleave can be caused by window resizing, not actual cursor movement.
+  if (!smokeTest || testNativePointer) return;
+  overlay.hover(event.sender === orbWindow.webContents ? 'orb' : 'panel', entered);
+});
 ipcMain.on('voice:command', (event, command) => {
   if (!trusted(event) || exitStarted) return;
-  if (command === 'hide') { panelWindow?.hide(); return; }
+  if (command === 'hide') { hidePanel(); return; }
   if (command === 'retry' && !voice.ready) {
     if (engine) { const previous = engine; engine = undefined; previous.send({ command: 'shutdown' }); previous.once('exit', startEngine); }
     else startEngine();
@@ -84,15 +213,18 @@ let exitTimer;
 let hideTimer;
 
 function updateVisibility(force = false) {
-  if (!orbWindow || orbWindow.isDestroyed() || exitStarted || (!force && (smokeTest || preview))) return;
+  if (!orbWindow || orbWindow.isDestroyed() || exitStarted || (!force && ((smokeTest && !testLiveVisibility) || preview))) return;
   clearTimeout(hideTimer);
-  const active = ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking'].includes(voice.state);
-  if (active) {
-    orbWindow.showInactive();
+  if (overlay.snapshot().orbVisible) {
+    // Re-showing an already visible native overlay can disturb popup activation
+    // on Windows. Voice snapshots should update contents, not window activation.
+    if (!orbWindow.isVisible()) orbWindow.showInactive();
     orbWindow.webContents.send('orb:presence', 'visible');
   } else {
     orbWindow.webContents.send('orb:presence', 'hidden');
-    hideTimer = setTimeout(() => { if (!orbWindow.isDestroyed()) orbWindow.hide(); }, 260);
+    hideTimer = setTimeout(() => {
+      if (!orbWindow.isDestroyed() && !overlay.snapshot().orbVisible) orbWindow.hide();
+    }, 260);
   }
 }
 
@@ -130,9 +262,14 @@ app.on('before-quit', event => {
   event.preventDefault();
   if (exitStarted) return;
   exitStarted = true;
+  overlay.dispose();
+  clearTimeout(panelResetTimer);
+  clearInterval(panelResizeTimer);
+  clearTimeout(hideTimer);
+  clearInterval(pointerPoll);
   if (engine?.connected) engine.send({ command: 'shutdown' });
   panelWindow?.hide();
-  exitTimer = setTimeout(finishExit, 700);
+  exitTimer = setTimeout(finishExit, smokeTest ? 2500 : 700);
   orbWindow.webContents.send('orb:presence', 'leaving');
 });
 
@@ -212,7 +349,29 @@ async function verify() {
   assert.equal(orbWindow.webContents.session.getStoragePath(), sessionDirectory);
   assert.equal(orbWindow.isAlwaysOnTop(), true);
   assert.deepEqual(orbWindow.getBounds(), { ...position(), width: WINDOW_SIZE, height: WINDOW_SIZE });
+  assert.equal(panelWindow.isVisible(), false, 'Conversation starts hidden');
+  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerenter'))");
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.equal(panelWindow.isVisible(), true, 'Hover opens the popup');
+  assert.equal(panelWindow.isFocused(), false, 'Hover does not steal focus');
+  const popupBounds = panelWindow.getBounds();
+  // Windows rounds native window bounds at fractional display scaling.
+  assert.ok(Math.abs(popupBounds.y + popupBounds.height + 8 - orbWindow.getBounds().y) <= 1);
+  assert.ok(Math.abs(popupBounds.x + popupBounds.width - orbWindow.getBounds().x - WINDOW_SIZE) <= 2,
+    JSON.stringify({ popupBounds, orb: orbWindow.getBounds() }));
+  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerleave'))");
+  await panelWindow.webContents.executeJavaScript("document.documentElement.dispatchEvent(new PointerEvent('pointerenter'))");
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.equal(panelWindow.isVisible(), true, 'Moving into the popup keeps it open');
+  await panelWindow.webContents.executeJavaScript("document.documentElement.dispatchEvent(new PointerEvent('pointerleave'))");
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  assert.equal(panelWindow.isVisible(), false, 'Leaving both surfaces closes the popup');
+  openPanel(false);
+  await panelWindow.webContents.executeJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(panelWindow.isVisible(), false, 'Escape closes the popup');
   state = 'listening'; sendSettings();
+  console.log('Popup hover checks: passed');
   await orbWindow.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(resolve))');
   const listening = await inspect();
   assert.equal(listening.state, 'listening');
@@ -274,6 +433,7 @@ async function verify() {
     orbWindow.webContents.debugger.detach();
   }
   const waitingOutput = path.join(__dirname, '..', '.chatgpt-button', 'electron-orb-waiting.png');
+  console.log('Voice state checks: passed');
   await fs.writeFile(waitingOutput, (await orbWindow.webContents.capturePage()).toPNG());
   sendVoice({ state: 'speaking', answer: 'Odpowiedź testowa.' }); updateVisibility(true);
   assert.equal((await ring()).content, 'none', 'Playback removes the waiting ring');
@@ -282,46 +442,193 @@ async function verify() {
     question: document.querySelector('#question').textContent,
     unsafe: document.querySelector('#question script') !== null,
     answer: document.querySelector('#answer').textContent,
-    cancelDisabled: document.querySelector('#cancel').disabled,
+    cancelAbsent: document.querySelector('#cancel') === null,
   }))()`);
   assert.equal(panel.status, 'Odczytuję odpowiedź…');
   assert.equal(panel.unsafe, false);
   assert.equal(panel.answer, 'Odpowiedź testowa.');
-  assert.equal(panel.cancelDisabled, false);
+  assert.equal(panel.cancelAbsent, true);
+  console.log('Conversation snapshot checks: passed');
   const panelOutput = path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation.png');
+  openPanel(false);
   await fs.writeFile(panelOutput, (await panelWindow.webContents.capturePage()).toPNG());
+  hidePanel();
   sendVoice({ state: 'idle' }); updateVisibility(true);
+  console.log('Conversation capture: passed');
   await new Promise(resolve => setTimeout(resolve, 300));
   assert.equal(orbWindow.isVisible(), false, 'Orb disappears when playback finishes');
+  orbWindow.showInactive();
+  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerenter'))");
+  sendVoice({ state: 'idle' }); updateVisibility(true);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(orbWindow.isVisible(), true, 'Hover keeps the orb visible after playback');
+  await panelWindow.webContents.executeJavaScript("document.documentElement.dispatchEvent(new PointerEvent('pointerenter'))");
+  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerleave'))");
+  updateVisibility(true);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(orbWindow.isVisible(), true, 'Hovering the popup also keeps the orb visible');
+  await panelWindow.webContents.executeJavaScript("document.documentElement.dispatchEvent(new PointerEvent('pointerleave'))");
+  updateVisibility(true);
+  assert.equal(orbWindow.isVisible(), true, 'Crossing grace period preserves orb visibility');
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  updateVisibility(true);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(orbWindow.isVisible(), false, 'Leaving both surfaces lets the idle orb hide');
   sendVoice({ state: 'error', ready: false, message: 'Sprawdź mikrofon.' });
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#record').textContent"), 'Uruchom usługi ponownie');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#retry').hidden"), false);
   sendVoice({ state: 'idle', ready: true, reset: true });
+  assert.equal(voice.history.length, 0, 'New conversation clears display history');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#empty').hidden"), false);
-  const commands = [];
-  engine = { connected: true, send: message => commands.push(message.command) };
-  await panelWindow.webContents.executeJavaScript("document.querySelector('#record').click()");
-  await new Promise(resolve => setTimeout(resolve, 50));
-  assert.equal(commands.pop(), 'record');
-  sendVoice({ state: 'listening' });
-  await panelWindow.webContents.executeJavaScript("document.querySelector('#record').click()");
-  await new Promise(resolve => setTimeout(resolve, 50));
-  assert.equal(commands.pop(), 'release');
-  sendVoice({ state: 'thinking' });
-  await panelWindow.webContents.executeJavaScript("document.querySelector('#cancel').click(); document.querySelector('#reset').click()");
-  await new Promise(resolve => setTimeout(resolve, 50));
-  assert.deepEqual(commands, ['cancel', 'reset']);
-  engine = undefined;
+  sendVoice({ question: 'Jak zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania i zacznij od jednego.' });
+  openPanel(false);
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), true);
+  const peekHeight = panelWindow.getBounds().height;
+  const peekContent = await panelWindow.webContents.executeJavaScript('document.body.getBoundingClientRect().height');
+  assert.ok(Math.abs(peekHeight - peekContent) <= 4, `Hover popup fits its content: ${peekHeight}, content ${peekContent}, requested ${panelHeight}`);
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('h2') === null"), true);
+  testLiveVisibility = true;
+  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerenter'))");
+  orbWindow.webContents.sendInputEvent({ type: 'mouseMove', x: 32, y: 32 });
+  orbWindow.webContents.sendInputEvent({ type: 'mouseDown', x: 32, y: 32, button: 'left', clickCount: 1 });
+  orbWindow.webContents.sendInputEvent({ type: 'mouseUp', x: 32, y: 32, button: 'left', clickCount: 1 });
+  sendVoice({ state: 'speaking' });
+  assert.equal(await orbWindow.webContents.executeJavaScript("document.querySelector('button').hasAttribute('title')"), false, 'Orb has no native tooltip');
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), false);
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.activeElement.id"), 'message');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.documentElement.scrollHeight <= innerHeight || document.documentElement.dataset.resizing === 'true'"), true, 'Expansion does not expose a scrollbar');
+  await new Promise(resolve => setTimeout(resolve, 250));
+  assert.ok(panelWindow.getBounds().height > peekHeight, 'Click expands the native popup');
+  assert.equal(await panelWindow.webContents.executeJavaScript('document.documentElement.scrollHeight <= innerHeight'), true, 'Short conversation and composer fit without scrolling');
+  assert.equal(panelWindow.isVisible(), true, 'Live voice snapshots do not dismiss the expanded popup');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'chat');
+  await panelWindow.webContents.executeJavaScript("document.querySelector('#message').value = 'Zachowany szkic'");
+  orbWindow.webContents.sendInputEvent({ type: 'mouseDown', x: 32, y: 32, button: 'left', clickCount: 1 });
+  orbWindow.webContents.sendInputEvent({ type: 'mouseUp', x: 32, y: 32, button: 'left', clickCount: 1 });
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'peek', 'Second orb click collapses the conversation');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden && document.querySelector('#history').hidden"), true);
+  assert.ok(Math.abs(panelWindow.getBounds().height - peekHeight) <= 4, 'Second click restores the compact native height during playback');
+  assert.equal(panelWindow.isVisible() && orbWindow.isVisible(), true, 'Collapse keeps both hovered surfaces visible');
+  await orbWindow.webContents.executeJavaScript("document.querySelector('button').click()");
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'chat', 'Keyboard activation expands again');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#message').value"), 'Zachowany szkic', 'Toggle preserves the draft');
+  testNativePointer = true;
+  const hoveredPanel = panelWindow.getBounds();
+  samplePointer({ x: hoveredPanel.x + 20, y: hoveredPanel.y + hoveredPanel.height - 20 });
+  overlay.hover('orb', false);
+  for (const nextState of ['listening', 'transcribing', 'thinking', 'speaking', 'idle']) {
+    sendVoice({ state: nextState, ...(nextState === 'listening' ? { question: '', answer: '' } : {}) });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    samplePointer({ x: hoveredPanel.x + 20, y: hoveredPanel.y + hoveredPanel.height - 20 });
+  }
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  assert.equal(orbWindow.isVisible(), true, 'Native pointer keeps orb visible across a second question');
+  assert.equal(panelWindow.isVisible(), true, 'Second voice cycle preserves popup');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), false);
+  testNativePointer = false;
+  overlay.hover('panel', false);
+  openPanel();
+  sendVoice({ question: 'Jak zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania i zacznij od jednego.' });
+  testLiveVisibility = false;
+  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerleave'))");
   sendVoice({ state: 'idle' });
-  await panelWindow.webContents.executeJavaScript("document.querySelector('#record').focus()");
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.activeElement.id"), 'record');
+  const commands = [];
+  console.log('Conversation mode checks: passed');
+  engine = { connected: true, send: message => commands.push(message) };
+  testLiveVisibility = true;
+  onEngineMessage({ type: 'ui', action: 'compose' });
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.equal(orbWindow.isVisible(), true, 'Copilot tap shows the idle orb');
+  assert.equal(panelWindow.isVisible(), true, 'Copilot tap opens the popup');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'compose');
+  assert.equal(await panelWindow.webContents.executeJavaScript("getComputedStyle(document.querySelector('main')).display"), 'none', 'Input-only mode hides the old conversation');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), false);
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.activeElement.id"), 'message');
+  assert.ok(panelWindow.getBounds().height <= 72, 'Input-only popup stays compact');
+  assert.equal(await panelWindow.webContents.executeJavaScript('document.documentElement.scrollHeight <= innerHeight'), true);
+  await fs.writeFile(path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation-compose.png'), (await panelWindow.webContents.capturePage()).toPNG());
+  testLiveVisibility = false;
+  console.log('Copilot input-only mode checks: passed');
+  const fill = text => panelWindow.webContents.executeJavaScript(`(() => {
+    const input = document.querySelector('#message');
+    input.value = ${JSON.stringify(text)};
+    input.dispatchEvent(new Event('input'));
+  })()`);
+  await fill('   ');
+  await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').requestSubmit()");
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(commands.length, 0, 'Blank messages are not sent');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#send') === null"), true);
+  await fill('Kontynuuj rozmowę');
+  await panelWindow.webContents.executeJavaScript("document.querySelector('#message').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true }))");
+  assert.equal(commands.length, 0, 'IME confirmation does not submit');
+  await panelWindow.webContents.executeJavaScript("document.querySelector('#message').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); document.querySelector('#composer').requestSubmit()");
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.deepEqual(commands, [{ command: 'text', text: 'Kontynuuj rozmowę' }]);
+  assert.equal(voice.question, 'Kontynuuj rozmowę');
+  assert.equal(voice.answer, '', 'New question clears the previous reply');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'chat', 'Submitting from input-only mode reveals the conversation');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#status').hidden"), true, 'Answer preparation has no status text');
+  assert.equal(voice.history.at(-1).question, 'Jak zaplanować dzień?', 'Previous exchange is retained');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#message').value"), '');
+  await panelWindow.webContents.executeJavaScript("window.orbDesktop.command('cancel')");
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(commands.at(-1).command, 'cancel');
+  engine = undefined;
+  sendVoice({ state: 'idle', ready: true });
+  await fill('Zachowaj tę wiadomość');
+  await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').requestSubmit()");
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#message').value"), 'Zachowaj tę wiadomość', 'Rejected messages preserve the draft');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#error').hidden"), false);
   panelWindow.setSize(340, 420);
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.documentElement.scrollWidth <= innerWidth"), true);
   sendVoice({ answer: 'Długa odpowiedź. '.repeat(300) });
   assert.equal(await panelWindow.webContents.executeJavaScript("document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight > innerHeight"), true);
   await panelWindow.webContents.executeJavaScript("scrollTo(0, document.documentElement.scrollHeight)");
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#record').getBoundingClientRect().bottom <= innerHeight"), true);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').getBoundingClientRect().bottom <= innerHeight + 1"), true);
+  console.log('Text composer checks: passed');
+  const chatOutput = path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation-chat.png');
+  sendVoice({ state: 'idle', ready: true, question: 'Jak mogę lepiej zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania. Zacznij od jednego i zostaw trochę miejsca na przerwy.' });
+  positionPanel();
+  await panelWindow.webContents.executeJavaScript('scrollTo(0, 0)');
+  openPanel();
+  await new Promise(resolve => setTimeout(resolve, 350));
+  await fs.writeFile(chatOutput, (await panelWindow.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+  for (let index = 0; index < 10; index++) {
+    sendVoice({ state: 'idle', question: `Pytanie ${index}`, answer: 'Poprzednia odpowiedź. '.repeat(8) });
+  }
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.ok(await panelWindow.webContents.executeJavaScript("document.querySelectorAll('#history .exchange').length") >= 10);
+  assert.equal(await panelWindow.webContents.executeJavaScript('document.documentElement.scrollHeight > innerHeight'), true, 'Expanded thread can scroll to earlier exchanges');
+  await panelWindow.webContents.executeJavaScript('scrollTo(0, 0)');
+  sendVoice({ state: 'speaking' });
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(await panelWindow.webContents.executeJavaScript('scrollY'), 0, 'Status updates preserve reading position');
+  assert.equal(await panelWindow.webContents.executeJavaScript("Math.abs(document.querySelector('#composer').getBoundingClientRect().bottom - innerHeight) <= 1"), true, 'Composer is flush with the bottom edge');
+  hidePanel();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), false, 'Hide preserves content until native surface disappears');
+  await new Promise(resolve => setTimeout(resolve, 200));
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), true, 'Composer resets while popup is hidden');
+  openPanel();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  hidePanel();
+  openPanel();
+  await new Promise(resolve => setTimeout(resolve, 250));
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), false, 'Rapid reopen cancels the delayed reset');
+  hidePanel();
+  openPanel(false);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), true, 'Dismissal restores the minimal hover mode');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#history').hidden"), true, 'Hover hides earlier messages');
+  hidePanel();
   orbWindow.showInactive();
   orbWindow.webContents.send('orb:presence', 'visible');
+  await new Promise(resolve => setTimeout(resolve, 150));
   const output = path.join(__dirname, '..', '.chatgpt-button', 'electron-orb.png');
   await fs.mkdir(path.dirname(output), { recursive: true });
   await fs.writeFile(output, (await orbWindow.webContents.capturePage()).toPNG());
@@ -339,10 +646,11 @@ if (!smokeTest && !app.requestSingleInstanceLock()) {
       title: 'Kulka głosowa', frame: false, transparent: true,
       backgroundColor: '#00000000', hasShadow: false, alwaysOnTop: true,
       resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
-      skipTaskbar: true, focusable: false, show: false,
+      skipTaskbar: true, focusable: true, show: false,
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
         nodeIntegration: false, contextIsolation: true, sandbox: true,
+        backgroundThrottling: false,
       },
     });
     // Keep the overlay above other windows, including full-screen applications.
@@ -355,21 +663,31 @@ if (!smokeTest && !app.requestSingleInstanceLock()) {
     orbWindow.webContents.on('context-menu', () => menu().popup({ window: orbWindow }));
     const reposition = () => {
       if (!orbWindow.isDestroyed()) { const { x, y } = position(); orbWindow.setPosition(x, y); }
+      positionPanel();
     };
     screen.on('display-metrics-changed', reposition);
     screen.on('display-added', reposition);
     screen.on('display-removed', reposition);
     await orbWindow.loadFile(path.join(__dirname, 'orb.html'));
     panelWindow = new BrowserWindow({
-      width: 440, height: 620, minWidth: 340, minHeight: 420,
-      title: 'Voice Line — rozmowa', show: false, backgroundColor: '#f6f8fc',
-      webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true },
+      width: 380, height: 80, frame: false, skipTaskbar: true,
+      resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
+      alwaysOnTop: true,
+      title: 'Voice Line — rozmowa', show: false, backgroundColor: '#242220',
+      webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false },
     });
     panelWindow.setMenu(null);
+    panelWindow.setAlwaysOnTop(true, 'screen-saver');
     panelWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     panelWindow.webContents.on('will-navigate', event => event.preventDefault());
-    panelWindow.on('close', event => { if (!exitStarted) { event.preventDefault(); panelWindow.hide(); } });
+    panelWindow.on('close', event => { if (!exitStarted) { event.preventDefault(); hidePanel(); } });
     await panelWindow.loadFile(path.join(__dirname, 'conversation.html'));
+    if (!smokeTest) {
+      pointerPoll = setInterval(() => {
+        if (exitStarted || orbWindow.isDestroyed() || panelWindow.isDestroyed()) return;
+        samplePointer();
+      }, 50);
+    }
     if (smokeTest) {
       try { await verify(); app.quit(); }
       catch (error) { console.error(error); app.exit(1); }
@@ -378,8 +696,18 @@ if (!smokeTest && !app.requestSingleInstanceLock()) {
       tray.setToolTip('Kulka głosowa');
       tray.setContextMenu(menu());
       tray.on('click', openPanel);
-      if (!preview) { openPanel(); startEngine(); }
-      else sendVoice({ state: 'idle', ready: false, message: 'Podgląd animacji. Uruchom npm start, aby rozpocząć rozmowę.' });
+      if (!preview) { startEngine(); }
+      else {
+        sendVoice({ state: 'idle', ready: false,
+          question: 'Mam dziś dużo do zrobienia. Od czego zacząć?',
+          answer: 'Zapisz zadania i wybierz te, które mają największe znaczenie. Nie musisz zrobić wszystkiego naraz.',
+        });
+        sendVoice({
+        state: 'idle', ready: false,
+        question: 'Jak mogę lepiej zaplanować dzień?',
+        answer: 'Wybierz trzy najważniejsze zadania. Zacznij od jednego i zostaw trochę miejsca na przerwy.',
+        });
+      }
     }
   }).catch(error => { console.error(error); app.exit(1); });
   app.on('window-all-closed', () => app.quit());

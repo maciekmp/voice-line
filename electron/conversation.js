@@ -1,43 +1,128 @@
-import '../preview/voice-orb.js';
-
 const get = id => document.getElementById(id);
 let snapshot = { state: 'starting', ready: false };
+let pending = false;
+let composing = false;
+let resizeFrame;
+let scrollToLatest = false;
+let renderedHistory = '';
+function reportSize() {
+  clearTimeout(resizeFrame);
+  resizeFrame = setTimeout(() => window.orbDesktop.resize({
+    height: Math.ceil(document.querySelector('main').getBoundingClientRect().height + (get('composer').hidden ? 0 : get('composer').offsetHeight)),
+    mode: document.body.dataset.mode,
+    reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
+  }), 0);
+}
+const sizeObserver = new ResizeObserver(reportSize);
+sizeObserver.observe(document.querySelector('main'));
+sizeObserver.observe(get('composer'));
+window.orbDesktop.onResizing(resizing => {
+  document.documentElement.dataset.resizing = String(resizing);
+  if (!resizing && scrollToLatest && document.body.dataset.mode === 'chat') {
+    scrollToLatest = false;
+    scrollTo(0, document.documentElement.scrollHeight);
+  }
+});
+const busy = () => ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking'].includes(snapshot.state);
+const canSubmit = () => !pending && !busy() && snapshot.ready && Boolean(get('message').value.trim());
+function updateComposer() {
+  get('composer').setAttribute('aria-busy', String(pending || busy()));
+}
+function resizeMessage() {
+  const minimum = document.body.dataset.mode === 'compose' ? 64 : 40;
+  get('message').style.height = `${minimum}px`;
+  get('message').style.height = `${Math.min(140, Math.max(minimum, get('message').scrollHeight))}px`;
+}
+document.documentElement.addEventListener('pointerenter', () => window.orbDesktop.hover(true));
+document.documentElement.addEventListener('pointerleave', () => window.orbDesktop.hover(false));
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && !event.isComposing) window.orbDesktop.command('hide');
+});
+window.orbDesktop.onMode(mode => {
+  const changed = document.body.dataset.mode !== mode;
+  if (changed) document.documentElement.dataset.resizing = 'true';
+  document.body.dataset.mode = mode;
+  const editable = mode === 'chat' || mode === 'compose';
+  get('composer').hidden = !editable;
+  get('history').hidden = mode !== 'chat' || !(snapshot.history?.length);
+  if (mode === 'chat' && changed) scrollToLatest = true;
+  if (!editable) get('message').blur();
+  if (editable) {
+    resizeMessage();
+    get('message').focus({ preventScroll: true });
+  }
+  if (mode === 'compose') scrollTo(0, 0);
+  reportSize();
+});
 const labels = {
-  starting: ['Uruchamiam usługi…', 'Przygotowuję mikrofon, rozpoznawanie mowy i głos.'],
-  idle: ['Gotowy do rozmowy', 'Nagraj kolejne pytanie. Pamiętam kontekst rozmowy.'],
-  listening: ['Słucham…', 'Zwolnij Copilot lub kliknij „Zakończ nagranie”.'],
-  transcribing: ['Rozpoznaję mowę…', 'Możesz przerwać i nagrać pytanie ponownie.'],
-  thinking: ['Przygotowuję odpowiedź…', 'Możesz przerwać i zadać inne pytanie.'],
-  'preparing-speech': ['Przygotowuję głos…', 'Odpowiedź możesz już przeczytać poniżej.'],
-  speaking: ['Odczytuję odpowiedź…', 'Przerwij lub zacznij nowe nagranie, aby zadać kolejne pytanie.'],
-  error: ['Potrzebuję Twojej uwagi', 'Szczegóły i sposób rozwiązania znajdziesz poniżej.'],
+  starting: 'Uruchamiam usługi…', idle: '', listening: 'Słucham…',
+  transcribing: 'Rozpoznaję mowę…', thinking: '',
+  'preparing-speech': 'Przygotowuję głos…', speaking: 'Odczytuję odpowiedź…', error: '',
 };
 window.orbDesktop.onVoice(value => {
+  const nearBottom = innerHeight + scrollY >= document.documentElement.scrollHeight - 32;
   snapshot = value;
-  const [label, hint] = labels[value.state] || labels.error;
-  get('status').textContent = label;
-  get('hint').textContent = hint;
-  document.title = `Voice Line — ${label}`;
-  document.querySelector('voice-orb').state = value.state === 'listening' ? 'listening' : value.state === 'speaking' ? 'speaking' : 'idle';
+  const history = value.history || [];
+  const historyKey = JSON.stringify(history);
+  if (historyKey !== renderedHistory) {
+    renderedHistory = historyKey;
+    get('history').replaceChildren(...history.map(exchange => {
+      const article = document.createElement('article');
+      article.className = 'exchange';
+      for (const key of ['question', 'answer']) {
+        const p = document.createElement('p');
+        p.className = `previous-${key}`;
+        p.setAttribute('aria-label', key === 'question' ? 'Twoje pytanie' : 'Odpowiedź');
+        p.textContent = exchange[key] || '';
+        article.append(p);
+      }
+      return article;
+    }));
+  }
+  get('history').hidden = document.body.dataset.mode !== 'chat' || !history.length;
+  if (nearBottom) scrollToLatest = true;
+  get('status').textContent = labels[value.state] || '';
+  get('status').hidden = Boolean(value.answer) || !get('status').textContent;
   get('error').hidden = !value.message;
   get('error').textContent = value.message || '';
+  get('retry').hidden = value.state !== 'error' || value.ready;
   for (const key of ['question', 'answer']) {
     get(key).textContent = value[key] || '';
     get(`${key}-block`).hidden = !value[key];
   }
-  get('empty').hidden = Boolean(value.question || value.answer);
-  get('record').disabled = !value.ready && value.state !== 'error';
-  get('record').textContent = !value.ready && value.state === 'error' ? 'Uruchom usługi ponownie' : value.state === 'listening' ? 'Zakończ nagranie' : 'Nagraj pytanie';
-  get('record').setAttribute('aria-pressed', String(value.state === 'listening'));
-  get('cancel').disabled = !value.ready || ['idle', 'error'].includes(value.state);
-  get('reset').disabled = !value.ready;
+  get('empty').hidden = Boolean(value.question || value.answer || value.message || value.state !== 'idle');
+  updateComposer();
+  reportSize();
 });
-get('record').addEventListener('click', () => {
-  // Prevent repeated clicks until the engine acknowledges the transition.
-  get('record').disabled = true;
-  window.orbDesktop.command(!snapshot.ready ? 'retry' : snapshot.state === 'listening' ? 'release' : 'record');
+get('message').addEventListener('input', () => {
+  resizeMessage();
+  updateComposer();
 });
-get('cancel').addEventListener('click', () => window.orbDesktop.command('cancel'));
-get('reset').addEventListener('click', () => window.orbDesktop.command('reset'));
-get('hide').addEventListener('click', () => window.orbDesktop.command('hide'));
+get('message').addEventListener('compositionstart', () => { composing = true; });
+get('message').addEventListener('compositionend', () => { composing = false; });
+get('message').addEventListener('keydown', event => {
+  if (event.key !== 'Enter' || event.shiftKey || event.isComposing || composing || event.keyCode === 229) return;
+  event.preventDefault();
+  get('composer').requestSubmit();
+});
+get('composer').addEventListener('submit', async event => {
+  event.preventDefault();
+  if (composing || !canSubmit()) return;
+  const text = get('message').value.trim();
+  pending = true;
+  updateComposer();
+  try {
+    if (await window.orbDesktop.text(text)) {
+      get('message').value = '';
+      resizeMessage();
+    } else {
+      get('error').textContent = 'Nie wysłano wiadomości. Poczekaj na gotowość usług i spróbuj ponownie.';
+      get('error').hidden = false;
+    }
+  } catch {
+    get('error').textContent = 'Nie wysłano wiadomości. Spróbuj ponownie.';
+    get('error').hidden = false;
+  } finally { pending = false; updateComposer(); }
+});
+get('retry').addEventListener('click', () => window.orbDesktop.command('retry'));
 window.orbDesktop.ready();

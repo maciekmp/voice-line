@@ -1,12 +1,20 @@
 import '../preview/voice-orb.js';
 
 const orb = document.querySelector('voice-orb');
-document.querySelector('button').addEventListener('click', () => window.orbDesktop.open());
+document.querySelector('button').addEventListener('pointerenter', () => window.orbDesktop.hover(true));
+document.querySelector('button').addEventListener('pointerleave', () => window.orbDesktop.hover(false));
+// Toggle on press, before activation/animation can move a surface on mouse-up.
+document.querySelector('button').addEventListener('pointerdown', event => {
+  if (event.button === 0) window.orbDesktop.open();
+});
+document.querySelector('button').addEventListener('click', event => {
+  if (event.detail === 0) window.orbDesktop.open(); // Keyboard activation.
+});
 window.orbDesktop.onVoice(({ state, message }) => {
   const labels = { starting: 'Uruchamianie', idle: 'Gotowy', listening: 'Słucham', transcribing: 'Rozpoznaję mowę', thinking: 'Przygotowuję odpowiedź', 'preparing-speech': 'Przygotowuję głos', speaking: 'Odczytuję odpowiedź', error: 'Wymagana uwaga' };
   const button = document.querySelector('button');
-  button.title = `${labels[state] || 'Voice Line'} — kliknij, aby otworzyć rozmowę${message ? `: ${message}` : ''}`;
-  button.setAttribute('aria-label', button.title);
+  button.removeAttribute('title');
+  button.setAttribute('aria-label', `${labels[state] || 'Voice Line'} — kliknij, aby rozwinąć lub zwinąć rozmowę${message ? `: ${message}` : ''}`);
   button.dataset.state = state;
 });
 window.orbDesktop.onPresence(presence => {
