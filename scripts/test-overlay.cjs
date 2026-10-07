@@ -105,5 +105,59 @@ test('native pointer tracking keeps a stationary cursor inside a resized popup',
   advance(2000);
   assert.deepEqual(c.snapshot(), { mode: 'chat', orbVisible: true });
   track({ x: 0, y: 0 }, { orb, panel }); advance(1000);
+  assert.deepEqual(c.snapshot(), { mode: 'hidden', orbVisible: true });
+  c.voice('idle');
   assert.deepEqual(c.snapshot(), { mode: 'hidden', orbVisible: false });
+});
+
+for (const state of ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking']) {
+  test(`leaving both surfaces during ${state} never hides the active orb`, () => {
+    const { controller: c, advance } = setup();
+    c.voice(state); c.hover('orb', true); c.hover('orb', false);
+    advance(1000);
+    assert.deepEqual(c.snapshot(), { mode: 'hidden', orbVisible: true });
+    advance(5000); c.voice(state);
+    assert.equal(c.snapshot().orbVisible, true);
+    c.dismiss();
+    assert.equal(c.snapshot().orbVisible, true, 'Escape dismisses the popup, not active work');
+    c.voice('idle');
+    assert.equal(c.snapshot().orbVisible, false);
+  });
+}
+
+test('hover departure survives state transitions and hides only after playback finishes', () => {
+  const { controller: c, advance } = setup();
+  c.voice('listening'); c.hover('orb', true); c.open(); c.hover('orb', false);
+  advance(500); c.voice('transcribing'); advance(500);
+  for (const state of ['thinking', 'preparing-speech', 'speaking']) {
+    c.voice(state); advance(2000);
+    assert.deepEqual(c.snapshot(), { mode: 'hidden', orbVisible: true });
+  }
+  c.voice('idle');
+  assert.deepEqual(c.snapshot(), { mode: 'hidden', orbVisible: false });
+});
+
+test('text submission cancels an idle hover timeout before answer generation', () => {
+  const { controller: c, advance } = setup();
+  c.voice('idle'); c.compose(); c.hover('panel', true); c.hover('panel', false);
+  advance(900); c.voice('thinking'); advance(2000);
+  assert.deepEqual(c.snapshot(), { mode: 'chat', orbVisible: true });
+});
+
+test('completion while hovered preserves the orb until a fresh departure timeout', () => {
+  const { controller: c, advance } = setup();
+  c.voice('speaking'); c.hover('orb', true); c.hover('orb', false); advance(2000);
+  c.hover('orb', true); c.voice('idle'); advance(2000);
+  assert.equal(c.snapshot().orbVisible, true);
+  c.hover('orb', false); advance(999);
+  assert.equal(c.snapshot().orbVisible, true);
+  advance(1); assert.equal(c.snapshot().orbVisible, false);
+});
+
+test('completion during departure grace preserves the remaining timer', () => {
+  const { controller: c, advance } = setup();
+  c.voice('speaking'); c.hover('orb', true); c.hover('orb', false);
+  advance(500); c.voice('idle'); advance(499);
+  assert.equal(c.snapshot().orbVisible, true);
+  advance(1); assert.equal(c.snapshot().orbVisible, false);
 });

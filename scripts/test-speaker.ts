@@ -15,6 +15,7 @@ Add-Content -LiteralPath '${starts}' -Value 'start'
 while ($null -ne ($line = [Console]::In.ReadLine())) {
   $request = ConvertFrom-Json -InputObject $line
   if ($request.text -eq 'slow') { Start-Sleep -Milliseconds 1000 }
+  [Console]::Out.WriteLine('AUDIO 16000 ' + [Convert]::ToBase64String((New-Object byte[] 1280)))
   [Console]::Out.WriteLine('PLAYBACK_STARTED')
   [Console]::Out.Flush()
   Start-Sleep -Milliseconds 30
@@ -27,7 +28,10 @@ const speaker = new Speaker(script);
 try {
   await speaker.start();
   let markers = 0;
-  assert.equal(await speaker.speak('first', undefined, () => markers++), true);
+  const levels: number[] = [];
+  assert.equal(await speaker.speak('first', undefined, () => markers++, level => levels.push(level)), true);
+  assert.ok(levels.length >= 2, 'Measured playback publishes activity and resets on completion');
+  assert.equal(levels.at(-1), 0);
   assert.equal(await speaker.speak('second', undefined, () => markers++), true);
   assert.equal(markers, 2);
   assert.equal(readFileSync(starts, 'utf8').trim().split(/\r?\n/).length, 1);

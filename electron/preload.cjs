@@ -2,6 +2,11 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('orbDesktop', {
   ready() { ipcRenderer.send('orb:ready'); },
+  onLevel(callback) {
+    const listener = (_event, level) => callback(level);
+    ipcRenderer.on('orb:level', listener);
+    return () => ipcRenderer.removeListener('orb:level', listener);
+  },
   open() { ipcRenderer.send('voice:open'); },
   hover(entered) { ipcRenderer.send('voice:hover', entered); },
   text(text) { return ipcRenderer.invoke('voice:text', text); },

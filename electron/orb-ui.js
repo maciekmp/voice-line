@@ -1,6 +1,8 @@
 import '../preview/voice-orb.js';
 
 const orb = document.querySelector('voice-orb');
+orb.setAttribute('audio-reactive', '');
+window.orbDesktop.onLevel(level => { orb.level = level; });
 document.querySelector('button').addEventListener('pointerenter', () => window.orbDesktop.hover(true));
 document.querySelector('button').addEventListener('pointerleave', () => window.orbDesktop.hover(false));
 // Toggle on press, before activation/animation can move a surface on mouse-up.
@@ -31,6 +33,7 @@ orb.addEventListener('transitionend', event => {
   }
 });
 window.orbDesktop.onSettings(({ state, paused }) => {
+  if (orb.state !== state) orb.level = 0;
   orb.state = state;
   orb.toggleAttribute('paused', paused);
   document.querySelector('button').toggleAttribute('data-paused', paused);

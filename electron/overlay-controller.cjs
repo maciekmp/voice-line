@@ -12,8 +12,8 @@ function createOverlayController({ onChange, delay = 1000, timers = globalThis }
   let last = '';
 
   function snapshot() {
-    return { mode, orbVisible: hovered.size > 0 || expiry !== undefined
-      || (!dismissed && (ACTIVE.has(voiceState) || mode !== 'hidden')) };
+    return { mode, orbVisible: ACTIVE.has(voiceState) || hovered.size > 0 || expiry !== undefined
+      || (!dismissed && mode !== 'hidden') };
   }
   function publish(focus = false) {
     const value = snapshot();
@@ -70,7 +70,8 @@ function createOverlayController({ onChange, delay = 1000, timers = globalThis }
       publish();
     },
     voice(state) {
-      const newTurn = state === 'listening' && voiceState !== 'listening';
+      const newTurn = (state === 'listening' && voiceState !== 'listening')
+        || (ACTIVE.has(state) && !ACTIVE.has(voiceState));
       voiceState = state;
       if (mode === 'compose' && ACTIVE.has(state)) mode = 'chat';
       if (newTurn) {

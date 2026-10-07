@@ -36,6 +36,10 @@ if (!debugKeys && (!device || !model)) {
 }
 
 const recorder = new Recorder(device, tmpdir());
+function publishLevel(source: 'listening' | 'speaking', level: number) {
+  if (desktop && process.connected) process.send?.({ type: 'level', source, level });
+}
+recorder.onLevel = level => publishLevel('listening', level);
 const stt = new WhisperTranscriber(binary, model, language);
 const codex = process.env.CODEX_MODE === 'cli' ? new CodexClient(cwd) : new CodexAppServer(cwd);
 const speaker = ttsMode === 'piper' ? new PiperSpeaker() : new Speaker();
@@ -107,7 +111,7 @@ async function processSpeech(token: number, releasedAt: number) {
       logMilliseconds('  Codex: request accepted', startupMs);
       logMilliseconds('  Codex: turn to final answer', turnMs);
       logTime('TTS startup to playback', codexDoneAt, playbackStartedAt);
-    });
+    }, level => { if (token === generation) publishLevel('speaking', level); });
     if (token === generation) {
       if (debug && !playbackWasReported) console.log('[time] Playback start unavailable: audio player did not report a running audio clock.');
       if (playbackStartedAt !== undefined) logTime('Playback duration after player start', playbackStartedAt);

@@ -1,12 +1,16 @@
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import { launch } from './process.ts';
+import { AudioLevels, followPlayback } from './audio/levels.ts';
 
 type Worker = ReturnType<typeof launch>;
 type ActiveSpeech = {
   worker: Worker;
   playbackStarted: boolean;
   onPlaybackStart?: () => void;
+  onLevel?: (level: number) => void;
+  levels: AudioLevels;
+  stopLevels?: () => void;
   resolve: (started: boolean) => void;
   reject: (error: Error) => void;
   cleanup: () => void;
@@ -47,9 +51,17 @@ export class Speaker {
         }
         const speech = this.active;
         if (!speech || speech.worker !== worker) return;
-        if (line === 'PLAYBACK_STARTED' && !speech.playbackStarted) {
+        if (line.startsWith('AUDIO ')) {
+          const [, rate, pcm] = line.split(' ');
+          const sampleRate = Number(rate);
+          if (Number.isInteger(sampleRate) && sampleRate > 0 && pcm) {
+            speech.levels = new AudioLevels(sampleRate);
+            speech.levels.push(Buffer.from(pcm, 'base64'));
+          }
+        } else if (line === 'PLAYBACK_STARTED' && !speech.playbackStarted) {
           speech.playbackStarted = true;
           speech.onPlaybackStart?.();
+          speech.stopLevels = followPlayback(speech.levels, speech.onLevel);
         } else if (line === 'DONE') {
           this.active = null;
           speech.cleanup();
@@ -62,7 +74,7 @@ export class Speaker {
     return this.ready;
   }
 
-  async speak(text: string, signal?: AbortSignal, onPlaybackStart?: () => void): Promise<boolean> {
+  async speak(text: string, signal?: AbortSignal, onPlaybackStart?: () => void, onLevel?: (level: number) => void): Promise<boolean> {
     await this.start();
     if (signal?.aborted) throw new Error('Cancelled');
     if (this.active) throw new Error('TTS is already speaking');
@@ -71,8 +83,8 @@ export class Speaker {
     return new Promise((resolve, reject) => {
       const abort = () => this.stop();
       const speech: ActiveSpeech = {
-        worker, playbackStarted: false, onPlaybackStart, resolve, reject,
-        cleanup: () => signal?.removeEventListener('abort', abort),
+        worker, playbackStarted: false, onPlaybackStart, onLevel, levels: new AudioLevels(16000), resolve, reject,
+        cleanup: () => { signal?.removeEventListener('abort', abort); speech.stopLevels?.(); },
       };
       this.active = speech;
       signal?.addEventListener('abort', abort, { once: true });

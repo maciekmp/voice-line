@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { launch } from '../process.ts';
+import { AudioLevels } from './levels.ts';
 
 function wavHeader(bytes: number): Buffer {
   const header = Buffer.alloc(44);
@@ -30,6 +31,8 @@ export class Recorder {
   private audioPeakDbfs = -Infinity;
   private readonly directory: string;
   private readonly inputArgs: string[];
+  onLevel?: (level: number) => void;
+  private levels = new AudioLevels(16000);
   constructor(device: string, directory: string, inputArgs?: string[]) {
     this.directory = directory;
     this.inputArgs = inputArgs ?? ['-f', 'dshow', '-i', `audio=${device}`];
@@ -56,7 +59,10 @@ export class Recorder {
       const timer = setTimeout(() => { child.kill(); fail(this.error || 'no audio received within 10 seconds'); }, 10_000);
       child.stdout.on('data', (chunk: Buffer) => {
         if (!settled) { settled = true; clearTimeout(timer); resolve(); }
-        if (this.chunks) this.chunks.push(Buffer.from(chunk));
+        if (this.chunks) {
+          this.chunks.push(Buffer.from(chunk));
+          for (const level of this.levels.push(chunk)) this.onLevel?.(level);
+        }
       });
       child.stderr.setEncoding('utf8').on('data', chunk => this.error = (this.error + chunk).slice(-2000));
       child.on('error', error => fail(String(error)));
@@ -68,6 +74,7 @@ export class Recorder {
   start(): void {
     if (this.chunks) return;
     this.chunks = [];
+    this.levels = new AudioLevels(16000);
     if (!this.capture) void this.startCapture().catch(() => {});
   }
 
@@ -75,6 +82,7 @@ export class Recorder {
     const chunks = this.chunks;
     if (!chunks) throw new Error('Recorder is not running');
     this.chunks = null;
+    this.onLevel?.(0);
     const pcm = Buffer.concat(chunks);
     if (!pcm.length) throw new Error(`No microphone samples recorded. ${this.error}`);
     this.audioSeconds = pcm.length / 32000;
@@ -92,6 +100,6 @@ export class Recorder {
     return path;
   }
 
-  cancel(): void { this.chunks = null; }
+  cancel(): void { this.chunks = null; this.onLevel?.(0); }
   shutdown(): void { this.cancel(); this.capture?.kill(); this.capture = null; }
 }

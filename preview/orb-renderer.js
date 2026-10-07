@@ -67,6 +67,7 @@ export class OrbRenderer {
   time = 0;
   activity = 0;
   speaking = 0;
+  envelope = 0;
   renderSize = 1;
   last = 0;
   frame = 0;
@@ -147,9 +148,13 @@ export class OrbRenderer {
     this.frame = requestAnimationFrame(this.tick);
   };
   draw(delta) {
+    const reactive = this.host.hasAttribute('audio-reactive');
+    const level = reactive && ['listening', 'speaking'].includes(this.host.state) ? this.host.level : 0;
+    this.envelope += (level - this.envelope) * (1 - Math.exp(-delta * (level > this.envelope ? 24 : 7)));
+    if (reactive) this.host.style.setProperty('--audio-scale', String(1 + this.envelope * .18));
     const target = this.host.state === 'speaking' ? .65 + .25 * Math.sin(this.time * 7.3)
       : this.host.state === 'listening' ? .28 : .06;
-    this.activity += (target - this.activity) * (1 - Math.exp(-delta * 5));
+    this.activity += ((reactive ? .06 + this.envelope * .85 : target) - this.activity) * (1 - Math.exp(-delta * 5));
     this.speaking += ((this.host.state === 'speaking' ? 1 : 0) - this.speaking)
       * (1 - Math.exp(-delta * 3));
     // Speech accelerates the cloud flow fourfold, easing with the speaking blend.

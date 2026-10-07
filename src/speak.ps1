@@ -17,7 +17,17 @@ $voice.Rate = $rate
 [Console]::Out.Flush()
 while ($null -ne ($line = [Console]::In.ReadLine())) {
   $request = ConvertFrom-Json -InputObject $line
-  [void]$voice.Speak([string]$request.text, 1) # SVSFlagsAsync
+  $stream = New-Object -ComObject SAPI.SpMemoryStream
+  $stream.Format.Type = 18 # SAFT16kHz16BitMono
+  $voice.AudioOutputStream = $stream
+  [void]$voice.Speak([string]$request.text, 0)
+  [byte[]]$pcm = $stream.GetData()
+  $sampleRate = $stream.Format.GetWaveFormatEx().SamplesPerSec
+  [Console]::Out.WriteLine('AUDIO ' + $sampleRate + ' ' + [Convert]::ToBase64String($pcm))
+  [Console]::Out.Flush()
+  [void]$stream.Seek(0, 0)
+  $voice.AudioOutputStream = $null
+  [void]$voice.SpeakStream($stream, 1) # Play the measured PCM, rather than synthesizing twice.
   $playbackReported = $false
   while ($true) {
     # SRSEIsSpeaking (2): SAPI has claimed the audio queue for this voice.

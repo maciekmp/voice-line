@@ -94,6 +94,13 @@ the sole state indicator: transcript text and the tray identify the current oper
 
 ## Motion and platform
 
+Desktop speech uses measured 40 ms PCM RMS windows for microphone and both TTS
+engines. The shared orb scales from 1 to 1.18 with a fast attack and gentle release;
+silence returns it to its base size. Its 54 px hit target stays fixed. Audio-level
+IPC updates only the orb, never conversation layout or visibility. Reduced motion
+disables scaling and pausing freezes it. SAPI synthesizes to memory before playback
+so its envelope matches the played audio; no extra audio file is retained.
+
 The orb enters and exits gently; it is hidden during idle and startup and remains
 visible through transcription, answer generation and playback. Interrupted or
 failed cycles also hide it. While transcribing, thinking and preparing speech,
@@ -107,6 +114,12 @@ The tray and window menus are native platform surfaces. Renderer Node access is
 disabled; a sandboxed preload exposes only explicit commands and state events.
 The orb remains visible after playback while the pointer is over either the orb
 or popup, including a one-second grace period; both hide after leaving them.
+During every active voice state, leaving both surfaces may close the popup after
+one second, but never hides the orb. Escape also dismisses only the popup while
+work is active. If the exit timer has already expired, completion hides the orb;
+otherwise the remaining grace period or hover keeps it visible. Starting voice
+or text work cancels an idle exit timer. Verification flows are maintained in
+`VERIFICATION-FLOWS.md`.
 The desktop orb does not steal focus. Hover opens the conversation popup without
 focus; a one-second exit delay allows crossing into it. Starting a new recording
 keeps the visible popup's size stable. Answer text suppresses the status label.

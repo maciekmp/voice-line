@@ -1,6 +1,7 @@
 import { access, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { launch } from './process.ts';
+import { AudioLevels, followPlayback } from './audio/levels.ts';
 
 type Process = ReturnType<typeof launch>;
 
@@ -35,7 +36,7 @@ export class PiperSpeaker {
     return this.ready;
   }
 
-  async speak(text: string, signal?: AbortSignal, onPlaybackStart?: () => void): Promise<boolean> {
+  async speak(text: string, signal?: AbortSignal, onPlaybackStart?: () => void, onLevel?: (level: number) => void): Promise<boolean> {
     await this.start();
     if (signal?.aborted) throw new Error('Cancelled');
     if (this.active) throw new Error('TTS is already speaking');
@@ -45,10 +46,13 @@ export class PiperSpeaker {
       '-hide_banner', '-loglevel', 'info', '-stats', '-nodisp', '-autoexit',
       '-f', 's16le', '-ar', String(this.sampleRate), '-i', 'pipe:0',
     ]);
+    const levels = new AudioLevels(this.sampleRate);
+    piper.stdout.on('data', (chunk: Buffer) => levels.push(chunk));
     piper.stdout.pipe(player.stdin);
 
     return new Promise((resolveSpeech, rejectSpeech) => {
       let settled = false;
+      let stopLevels: (() => void) | undefined;
       let piperDone = false;
       let playerDone = false;
       let piperCode = 1;
@@ -61,6 +65,7 @@ export class PiperSpeaker {
       const finish = (error?: Error) => {
         if (settled) return;
         settled = true;
+        stopLevels?.();
         if (this.active === active) this.active = null;
         signal?.removeEventListener('abort', abort);
         piper.stdout.unpipe(player.stdin);
@@ -85,6 +90,7 @@ export class PiperSpeaker {
         if (!playbackStarted && /\bM-A:\s*-?\d/.test(status)) {
           playbackStarted = true;
           onPlaybackStart?.();
+          stopLevels = followPlayback(levels, onLevel);
         }
       });
       piper.on('error', error => finish(error));

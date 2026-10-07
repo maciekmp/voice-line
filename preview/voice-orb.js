@@ -5,6 +5,7 @@ const states = new Set(['idle', 'listening', 'speaking']);
 class VoiceOrb extends HTMLElement {
   static observedAttributes = ['state', 'paused', 'render-scale'];
   renderer;
+  level = 0;
 
   constructor() {
     super();
@@ -31,9 +32,13 @@ class VoiceOrb extends HTMLElement {
         :host([state="listening"]) .sphere { animation: listen-breathe 2.2s ease-in-out infinite; }
         :host([state="speaking"]) .sphere { animation: speak-breathe 1.1s ease-in-out infinite; }
         :host([paused]) .sphere { animation-play-state: paused; }
+        :host([audio-reactive]) .sphere {
+          animation: none; scale: var(--audio-scale, 1);
+          transition: scale 100ms ease-out;
+        }
         @keyframes listen-breathe { 0%, 100% { transform: scale(.94); } 50% { transform: scale(1); } }
         @keyframes speak-breathe { 0%, 100% { transform: scale(.97); } 45% { transform: scale(1); } }
-        @media (prefers-reduced-motion: reduce) { .sphere { animation: none !important; } }
+        @media (prefers-reduced-motion: reduce) { .sphere { animation: none !important; scale: 1 !important; transition: none !important; } }
       </style>
       <div class="sphere" aria-hidden="true">
         <canvas></canvas>

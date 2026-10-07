@@ -51,6 +51,9 @@ function sendVoice(update = {}) {
 
 function onEngineMessage(message) {
   if (message?.type === 'voice') sendVoice(message);
+  else if (message?.type === 'level' && message.source === voice.state && Number.isFinite(message.level)) {
+    orbWindow?.webContents.send('orb:level', Math.min(1, Math.max(0, message.level)));
+  }
   else if (message?.type === 'ui' && message.action === 'compose') overlay.compose();
 }
 function startEngine() {
@@ -376,19 +379,36 @@ async function verify() {
   const listening = await inspect();
   assert.equal(listening.state, 'listening');
   const reducedMotion = await orbWindow.webContents.executeJavaScript("matchMedia('(prefers-reduced-motion: reduce)').matches");
-  assert.equal(listening.animation, reducedMotion ? 'none' : 'listen-breathe');
+  assert.equal(listening.animation, 'none', 'Desktop uses the measured audio envelope');
   state = 'speaking'; paused = true; sendSettings();
   await orbWindow.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(resolve))');
   const changed = await inspect();
   assert.equal(changed.state, 'speaking');
   assert.equal(changed.paused, true);
-  assert.equal(changed.animation, reducedMotion ? 'none' : 'speak-breathe');
+  assert.equal(changed.animation, 'none');
   // Exercise real snapshots in both sandboxed renderers without opening a microphone.
   sendVoice({ state: 'idle', ready: true }); updateVisibility(true);
   await new Promise(resolve => setTimeout(resolve, 300));
   assert.equal(orbWindow.isVisible(), false, 'Orb stays hidden while idle');
   sendVoice({ state: 'listening', question: '', answer: '' }); updateVisibility(true);
   assert.equal(orbWindow.isVisible(), true, 'Recording reveals the orb');
+  const audioScale = () => orbWindow.webContents.executeJavaScript("Number(getComputedStyle(document.querySelector('voice-orb').shadowRoot.querySelector('.sphere')).scale)");
+  paused = false; sendSettings();
+  onEngineMessage({ type: 'level', source: 'listening', level: 1 });
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.ok(reducedMotion ? await audioScale() === 1 : await audioScale() > 1.15, 'Loud speech grows the orb');
+  onEngineMessage({ type: 'level', source: 'listening', level: 0 });
+  await new Promise(resolve => setTimeout(resolve, 700));
+  assert.ok(await audioScale() < 1.01, 'Silence returns the orb to its base size');
+  sendVoice({ state: 'speaking' });
+  onEngineMessage({ type: 'level', source: 'speaking', level: .8 });
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.ok(reducedMotion ? await audioScale() === 1 : await audioScale() > 1.1, 'Playback also drives scale');
+  sendVoice({ state: 'idle' });
+  onEngineMessage({ type: 'level', source: 'speaking', level: 1 });
+  await new Promise(resolve => setTimeout(resolve, 700));
+  assert.ok(await audioScale() < 1.01, 'Late playback levels cannot animate an idle orb');
+  console.log('Audio reactive scale checks: passed');
   sendVoice({ state: 'thinking', question: 'Test <script>unsafe</script>' }); updateVisibility(true);
   assert.equal(orbWindow.isVisible(), true, 'Processing keeps the orb visible');
   await orbWindow.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
@@ -474,6 +494,18 @@ async function verify() {
   updateVisibility(true);
   await new Promise(resolve => setTimeout(resolve, 300));
   assert.equal(orbWindow.isVisible(), false, 'Leaving both surfaces lets the idle orb hide');
+  for (const activeState of ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking']) {
+    sendVoice({ state: activeState }); updateVisibility(true);
+    await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerenter')); document.querySelector('button').dispatchEvent(new PointerEvent('pointerleave'))");
+    await new Promise(resolve => setTimeout(resolve, 1400));
+    updateVisibility(true);
+    assert.equal(panelWindow.isVisible(), false, `${activeState}: departure closes popup`);
+    assert.equal(orbWindow.isVisible(), true, `${activeState}: departure cannot hide active orb`);
+  }
+  sendVoice({ state: 'idle' }); updateVisibility(true);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(orbWindow.isVisible(), false, 'Completion hides orb after departure timer has expired');
+  console.log('Active voice departure checks: passed');
   sendVoice({ state: 'error', ready: false, message: 'Sprawdź mikrofon.' });
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#retry').hidden"), false);
   sendVoice({ state: 'idle', ready: true, reset: true });
