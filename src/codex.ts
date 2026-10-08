@@ -1,8 +1,7 @@
 import { createInterface } from 'node:readline';
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { launch } from './process.ts';
+import { ConversationSession } from './conversation-session.ts';
 
 const INSTRUCTIONS = 'Jesteś asystentem głosowym. Nie uruchamiaj narzędzi, nie czytaj ani nie zmieniaj plików. Dostajesz surową transkrypcję po polsku. Najpierw popraw ją do zwięzłego pytania: usuń wypełniacze, powtórzenia i wycofane fragmenty, uwzględnij ostatnią samokorektę. Następnie odpowiedz po polsku, krótko i naturalnie, korzystając z kontekstu rozmowy. Zwróć JSON z polami prompt (poprawione pytanie) i answer (tekst do wypowiedzenia). Jeśli transkrypcja jest niezrozumiała, poproś o powtórzenie zamiast zgadywać. Surowa transkrypcja:\n';
 const schemaPath = fileURLToPath(new URL('./response.schema.json', import.meta.url));
@@ -10,31 +9,25 @@ type Turn = { text: string; threadId?: string; startupMs?: number; turnMs?: numb
 export type VoiceReply = { prompt: string; answer: string; startupMs?: number; turnMs?: number };
 
 export class CodexClient {
-  private threadId: string | null = null;
+  private readonly session: ConversationSession;
   private active: ReturnType<typeof launch> | null = null;
   private readonly cwd: string;
   private readonly executable: string;
-  private readonly sessionFile: string;
   constructor(cwd: string, executable = 'codex.cmd') {
     this.cwd = cwd; this.executable = executable;
-    this.sessionFile = join(cwd, '.chatgpt-button-session.json');
-    if (existsSync(this.sessionFile)) {
-      try {
-        const saved = JSON.parse(readFileSync(this.sessionFile, 'utf8')).threadId;
-        if (typeof saved === 'string' && /^[a-f\d-]{36}$/i.test(saved)) this.threadId = saved;
-      } catch { /* A corrupt session file starts a new conversation. */ }
-    }
+    this.session = new ConversationSession(cwd);
   }
   start(): Promise<void> { return Promise.resolve(); }
   stop(): void { this.cancel(); }
-  reset(): void { this.cancel(); this.threadId = null; if (existsSync(this.sessionFile)) unlinkSync(this.sessionFile); }
+  reset(): void { this.cancel(); this.session.reset(); }
   cancel(): void { this.active?.kill(); this.active = null; }
-  get currentThreadId(): string | null { return this.threadId; }
+  get currentThreadId(): string | null { return this.session.threadId; }
   async respond(raw: string, signal?: AbortSignal): Promise<VoiceReply> {
+    this.session.expire();
     const model = process.env.CODEX_MODEL?.trim();
     const modelArgs = model ? ['-m', model] : [];
-    const args = this.threadId
-      ? ['exec', 'resume', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', this.threadId, '-']
+    const args = this.session.threadId
+      ? ['exec', 'resume', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', this.session.threadId, '-']
       : ['exec', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', '-s', 'read-only', '-'];
     const result = await this.run(args, INSTRUCTIONS + raw, signal);
     let reply: VoiceReply;
@@ -42,9 +35,9 @@ export class CodexClient {
     catch { throw new Error(`Codex returned invalid JSON: ${result.text}`); }
     if (typeof reply.prompt !== 'string' || typeof reply.answer !== 'string' || !reply.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
     if (result.threadId) {
-      this.threadId = result.threadId;
-      writeFileSync(this.sessionFile, JSON.stringify({ threadId: result.threadId }), 'utf8');
+      this.session.threadId = result.threadId;
     }
+    this.session.answered();
     return { ...reply, startupMs: result.startupMs, turnMs: result.turnMs };
   }
   private run(args: string[], prompt: string, signal?: AbortSignal): Promise<Turn> {

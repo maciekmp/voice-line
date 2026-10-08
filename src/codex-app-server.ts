@@ -1,8 +1,8 @@
 import { createInterface } from 'node:readline';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { launch } from './process.ts';
+import { ConversationSession } from './conversation-session.ts';
 import type { VoiceReply } from './codex.ts';
 
 const INSTRUCTIONS = 'Jesteś asystentem głosowym. Nie uruchamiaj narzędzi, nie czytaj ani nie zmieniaj plików. Dostajesz surową transkrypcję po polsku. Najpierw popraw ją do zwięzłego pytania: usuń wypełniacze, powtórzenia i wycofane fragmenty, uwzględnij ostatnią samokorektę. Następnie odpowiedz po polsku, krótko i naturalnie, korzystając z kontekstu rozmowy. Zwróć JSON z polami prompt (poprawione pytanie) i answer (tekst do wypowiedzenia). Jeśli transkrypcja jest niezrozumiała, poproś o powtórzenie zamiast zgadywać. Surowa transkrypcja:\n';
@@ -22,28 +22,21 @@ type ActiveTurn = {
 
 export class CodexAppServer {
   private readonly cwd: string;
-  private readonly sessionFile: string;
+  private readonly session: ConversationSession;
   private readonly model = process.env.CODEX_MODEL?.trim() || undefined;
   private child: ReturnType<typeof launch> | null = null;
   private startup: Promise<void> | null = null;
   private nextId = 0;
   private pending = new Map<number, Pending>();
   private turn: ActiveTurn | null = null;
-  private threadId: string | null = null;
   private diagnostics = '';
 
   constructor(cwd: string) {
     this.cwd = cwd;
-    this.sessionFile = join(cwd, '.chatgpt-button-session.json');
-    if (existsSync(this.sessionFile)) {
-      try {
-        const saved = JSON.parse(readFileSync(this.sessionFile, 'utf8')).threadId;
-        if (typeof saved === 'string' && /^[a-f\d-]{36}$/i.test(saved)) this.threadId = saved;
-      } catch { /* Start a new conversation if the session file is invalid. */ }
-    }
+    this.session = new ConversationSession(cwd);
   }
 
-  get currentThreadId(): string | null { return this.threadId; }
+  get currentThreadId(): string | null { return this.session.threadId; }
 
   start(): Promise<void> {
     if (!this.startup) this.startup = this.open().catch(error => { this.startup = null; throw error; });
@@ -68,16 +61,16 @@ export class CodexAppServer {
   }
 
   private async openThread(): Promise<void> {
+    this.session.expire();
     let reply: any;
-    if (this.threadId) {
-      try { reply = await this.request('thread/resume', { threadId: this.threadId, ...(this.model && { model: this.model }) }); }
-      catch { this.threadId = null; }
+    if (this.session.threadId) {
+      try { reply = await this.request('thread/resume', { threadId: this.session.threadId, ...(this.model && { model: this.model }) }); }
+      catch { this.session.reset(); }
     }
     if (!reply) reply = await this.request('thread/start', { cwd: this.cwd, approvalPolicy: 'never', sandbox: 'read-only', ...(this.model && { model: this.model }) });
     const id = reply?.thread?.id;
     if (typeof id !== 'string') throw new Error('Codex app-server returned no thread ID');
-    this.threadId = id;
-    writeFileSync(this.sessionFile, JSON.stringify({ threadId: id }), 'utf8');
+    this.session.threadId = id;
   }
 
   private send(message: object): void {
@@ -132,12 +125,13 @@ export class CodexAppServer {
     await this.start();
     if (this.turn) await this.turn.completion.catch(() => {});
     if (signal?.aborted) throw new Error('Cancelled');
-    if (!this.threadId) await this.openThread();
-    if (!this.threadId) throw new Error('Codex thread is unavailable');
+    this.session.expire();
+    if (!this.session.threadId) await this.openThread();
+    if (!this.session.threadId) throw new Error('Codex thread is unavailable');
     let resolve!: () => void, reject!: (error: Error) => void;
     const completion = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
     void completion.catch(() => {});
-    const turn: ActiveTurn = { threadId: this.threadId, text: '', cancelled: false, completion, resolve, reject };
+    const turn: ActiveTurn = { threadId: this.session.threadId, text: '', cancelled: false, completion, resolve, reject };
     this.turn = turn;
     const abort = () => {
       turn.cancelled = true;
@@ -165,6 +159,7 @@ export class CodexAppServer {
       try { parsed = JSON.parse(turn.text); }
       catch { throw new Error(`Codex returned invalid JSON: ${turn.text}`); }
       if (typeof parsed.prompt !== 'string' || typeof parsed.answer !== 'string' || !parsed.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
+      this.session.answered();
       return { ...parsed, startupMs, turnMs: performance.now() - startedAt - startupMs };
     } finally {
       signal?.removeEventListener('abort', abort);
@@ -181,8 +176,7 @@ export class CodexAppServer {
 
   reset(): void {
     this.cancel();
-    this.threadId = null;
-    if (existsSync(this.sessionFile)) unlinkSync(this.sessionFile);
+    this.session.reset();
     // The running server opens a new thread when the next response starts.
   }
 
