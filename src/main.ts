@@ -7,6 +7,7 @@ import { Recorder } from './audio/recorder.ts';
 import { WhisperTranscriber } from './stt/transcriber.ts';
 import { CodexClient } from './codex.ts';
 import { CodexAppServer } from './codex-app-server.ts';
+import { codexErrorMessage } from './codex-error.ts';
 import { Speaker } from './speaker.ts';
 import { PiperSpeaker } from './piper-speaker.ts';
 
@@ -120,7 +121,7 @@ async function processSpeech(token: number, releasedAt: number) {
       publish('idle');
     }
   } catch (error) {
-    if (token === generation) { console.error(error); publish('error', { message: 'Nie udało się przygotować lub odczytać odpowiedzi. Spróbuj nagrać pytanie ponownie. Szczegóły są w terminalu.', ready: servicesReady }); }
+    if (token === generation) { console.error(error); publish('error', { message: codexErrorMessage(error, 'Nie udało się przygotować lub odczytać odpowiedzi. Spróbuj nagrać pytanie ponownie. Szczegóły są w terminalu.'), ready: servicesReady }); }
   } finally {
     if (wav) {
       if (saveAudio) console.log(`Saved WAV recording: ${wav}`);
@@ -143,7 +144,7 @@ async function processText(text: string) {
   } catch (error) {
     if (token === generation) {
       console.error(error);
-      publish('error', { ready: servicesReady, message: 'Nie udało się przygotować odpowiedzi. Wyślij wiadomość ponownie.' });
+      publish('error', { ready: servicesReady, message: codexErrorMessage(error, 'Nie udało się przygotować odpowiedzi. Wyślij wiadomość ponownie.') });
     }
   } finally { if (current === controller) current = null; }
 }
@@ -216,7 +217,7 @@ else {
     servicesReady = true;
     publish('idle', { ready: true });
     console.log(`Ready. Hold Copilot (vk=${key}); Ctrl+Shift+N resets; Ctrl+C exits.`);
-  }).catch(error => { console.error(error); publish('error', { message: 'Nie udało się uruchomić usług. Sprawdź mikrofon, Whisper, Codex i ustawienia .env, a następnie uruchom usługi ponownie.', ready: false }); });
+  }).catch(error => { console.error(error); publish('error', { message: codexErrorMessage(error, 'Nie udało się uruchomić usług. Sprawdź mikrofon, Whisper, Codex i ustawienia .env, a następnie uruchom usługi ponownie.'), ready: false }); });
 }
 function shutdown() { desktopCopilot.cancel(); interrupt(); recorder.shutdown(); stt.stop(); codex.stop(); speaker.shutdown(); keyboard.stop(); process.exit(0); }
 process.on('SIGINT', shutdown);
