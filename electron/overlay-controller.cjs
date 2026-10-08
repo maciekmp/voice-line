@@ -6,13 +6,14 @@ function createOverlayController({ onChange, delay = 1000, timers = globalThis }
   let voiceState = 'starting';
   let mode = 'hidden';
   let dismissed = false;
+  let pinned = false;
   let expiry;
   let revision = 0;
   const hovered = new Set();
   let last = '';
 
   function snapshot() {
-    return { mode, orbVisible: ACTIVE.has(voiceState) || hovered.size > 0 || expiry !== undefined
+    return { mode, pinned, orbVisible: ACTIVE.has(voiceState) || hovered.size > 0 || expiry !== undefined
       || (!dismissed && mode !== 'hidden') };
   }
   function publish(focus = false) {
@@ -27,9 +28,10 @@ function createOverlayController({ onChange, delay = 1000, timers = globalThis }
   }
   function scheduleExpiry() {
     cancelExpiry();
+    if (pinned) return;
     const expected = revision;
     expiry = timers.setTimeout(() => {
-      if (expected !== revision || hovered.size) return;
+      if (expected !== revision || hovered.size || pinned) return;
       expiry = undefined;
       dismissed = true;
       mode = 'hidden';
@@ -38,6 +40,13 @@ function createOverlayController({ onChange, delay = 1000, timers = globalThis }
   }
   return {
     snapshot,
+    togglePin() {
+      if (mode === 'hidden') return;
+      pinned = !pinned;
+      cancelExpiry();
+      if (!pinned && !hovered.size) scheduleExpiry();
+      publish();
+    },
     open(chat = true) {
       cancelExpiry();
       dismissed = false;
@@ -82,6 +91,7 @@ function createOverlayController({ onChange, delay = 1000, timers = globalThis }
       publish();
     },
     dismiss() {
+      pinned = false;
       cancelExpiry();
       hovered.delete('panel');
       mode = 'hidden';

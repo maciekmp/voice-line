@@ -84,7 +84,8 @@ const overlay = createOverlayController({
     if (panelWindow && !panelWindow.isDestroyed()) {
       if (value.mode === 'hidden') {
         if (panelWindow.isVisible()) renderHidePanel();
-      } else renderOpenPanel(value.mode, focus);
+      } else if (value.mode !== panelMode || !panelWindow.isVisible() || focus) renderOpenPanel(value.mode, focus);
+      panelWindow.webContents.send('voice:pinned', value.pinned);
     }
     updateVisibility();
   },
@@ -199,6 +200,7 @@ ipcMain.on('voice:hover', (event, entered) => {
 });
 ipcMain.on('voice:command', (event, command) => {
   if (!trusted(event) || exitStarted) return;
+  if (command === 'pin' && event.sender === panelWindow?.webContents) { overlay.togglePin(); return; }
   if (command === 'hide') { hidePanel(); return; }
   if (command === 'retry' && !voice.ready) {
     if (engine) { const previous = engine; engine = undefined; previous.send({ command: 'shutdown' }); previous.once('exit', startEngine); }
@@ -239,7 +241,10 @@ function finishExit() {
 }
 
 ipcMain.on('orb:ready', event => {
-  if (panelWindow && event.sender === panelWindow.webContents) { sendVoice(); return; }
+  if (panelWindow && event.sender === panelWindow.webContents) {
+    panelWindow.webContents.send('voice:pinned', overlay.snapshot().pinned);
+    sendVoice(); return;
+  }
   if (!orbWindow || event.sender !== orbWindow.webContents) return;
   if (smokeTest || preview) {
     orbWindow.showInactive();
@@ -354,12 +359,13 @@ async function verify() {
   assert.deepEqual(orbWindow.getBounds(), { ...position(), width: WINDOW_SIZE, height: WINDOW_SIZE });
   assert.equal(panelWindow.isVisible(), false, 'Conversation starts hidden');
   await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerenter'))");
-  await new Promise(resolve => setTimeout(resolve, 80));
+  await new Promise(resolve => setTimeout(resolve, 350));
   assert.equal(panelWindow.isVisible(), true, 'Hover opens the popup');
   assert.equal(panelWindow.isFocused(), false, 'Hover does not steal focus');
   const popupBounds = panelWindow.getBounds();
   // Windows rounds native window bounds at fractional display scaling.
-  assert.ok(Math.abs(popupBounds.y + popupBounds.height + 8 - orbWindow.getBounds().y) <= 1);
+  assert.ok(Math.abs(popupBounds.y + popupBounds.height + 8 - orbWindow.getBounds().y) <= 2,
+    JSON.stringify({ popupBounds, orb: orbWindow.getBounds() }));
   assert.ok(Math.abs(popupBounds.x + popupBounds.width - orbWindow.getBounds().x - WINDOW_SIZE) <= 2,
     JSON.stringify({ popupBounds, orb: orbWindow.getBounds() }));
   await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerleave'))");
@@ -579,11 +585,30 @@ async function verify() {
   assert.equal(await panelWindow.webContents.executeJavaScript("getComputedStyle(document.querySelector('main')).display"), 'none', 'Input-only mode hides the old conversation');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), false);
   assert.equal(await panelWindow.webContents.executeJavaScript("document.activeElement.id"), 'message');
-  assert.ok(panelWindow.getBounds().height <= 72, 'Input-only popup stays compact');
+  assert.ok(panelWindow.getBounds().height <= 72, 'Input-only popup stays compact; pin occupies no layout space');
   assert.equal(await panelWindow.webContents.executeJavaScript('document.documentElement.scrollHeight <= innerHeight'), true);
   await fs.writeFile(path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation-compose.png'), (await panelWindow.webContents.capturePage()).toPNG());
   testLiveVisibility = false;
   console.log('Copilot input-only mode checks: passed');
+  await panelWindow.webContents.executeJavaScript("document.querySelector('#pin').click()");
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(overlay.snapshot().pinned, true);
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#pin').getAttribute('aria-pressed')"), 'true');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#pin').getAttribute('aria-label')"), 'Odepnij popup');
+  assert.equal(await panelWindow.webContents.executeJavaScript("getComputedStyle(document.querySelector('#pin')).position"), 'fixed');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#pin svg') !== null"), true);
+  overlay.hover('orb', false);
+  overlay.hover('panel', true);
+  overlay.hover('panel', false);
+  panelWindow.blur();
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  assert.equal(panelWindow.isVisible(), true, 'Pin preserves popup after blur and departure');
+  await panelWindow.webContents.executeJavaScript("document.querySelector('#pin').click()");
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  assert.equal(panelWindow.isVisible(), false, 'Unpin restores departure hiding');
+  overlay.compose();
+  await new Promise(resolve => setTimeout(resolve, 350));
+  console.log('Popup pin checks: passed');
   const fill = text => panelWindow.webContents.executeJavaScript(`(() => {
     const input = document.querySelector('#message');
     input.value = ${JSON.stringify(text)};

@@ -16,6 +16,12 @@ function reportSize() {
 const sizeObserver = new ResizeObserver(reportSize);
 sizeObserver.observe(document.querySelector('main'));
 sizeObserver.observe(get('composer'));
+get('pin').addEventListener('click', () => window.orbDesktop.command('pin'));
+window.orbDesktop.onPinned(pinned => {
+  get('pin').setAttribute('aria-pressed', String(pinned));
+  get('pin').setAttribute('aria-label', pinned ? 'Odepnij popup' : 'Przypnij popup');
+  get('pin').title = pinned ? 'Odepnij popup' : 'Przypnij popup';
+});
 window.orbDesktop.onResizing(resizing => {
   document.documentElement.dataset.resizing = String(resizing);
   if (!resizing && scrollToLatest && document.body.dataset.mode === 'chat') {

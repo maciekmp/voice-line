@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld('orbDesktop', {
     ipcRenderer.on('voice:mode', listener);
     return () => ipcRenderer.removeListener('voice:mode', listener);
   },
+  onPinned(callback) {
+    const listener = (_event, pinned) => callback(pinned);
+    ipcRenderer.on('voice:pinned', listener);
+    return () => ipcRenderer.removeListener('voice:pinned', listener);
+  },
   command(command) { ipcRenderer.send('voice:command', command); },
   onVoice(callback) {
     const listener = (_event, snapshot) => callback(snapshot);

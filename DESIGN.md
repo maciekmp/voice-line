@@ -126,7 +126,15 @@ keeps the visible popup's size stable. Answer text suppresses the status label.
 Primary mouse press toggles chat and peek before mouse-up; keyboard activation
 of the orb does the same, while tray activation always opens chat. All use the
 same controller. Hover never takes focus; native activation is enabled
-for mouse presses. Escape dismisses explicitly. Focus/blur does not change mode
+for mouse presses. Escape dismisses explicitly and clears pinning. The popup has
+a 24 px icon-only pin button fixed 4 px from the top-right corner in every mode,
+outside document flow, without adding height or changing content/composer spacing.
+The Lucide pin rotates from diagonal to upright when pinned; Polish accessible
+Przypnij popup/Odepnij popup names, tooltips and pressed state describe the action.
+The overlay controller owns pinning: it cancels automatic departure hiding and
+keeps the popup and orb visible when switching applications. Unpinning restores
+the one-second departure delay. Pinning lasts until unpinned or dismissed.
+Focus/blur does not change mode
 or independently schedule hiding. One controller owns visibility and mode;
 voice snapshots do not reactivate windows or replace chat with peek. Starting
 a new recording cancels the previous hide timeout. Drafts survive dismissal.
