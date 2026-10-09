@@ -12,11 +12,15 @@ document.querySelector('button').addEventListener('pointerdown', event => {
 document.querySelector('button').addEventListener('click', event => {
   if (event.detail === 0) window.orbDesktop.open(); // Keyboard activation.
 });
-window.orbDesktop.onVoice(({ state, message }) => {
+window.orbDesktop.onVoice(({ state, message, mode }) => {
   const labels = { starting: 'Uruchamianie', idle: 'Gotowy', listening: 'Słucham', transcribing: 'Rozpoznaję mowę', thinking: 'Przygotowuję odpowiedź', 'preparing-speech': 'Przygotowuję głos', speaking: 'Odczytuję odpowiedź', error: 'Wymagana uwaga' };
   const button = document.querySelector('button');
+  const modeLabel = mode === 'realtime' ? 'API' : mode === 'local' ? 'LOCAL' : '';
+  const indicator = document.querySelector('#voice-mode');
+  indicator.hidden = !modeLabel;
+  indicator.querySelector('span').textContent = modeLabel;
   button.removeAttribute('title');
-  button.setAttribute('aria-label', `${labels[state] || 'Voice Line'} — kliknij, aby rozwinąć lub zwinąć rozmowę${message ? `: ${message}` : ''}`);
+  button.setAttribute('aria-label', `${labels[state] || 'Voice Line'}${modeLabel ? `, tryb ${modeLabel}` : ''} — kliknij, aby rozwinąć lub zwinąć rozmowę${message ? `: ${message}` : ''}`);
   button.dataset.state = state;
 });
 window.orbDesktop.onPresence(presence => {

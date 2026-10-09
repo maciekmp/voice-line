@@ -13,8 +13,8 @@ export class ConversationSession {
   private readonly file: string;
   private readonly now: () => number;
 
-  constructor(cwd: string, now: () => number = Date.now) {
-    this.file = join(cwd, '.chatgpt-button-session.json');
+  constructor(cwd: string, now: () => number = Date.now, filename = '.chatgpt-button-session.json') {
+    this.file = join(cwd, filename);
     this.now = now;
     try {
       const saved = JSON.parse(readFileSync(this.file, 'utf8'));

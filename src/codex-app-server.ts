@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { mkdir } from 'node:fs/promises';
 import { launch } from './process.ts';
 import { ConversationSession } from './conversation-session.ts';
 import { readConversationHistory } from './conversation-history.ts';
@@ -23,7 +24,7 @@ type ActiveTurn = {
 
 export class CodexAppServer {
   private readonly cwd: string;
-  private readonly session: ConversationSession;
+  protected readonly session: ConversationSession;
   private readonly model = process.env.CODEX_MODEL?.trim() || undefined;
   private child: ReturnType<typeof launch> | null = null;
   private startup: Promise<void> | null = null;
@@ -32,11 +33,13 @@ export class CodexAppServer {
   private turn: ActiveTurn | null = null;
   private diagnostics = '';
   private readonly historyOnly: boolean;
+  private readonly connection: { home?: string; apiKey?: string };
 
-  constructor(cwd: string, session = new ConversationSession(cwd), historyOnly = false) {
+  constructor(cwd: string, session = new ConversationSession(cwd), historyOnly = false, connection: { home?: string; apiKey?: string } = {}) {
     this.cwd = cwd;
     this.session = session;
     this.historyOnly = historyOnly;
+    this.connection = connection;
   }
 
   get currentThreadId(): string | null { return this.session.threadId; }
@@ -57,7 +60,7 @@ export class CodexAppServer {
     return restored;
   }
 
-  private readHistory(threadId: string) {
+  protected readHistory(threadId: string) {
     return readConversationHistory((method, params) => this.request(method, params), threadId);
   }
 
@@ -74,16 +77,21 @@ export class CodexAppServer {
   }
 
   private async open(): Promise<void> {
-    const child = launch('codex.cmd', ['app-server', '--listen', 'stdio://'], { cwd: this.cwd });
+    if (this.connection.home) await mkdir(this.connection.home, { recursive: true });
+    const child = launch('codex.cmd', ['app-server', '--listen', 'stdio://'], { cwd: this.cwd,
+      ...(this.connection.home && { env: { CODEX_HOME: this.connection.home, CODEX_SQLITE_HOME: this.connection.home, CODEX_ACCESS_TOKEN: undefined } }),
+    });
     this.child = child;
     child.stderr.setEncoding('utf8').on('data', chunk => this.diagnostics = (this.diagnostics + chunk).slice(-4000));
     createInterface({ input: child.stdout }).on('line', line => this.onLine(line));
-    child.once('error', error => this.onExit(error));
-    child.once('close', code => this.onExit(new Error(`Codex app-server exited (${code}): ${this.diagnostics}`)));
+    child.once('error', error => { if (this.child === child) this.onExit(error); });
+    child.once('close', code => { if (this.child === child) this.onExit(new Error(`Codex app-server exited (${code}): ${this.diagnostics}`)); });
     try {
       await this.request('initialize', { clientInfo: { name: 'chatgpt_button', title: 'ChatGPT Button', version: '0.1.0' },
         capabilities: { experimentalApi: true } });
       this.send({ method: 'initialized', params: {} });
+      // API credentials belong to the dedicated realtime home, never the user's ChatGPT login.
+      if (this.connection.apiKey) await this.request('account/login/start', { type: 'apiKey', apiKey: this.connection.apiKey });
       await this.hydrateSavedHistory();
       if (!this.historyOnly) await this.openThread();
     } catch (error) {
@@ -92,7 +100,7 @@ export class CodexAppServer {
     }
   }
 
-  private async openThread(): Promise<void> {
+  protected async openThread(): Promise<void> {
     this.session.expire();
     let reply: any;
     if (this.session.threadId) {
@@ -110,7 +118,7 @@ export class CodexAppServer {
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
-  private request(method: string, params: object): Promise<any> {
+  protected request(method: string, params: object): Promise<any> {
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -138,6 +146,7 @@ export class CodexAppServer {
       else pending.resolve(reply.result);
       return;
     }
+    this.onNotification(message.method, message.params);
     const turn = this.turn;
     if (!turn || message.params?.threadId !== turn.threadId) return;
     if (message.method === 'item/completed' && message.params.item?.type === 'agentMessage') {
@@ -158,7 +167,11 @@ export class CodexAppServer {
     this.pending.clear();
     this.turn?.reject(error);
     this.turn = null;
+    this.onServerExit(error);
   }
+
+  protected onNotification(_method: string, _params: any): void {}
+  protected onServerExit(_error: Error): void {}
 
   async respond(raw: string, signal?: AbortSignal): Promise<VoiceReply> {
     await this.start();
@@ -219,5 +232,10 @@ export class CodexAppServer {
     // The running server opens a new thread when the next response starts.
   }
 
-  stop(): void { this.cancel(); this.child?.kill(); this.child = null; }
+  stop(): void {
+    this.cancel();
+    const child = this.child;
+    this.onExit(new Error('Codex app-server stopped'));
+    child?.kill();
+  }
 }

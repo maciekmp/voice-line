@@ -4,48 +4,34 @@ import { tmpdir } from 'node:os';
 import { startKeyboard, type KeyEvent } from './keyboard/copilot-key.ts';
 import { createCopilotGesture } from './keyboard/copilot-gesture.ts';
 import { Recorder } from './audio/recorder.ts';
-import { WhisperTranscriber } from './stt/transcriber.ts';
-import { CodexClient } from './codex.ts';
-import { speechText } from '../electron/answer-format.js';
-import { CodexAppServer } from './codex-app-server.ts';
+import { createVoiceEngine } from './voice/create-engine.ts';
 import { codexErrorMessage } from './codex-error.ts';
-import { Speaker } from './speaker.ts';
-import { PiperSpeaker } from './piper-speaker.ts';
 
 const debugKeys = process.argv.includes('--debug-keys');
 const debug = process.argv.includes('--debug');
 const desktop = process.argv.includes('--desktop');
 function publish(state: string, extra: Record<string, unknown> = {}) {
   if (desktop && process.connected) process.send?.({ type: 'voice', state,
-    threadId: codex.currentThreadId, canRestorePrevious: codex.canRestorePrevious, ...extra });
+    mode: engine.mode, threadId: engine.currentThreadId, canRestorePrevious: engine.canRestorePrevious, ...extra });
 }
 const saveAudio = process.env.SAVE_AUDIO === '1';
 const key = Number(process.env.COPILOT_VK ?? '134'); // F23; verify with --debug-keys.
 const device = process.env.MIC_DEVICE ?? '';
-const model = process.env.WHISPER_MODEL ?? '';
-const binary = process.env.WHISPER_BIN ?? 'whisper-cli.exe';
-const language = process.env.STT_LANGUAGE ?? 'pl';
-const ttsMode = process.env.TTS_MODE ?? 'sapi';
 const cwd = resolve('.');
-
-if (!debugKeys && ttsMode !== 'sapi' && ttsMode !== 'piper') {
-  console.error('TTS_MODE must be sapi or piper.');
+if (!debugKeys && !device) {
+  console.error('Set MIC_DEVICE. Run npm run devices and npm run keys first.');
   process.exit(1);
 }
-
-if (!debugKeys && (!device || !model)) {
-  console.error('Set MIC_DEVICE and WHISPER_MODEL. Run npm run devices and npm run keys first.');
-  process.exit(1);
-}
+const engine = (() => {
+  try { return createVoiceEngine(cwd, !debugKeys); }
+  catch (error) { console.error(error instanceof Error ? error.message : error); process.exit(1); }
+})();
 
 const recorder = new Recorder(device, tmpdir());
 function publishLevel(source: 'listening' | 'speaking', level: number) {
   if (desktop && process.connected) process.send?.({ type: 'level', source, level });
 }
 recorder.onLevel = level => publishLevel('listening', level);
-const stt = new WhisperTranscriber(binary, model, language);
-const codex = process.env.CODEX_MODE === 'cli' ? new CodexClient(cwd) : new CodexAppServer(cwd);
-const speaker = ttsMode === 'piper' ? new PiperSpeaker() : new Speaker();
 let held = false, generation = 0, current: AbortController | null = null;
 let recordingStartedAt = 0;
 let servicesReady = false;
@@ -63,33 +49,32 @@ function interrupt() {
   generation++;
   current?.abort();
   current = null;
-  codex.cancel();
-  speaker.stop();
+  engine.cancel();
 }
 
 function resetConversation() {
   desktopCopilot.cancel();
-  interrupt(); recorder.cancel(); held = false; codex.reset();
+  interrupt(); recorder.cancel(); held = false; engine.reset();
   publish(servicesReady ? 'idle' : 'starting', { reset: true });
   console.log('New conversation.');
 }
 
 function prepareConversation() {
-  const previous = codex.currentThreadId;
-  codex.expireConversation();
-  if (previous && !codex.currentThreadId) publish('thinking', { reset: true });
+  const previous = engine.currentThreadId;
+  engine.expireConversation();
+  if (previous && !engine.currentThreadId) publish('thinking', { reset: true });
 }
 
 async function restorePreviousConversation() {
-  if (!servicesReady || current || held || !codex.canRestorePrevious) return;
+  if (!servicesReady || current || held || !engine.canRestorePrevious) return;
   const controller = new AbortController();
   const token = generation;
   current = controller;
   publish('thinking');
   try {
-    const restored = await codex.restorePrevious(controller.signal);
+    const restored = await engine.restorePrevious(controller.signal);
     if (token !== generation) return;
-    if (restored) publish('idle', { restored: true, exchanges: codex.currentExchanges });
+    if (restored) publish('idle', { restored: true, exchanges: engine.currentExchanges });
     else publish('idle');
   } catch (error) {
     if (token !== generation) return;
@@ -107,46 +92,30 @@ async function processSpeech(token: number, releasedAt: number) {
     if (token !== generation) return;
     const recordingDoneAt = performance.now();
     if (debug) console.log(`[audio] ${recorder.lastDurationSeconds.toFixed(2)} s, RMS ${recorder.lastRmsDbfs.toFixed(1)} dBFS, peak ${recorder.lastPeakDbfs.toFixed(1)} dBFS`);
-    console.log('Transcribing...');
-    publish('transcribing');
-    const raw = await stt.transcribe(wav, controller.signal);
-    if (token !== generation) return;
-    const sttDoneAt = performance.now();
-    if (!raw || !raw.replace(/\*[^*]+\*/g, '').trim()) { publish('error', { message: 'Nie rozpoznano mowy. Sprawdź mikrofon i spróbuj ponownie.', ready: true }); console.log('No intelligible speech recognized. Check the microphone or save the WAV with SAVE_AUDIO=1.'); return; }
-    if (debug) console.log(`\n[Raw transcription]\n${raw}\n`);
-    console.log('Preparing answer...');
-    prepareConversation();
-    publish('thinking', { question: raw });
-    const { prompt, answer, startupMs, turnMs } = await codex.respond(raw, controller.signal);
-    if (token !== generation) return;
-    const codexDoneAt = performance.now();
-    console.log(`\n[Question]\n${prompt}\n`);
-    if (debug) console.log(`Thread: ${codex.currentThreadId}`);
-    console.log(`\n[Answer]\n${answer}\n`);
-    console.log('Speaking...');
-    publish('preparing-speech', { question: prompt, answer });
+    let prepared = false;
     let playbackStartedAt: number | undefined;
-    const playbackWasReported = await speaker.speak(speechText(answer), controller.signal, () => {
-      if (token !== generation || playbackStartedAt !== undefined) return;
-      playbackStartedAt = performance.now();
-      publish('speaking');
-      if (!debug) return;
-      console.log();
-      logTime(`Recording end to playback start (${ttsMode === 'piper' ? 'FFplay' : 'SAPI'})`, releasedAt, playbackStartedAt);
-      logTime('Recording finalization', releasedAt, recordingDoneAt);
-      logTime('STT', recordingDoneAt, sttDoneAt);
-      logTime('Codex (cleanup + answer)', sttDoneAt, codexDoneAt);
-      logMilliseconds('  Codex: request accepted', startupMs);
-      logMilliseconds('  Codex: turn to final answer', turnMs);
-      logTime('TTS startup to playback', codexDoneAt, playbackStartedAt);
-    }, level => { if (token === generation) publishLevel('speaking', level); });
-    if (token === generation) {
-      if (debug && !playbackWasReported) console.log('[time] Playback start unavailable: audio player did not report a running audio clock.');
-      if (playbackStartedAt !== undefined) logTime('Playback duration after player start', playbackStartedAt);
-      logTime('Full cycle after key release', releasedAt);
-      console.log('Ready.');
-      publish('idle');
-    }
+    const reply = await engine.respondAudio(wav, controller.signal, {
+      onUpdate: (state, text) => {
+        if (token !== generation) return;
+        if (state === 'thinking' && !prepared) { prepareConversation(); prepared = true; }
+        publish(state, text);
+      },
+      onPlaybackStart: () => {
+        if (token !== generation || playbackStartedAt !== undefined) return;
+        playbackStartedAt = performance.now();
+        publish('speaking');
+        logTime('Recording end to playback start', releasedAt, playbackStartedAt);
+      },
+      onLevel: level => { if (token === generation) publishLevel('speaking', level); },
+      onTiming: logMilliseconds,
+    });
+    if (token !== generation) return;
+    console.log(`\n[Question]\n${reply.prompt}\n\n[Answer]\n${reply.answer}\n`);
+    logTime('Recording finalization', releasedAt, recordingDoneAt);
+    if (playbackStartedAt !== undefined) logTime('Playback duration after player start', playbackStartedAt);
+    logTime('Full cycle after key release', releasedAt);
+    publish('idle', { exchanges: engine.currentExchanges });
+    console.log('Ready.');
   } catch (error) {
     if (token === generation) { console.error(error); publish('error', { message: codexErrorMessage(error, 'Nie udało się przygotować lub odczytać odpowiedzi. Spróbuj nagrać pytanie ponownie. Szczegóły są w terminalu.'), ready: servicesReady }); }
   } finally {
@@ -167,7 +136,7 @@ async function processText(text: string) {
   prepareConversation();
   publish('thinking', { question: text, answer: '' });
   try {
-    const { answer } = await codex.respond(text, controller.signal);
+    const { answer } = await engine.respond(text, controller.signal);
     if (token === generation) publish('idle', { question: text, answer });
   } catch (error) {
     if (token === generation) {
@@ -219,7 +188,7 @@ function handle(event: KeyEvent) {
     else desktopCopilot.up();
     return;
   }
-  if (!servicesReady) { if (event.event === 'down') console.log('Microphone, Whisper, Codex, and TTS are still starting.'); return; }
+  if (!servicesReady) { if (event.event === 'down') console.log('Voice services are still starting.'); return; }
   if (event.event === 'down' && !held) {
     held = true;
     interrupt();
@@ -240,14 +209,14 @@ const keyboard = startKeyboard(handle, message => { console.error(message); publ
 if (debugKeys) console.log('Keyboard events (Ctrl+C exits). Hold Copilot and note its vk.');
 else {
   publish('starting');
-  console.log(`Starting microphone, Whisper${process.env.WHISPER_THREADS ? ` (${process.env.WHISPER_THREADS} threads)` : ''}, Codex${process.env.CODEX_MODEL ? ` (${process.env.CODEX_MODEL})` : ''}, and TTS (${ttsMode})...`);
-  void Promise.all([recorder.startCapture(), stt.start(), codex.start(), speaker.start()]).then(() => {
+  console.log(`Starting microphone and ${engine.startupDescription}...`);
+  void Promise.all([engine.start(), recorder.startCapture()]).then(() => {
     servicesReady = true;
-    publish('idle', { ready: true, exchanges: codex.currentExchanges });
+    publish('idle', { ready: true, exchanges: engine.currentExchanges });
     console.log(`Ready. Hold Copilot (vk=${key}); Ctrl+Shift+N resets; Ctrl+C exits.`);
   }).catch(error => { console.error(error); publish('error', { message: codexErrorMessage(error, 'Nie udało się uruchomić usług. Sprawdź mikrofon, Whisper, Codex i ustawienia .env, a następnie uruchom usługi ponownie.'), ready: false }); });
 }
-function shutdown() { desktopCopilot.cancel(); interrupt(); recorder.shutdown(); stt.stop(); codex.stop(); speaker.shutdown(); keyboard.stop(); process.exit(0); }
+function shutdown() { desktopCopilot.cancel(); interrupt(); recorder.shutdown(); engine.stop(); keyboard.stop(); process.exit(0); }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 if (desktop) {

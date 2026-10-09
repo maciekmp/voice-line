@@ -4,6 +4,12 @@ Hold the Copilot key to record. Release it to transcribe locally with whisper.cp
 
 ## Requirements
 
+The default `VOICE_MODE=local` uses the ChatGPT subscription. An optional experimental `VOICE_MODE=realtime` sends microphone audio directly to Codex app-server and plays its streamed audio reply. See **Codex realtime audio** below for its separate API-key requirements.
+
+The orb displays **LOCAL** for local Whisper/TTS or **API** for Codex realtime. The engine is selected once at startup from `.env`; restart the application after changing `VOICE_MODE`. LOCAL refers to speech processing, while Codex still generates the answer. Each mode retains its own conversation history and authentication configuration.
+
+Voice orchestration lives in `src/voice/local-engine.ts` and `src/voice/realtime-engine.ts`, behind the contract in `src/voice-engine.ts`. `src/voice/create-engine.ts` constructs and validates the selected services. `src/main.ts` handles the microphone, gestures, conversation controls and UI events through that shared contract. `npm run test:voice-engine` checks stage ordering, cancellation, partial transcripts, lifecycle and startup selection without inference requests.
+
 - Windows 11, Node.js 22.18+, PowerShell 5.1, FFmpeg with DirectShow input.
 - A working microphone visible to FFmpeg.
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp) `whisper-server.exe` for the default mode, plus a multilingual GGML model such as `ggml-small.bin`. Keep `whisper-server.exe` beside the executable specified by `WHISPER_BIN`, put it on `PATH` when using the default binary name, or set `WHISPER_SERVER_BIN` explicitly. `whisper-cli.exe` is needed for `STT_MODE=cli` and the STT benchmark. English-only `.en` models cannot transcribe Polish.
@@ -76,6 +82,34 @@ Only debug mode prints `[time]` measurements. Its main total is `Recording end t
 | `STT_LANGUAGE` | `pl` | Whisper recognition language; this does not change the assistant's Polish response instructions. |
 
 `start:cli` selects the terminal interface; `CODEX_MODE=cli` selects the answer backend. These settings are independent. Both Codex backends request structured JSON containing the cleaned question and full answer. New threads use a read-only sandbox, and app-server turns explicitly enforce it.
+
+### Codex realtime audio
+
+Codex CLI **0.161.0** provides experimental `thread/realtime/*` methods. A live startup check with ChatGPT authentication returned `realtime conversation requires API key auth`. This mode therefore requires an OpenAI API key and uses API billing separately from the ChatGPT subscription. The default local mode continues to use the signed-in ChatGPT account.
+
+Add to `.env`, keeping your existing `MIC_DEVICE` and `COPILOT_VK`:
+
+```dotenv
+VOICE_MODE=realtime
+OPENAI_API_KEY=your-api-key
+# Optional: CODEX_REALTIME_VOICE=alloy
+# Optional: CODEX_REALTIME_MODEL=your-supported-realtime-model
+# Optional: FFPLAY_BIN=C:\path\to\ffplay.exe
+```
+
+Run `npm start` or `npm run start:cli`. FFmpeg, FFplay and Codex CLI must be available. Whisper, its model, SAPI and Piper are not started in this mode. Remove `CODEX_MODE=cli` if set. The realtime model uses Codex's realtime default unless `CODEX_REALTIME_MODEL` overrides it; `CODEX_MODEL` still selects the model for typed questions.
+
+Hold Copilot to record and release it to upload the utterance. The app converts the recording to mono PCM16 at 24 kHz, adds a short silence tail for voice activity detection, and uses the **v2** realtime protocol over the existing stdio app-server connection. Audio starts playing as chunks arrive through FFplay. A final transcript followed by a 250 ms quiet window ends the output stream; the player drains queued audio before returning to idle. Pressing Copilot again, cancelling or resetting stops playback and closes the current realtime session. Recordings are limited to 60 seconds. The conversation panel displays question and answer transcripts as soon as Codex sends them, updating partial text during audio playback. Completed transcript segments are also displayed immediately; the full answer need not wait for playback to finish. The exchange is saved to application history after playback completes. Typed questions continue to use normal text turns without spoken playback.
+
+Each voice request creates a new realtime session and includes all saved exchanges from the selected conversation in its prompt, including voice transcripts and typed replies. History is loaded from Codex after an application restart and when restoring a previous conversation. Resetting the conversation or the existing two-minute inactivity expiry starts an empty context; restoring the previous conversation brings its context back. Generic realtime startup context forwarding is disabled. Longer histories increase API input usage and remain subject to the audio model's context limit. Typed questions retain the normal Codex thread behavior.
+
+Realtime uses `.chatgpt-button/realtime-codex/` as a dedicated Codex home, including its API credentials and server-side history, and `.chatgpt-button-realtime-session.json` for thread ID and timestamp only. Both are Git-ignored. The account login RPC stores the API key in that dedicated home's credential store; it does not replace the normal Codex ChatGPT login. History is restored from Codex's paginated timeline, including voice transcripts and typed answers. The existing two-minute expiry and previous-conversation control also apply to this separate session.
+
+Available `CODEX_REALTIME_VOICE` values in 0.161.0: `alloy`, `arbor`, `ash`, `ballad`, `breeze`, `cedar`, `coral`, `cove`, `echo`, `ember`, `juniper`, `maple`, `marin`, `sage`, `shimmer`, `sol`, `spruce`, `vale`, `verse`.
+
+`npm run test:realtime` checks PCM conversion, malformed audio, asynchronous startup failures, playback completion, cancellation, serialized teardown, timeline history and conversation context without an API key. `npm run test:realtime-wire` additionally checks the installed app-server, FFplay and follow-up context after restart and reset against a local simulated WebSocket backend using an isolated temporary home and a dummy key; it requires Codex and FFplay on PATH. This smoke test does not make paid inference requests. A complete conversation against the real audio service still requires a valid API key.
+
+Switch back with `VOICE_MODE=local` or remove `VOICE_MODE`.
 
 ### Try Piper TTS
 

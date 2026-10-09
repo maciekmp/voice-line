@@ -46,6 +46,12 @@ its own geometry; it does not adopt the panel background.
 
 ## Layout and states
 
+The desktop orb shows a small LOCAL or API label below it, reflecting the engine
+selected at startup. LOCAL means local speech recognition and synthesis; Codex
+still generates the answer. API means Codex realtime. The label has no action,
+uses the existing surface/text colors and Segoe UI, and disappears with the orb.
+The native shell is 64 by 80 px; the orb keeps its original position and hit area.
+
 380 px wide popup with height measured from its content and capped at 500 px, anchored 8 px above
 the desktop orb and constrained to the display work area. Question and answer
 have no visible labels; semantic accessible names remain. The document owns scrolling;

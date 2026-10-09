@@ -1,5 +1,6 @@
 .chatgpt-button/
 .chatgpt-button-session.json
+.chatgpt-button-realtime-session.json
 .env
 *.wav
 node_modules/

@@ -19,13 +19,15 @@ app.setPath('userData', profileDirectory);
 app.setPath('sessionData', sessionDirectory);
 // Leave transparent space for entry/exit motion and Windows' minimum window size.
 const WINDOW_SIZE = 64;
+const WINDOW_HEIGHT = 80; // Reserve space below the unchanged orb for the mode label.
 const MARGIN = 20;
 const PANEL_MAX_HEIGHT = 500;
 let orbWindow;
 let tray;
 let panelWindow;
 let engine;
-let voice = { state: 'starting', ready: false, question: '', answer: '', message: '' };
+let voice = { state: 'starting', ready: false, question: '', answer: '', message: '',
+  mode: process.argv.includes('--smoke-test') || process.argv.includes('--preview') ? 'local' : undefined };
 let conversationHistory = [];
 const previousConversations = new Map();
 const preview = process.argv.includes('--preview');
@@ -385,7 +387,21 @@ async function verify() {
   assert.equal(app.getPath('sessionData'), sessionDirectory);
   assert.equal(orbWindow.webContents.session.getStoragePath(), sessionDirectory);
   assert.equal(orbWindow.isAlwaysOnTop(), true);
-  assert.deepEqual(orbWindow.getBounds(), { ...position(), width: WINDOW_SIZE, height: WINDOW_SIZE });
+  assert.deepEqual(orbWindow.getBounds(), { ...position(), width: WINDOW_SIZE, height: WINDOW_HEIGHT });
+  for (const [mode, label] of [['realtime', 'API'], ['local', 'LOCAL']]) {
+    sendVoice({ mode });
+    await orbWindow.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(resolve))');
+    const indicator = await orbWindow.webContents.executeJavaScript(`(() => {
+      const label = document.querySelector('#voice-mode');
+      const bounds = label.getBoundingClientRect();
+      return { text: label.textContent, hidden: label.hidden, bottom: bounds.bottom,
+        buttonTop: document.querySelector('button').getBoundingClientRect().top };
+    })()`);
+    assert.equal(indicator.text, label);
+    assert.equal(indicator.hidden, false);
+    assert.ok(indicator.bottom <= WINDOW_HEIGHT);
+    assert.equal(indicator.buttonTop, 5);
+  }
   assert.equal(panelWindow.isVisible(), false, 'Conversation starts hidden');
   await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerenter'))");
   await new Promise(resolve => setTimeout(resolve, 350));
@@ -843,7 +859,7 @@ if (!smokeTest && !app.requestSingleInstanceLock()) {
   app.on('second-instance', openPanel);
   app.whenReady().then(async () => {
     orbWindow = new BrowserWindow({
-      ...position(), width: WINDOW_SIZE, height: WINDOW_SIZE,
+      ...position(), width: WINDOW_SIZE, height: WINDOW_HEIGHT,
       title: 'Kulka głosowa', frame: false, transparent: true,
       backgroundColor: '#00000000', hasShadow: false, alwaysOnTop: true,
       resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
