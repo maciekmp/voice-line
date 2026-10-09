@@ -1,3 +1,5 @@
+import { renderAnswer } from './answer-renderer.js';
+
 const get = id => document.getElementById(id);
 let snapshot = { state: 'starting', ready: false };
 let pending = false;
@@ -5,6 +7,7 @@ let composing = false;
 let resizeFrame;
 let scrollToLatest = false;
 let renderedHistory = '';
+let renderedAnswer;
 function reportSize() {
   clearTimeout(resizeFrame);
   resizeFrame = setTimeout(() => window.orbDesktop.resize({
@@ -76,10 +79,11 @@ window.orbDesktop.onVoice(value => {
       const article = document.createElement('article');
       article.className = 'exchange';
       for (const key of ['question', 'answer']) {
-        const p = document.createElement('p');
+        const p = document.createElement(key === 'answer' ? 'div' : 'p');
         p.className = `previous-${key}`;
         p.setAttribute('aria-label', key === 'question' ? 'Twoje pytanie' : 'Odpowiedź');
-        p.textContent = exchange[key] || '';
+        if (key === 'answer') renderAnswer(p, exchange[key] || '');
+        else p.textContent = exchange[key] || '';
         article.append(p);
       }
       return article;
@@ -93,7 +97,10 @@ window.orbDesktop.onVoice(value => {
   get('error').textContent = value.message || '';
   get('retry').hidden = value.state !== 'error' || value.ready;
   for (const key of ['question', 'answer']) {
-    get(key).textContent = value[key] || '';
+    if (key === 'answer') {
+      const answer = value.answer || '';
+      if (answer !== renderedAnswer) { renderAnswer(get(key), answer); renderedAnswer = answer; }
+    } else get(key).textContent = value[key] || '';
     get(`${key}-block`).hidden = !value[key];
   }
   get('empty').hidden = Boolean(value.question || value.answer || value.message || value.state !== 'idle');

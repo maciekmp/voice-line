@@ -15,13 +15,16 @@
   font: 12px/1.55 var(--font-body);
   color: var(--color-text);
   background: var(--color-background);
-  scrollbar-color: var(--color-scrollbar) var(--color-background);
-  scrollbar-width: auto;
+  scrollbar-color: var(--color-scrollbar) transparent;
+  scrollbar-width: thin;
 }
 * { box-sizing: border-box; }
-*::-webkit-scrollbar { width: 10px; height: 10px; }
-*::-webkit-scrollbar-track { background: var(--color-background); }
-*::-webkit-scrollbar-thumb { background: var(--color-scrollbar); border: 2px solid var(--color-background); border-radius: 8px; }
+* { scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--color-scrollbar); border-radius: 8px; }
+*::-webkit-scrollbar-button { display: none; }
+*::-webkit-scrollbar-corner { background: transparent; }
 *::-webkit-scrollbar-thumb:hover { background: var(--color-muted); }
 *::-webkit-scrollbar-thumb:active { background: var(--color-primary); }
 html[data-resizing="true"] { overflow: hidden; }
@@ -38,6 +41,16 @@ body[data-mode="compose"] main { display: none; }
 article + article { margin-top: 8px; }
 p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 #question { color: var(--color-muted); }
+code { font-family: Consolas, 'Cascadia Code', monospace; }
+p code { padding: 1px 3px; border-radius: 3px; background: var(--color-surface); }
+.code-block { position: relative; min-width: 0; margin-block: 8px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); overflow: hidden; }
+.code-copy { position: absolute; top: 2px; right: 2px; display: grid; place-items: center; width: 28px; height: 28px; min-height: 28px; padding: 6px; border: 0; border-radius: 5px; color: var(--color-muted); }
+.code-copy svg { width: 14px; height: 14px; pointer-events: none; }
+.code-copy:focus-visible { outline-offset: -3px; }
+.code-block pre { margin: 0; min-height: 32px; padding: 6px 36px 6px 6px; overflow-x: auto; white-space: pre; overflow-wrap: normal; tab-size: 4; font: inherit; }
+.code-block pre:focus-visible { outline-offset: -3px; }
+.code-feedback { display: block; padding-inline: 6px; color: var(--color-muted); overflow-wrap: anywhere; }
+.code-feedback:not(:empty) { padding-bottom: 6px; }
 #empty, #status { color: var(--color-muted); font-size: 12px; }
 #status, #error { margin-top: 10px; }
 #error { color: var(--color-danger); font-size: 12px; }

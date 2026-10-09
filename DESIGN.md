@@ -46,7 +46,7 @@ its own geometry; it does not adopt the panel background.
 
 ## Layout and states
 
-380 px wide popup with height measured from its content, anchored 8 px above
+380 px wide popup with height measured from its content and capped at 500 px, anchored 8 px above
 the desktop orb and constrained to the display work area. Question and answer
 have no visible labels; semantic accessible names remain. The document owns scrolling;
 long answers and enlarged text grow naturally, with no competing inner scroller.
@@ -89,6 +89,7 @@ the sole state indicator: transcript text and the tray identify the current oper
 | Keyboard delivery | src/keyboard/bridge.ps1; src/keyboard/copilot-key.ts | configured key consumed while voice app runs; other keys pass; parent-exit cleanup | test:keyboard |
 | Hover detection | electron/overlay-pointer.cjs | Native cursor and current window bounds, sampled every 50 ms | test:overlay; test:orb |
 | Feedback | electron/conversation.js | Lifecycle IPC snapshots | test:orb |
+| Code answers | electron/answer-format.js; electron/answer-renderer.js | Shared parsing for latest reply, history and speech | test:answers; test:orb |
 | Scrollbar | electron/conversation.css | Global semantic tokens | static audit; runtime inspection |
 | Voice visual | preview/voice-orb.js | Existing browser preview | test:orb |
 
@@ -148,6 +149,23 @@ entry and keeps the voice application running when dismissed.
 ## Content and retention
 
 All owned UI copy is Polish; transcript and reply retain their original language.
+Answers support fenced Markdown code blocks and inline code. Code uses native
+Windows monospace fonts and existing surface/border tokens. Fenced blocks preserve
+whitespace, scroll horizontally and expose a keyboard-accessible Kopiuj action
+with inline success or recovery feedback. Code padding is 6 px; the 28 px copy
+button uses a 14 px Lucide copy icon with a Polish accessible name and tooltip.
+Blocks have no language header; copy sits in the top-right corner with reserved
+space beside the code. Scrollbars are thin, rounded and use transparent tracks;
+the same minimal treatment applies to the document and code scrollers.
+Copy uses the preload's copyCode command and main-process Electron clipboard,
+so hover-only popups can copy without document focus. Only the conversation
+window may invoke this text-only command. Verification: test:clipboard; test:orb.
+Successful copy swaps the icon for a checkmark for 1.5 seconds, with a screen-reader
+announcement and no visible message below code. Repeated clicks restart the timer;
+copy failures restore the copy icon and show recovery text below the code.
+Model output is always inserted as text,
+never HTML. Speech reads the prose and inline code, skipping fenced blocks; a
+code-only reply announces that the code is available in the conversation window.
 Hover displays only the latest exchange. Chat displays previous exchanges above
 it and supports document scrolling, with the composer flush to the window bottom.
 Exchanges collected during the current app run are kept in main-process memory;

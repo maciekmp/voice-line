@@ -6,6 +6,7 @@ import { createCopilotGesture } from './keyboard/copilot-gesture.ts';
 import { Recorder } from './audio/recorder.ts';
 import { WhisperTranscriber } from './stt/transcriber.ts';
 import { CodexClient } from './codex.ts';
+import { speechText } from '../electron/answer-format.js';
 import { CodexAppServer } from './codex-app-server.ts';
 import { codexErrorMessage } from './codex-error.ts';
 import { Speaker } from './speaker.ts';
@@ -99,7 +100,7 @@ async function processSpeech(token: number, releasedAt: number) {
     console.log('Speaking...');
     publish('preparing-speech', { question: prompt, answer });
     let playbackStartedAt: number | undefined;
-    const playbackWasReported = await speaker.speak(answer, controller.signal, () => {
+    const playbackWasReported = await speaker.speak(speechText(answer), controller.signal, () => {
       if (token !== generation || playbackStartedAt !== undefined) return;
       playbackStartedAt = performance.now();
       publish('speaking');

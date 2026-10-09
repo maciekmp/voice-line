@@ -30,7 +30,7 @@ npm.cmd start
 
 In Git Bash, run `npm start` instead.
 
-To inspect recognition and speech output, run `npm.cmd run debug` instead of `npm.cmd start` (in Git Bash, `npm run debug`). Both modes print the cleaned question and the exact AI answer sent to TTS. Debug mode additionally prints the raw transcription, audio levels, timing measurements, and Codex thread ID. `Ctrl+Shift+N` starts a new conversation; `Ctrl+C` exits. Conversation context expires 2 minutes after the last successful answer; the next voice or text question then starts a new conversation. The Codex thread ID and last-answer timestamp are stored in `.chatgpt-button-session.json`, so a restart resumes the conversation only within that window. Older session files without a timestamp start a new conversation.
+To inspect recognition and speech output, run `npm.cmd run debug` instead of `npm.cmd start` (in Git Bash, `npm run debug`). Both modes print the cleaned question and the full AI answer; TTS skips fenced code blocks. Debug mode additionally prints the raw transcription, audio levels, timing measurements, and Codex thread ID. `Ctrl+Shift+N` starts a new conversation; `Ctrl+C` exits. Conversation context expires 2 minutes after the last successful answer; the next voice or text question then starts a new conversation. The Codex thread ID and last-answer timestamp are stored in `.chatgpt-button-session.json`, so a restart resumes the conversation only within that window. Older session files without a timestamp start a new conversation.
 
 Only debug mode prints `[time]` measurements. Its main total is `Recording end to playback start`, measured from Copilot key release until the selected player reports active playback. The contiguous components are recording finalization, STT, Codex, and TTS startup to playback; they add up to that total apart from display rounding. Codex request acceptance and turn generation are nested details within the Codex component. Debug also reports playback duration and the full cycle. SAPI's audio queue status and FFplay's audio clock are approximate playback markers, not speaker-loopback measurements of the first audible sample. Console status messages and labels are in English; spoken question and answer text retains its original language.
 
@@ -80,6 +80,11 @@ Clicking the orb or tray reveals the conversation and a text composer: Enter sen
 Shift+Enter adds a newline. Typed questions continue the same Codex conversation
 and receive a text reply without speech playback. The composer has no send or cancel button.
 Recording uses Copilot; **Nowa rozmowa** remains in the tray menu.
+Replies can include Markdown code blocks and inline code in both the latest
+answer and conversation history. Blocks preserve indentation, omit language headers,
+scroll horizontally for long lines and offer **Kopiuj**. Voice playback reads the
+explanation and skips code blocks; code-only replies direct you to the popup.
+`npm run test:answers` verifies parsing and speech filtering.
 While the voice application runs, its keyboard hook consumes the configured
 `COPILOT_VK` press and release, preventing the corresponding Windows action.
 Other keys pass through. Exiting releases the hook, including after an unexpected

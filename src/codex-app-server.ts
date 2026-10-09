@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 import { launch } from './process.ts';
 import { ConversationSession } from './conversation-session.ts';
 import type { VoiceReply } from './codex.ts';
+import { INSTRUCTIONS } from './codex.ts';
 
-const INSTRUCTIONS = 'Jesteś asystentem głosowym. Nie uruchamiaj narzędzi, nie czytaj ani nie zmieniaj plików. Dostajesz surową transkrypcję po polsku. Najpierw popraw ją do zwięzłego pytania: usuń wypełniacze, powtórzenia i wycofane fragmenty, uwzględnij ostatnią samokorektę. Następnie odpowiedz po polsku, krótko i naturalnie, korzystając z kontekstu rozmowy. Zwróć JSON z polami prompt (poprawione pytanie) i answer (tekst do wypowiedzenia). Jeśli transkrypcja jest niezrozumiała, poproś o powtórzenie zamiast zgadywać. Surowa transkrypcja:\n';
 const schema = JSON.parse(readFileSync(fileURLToPath(new URL('./response.schema.json', import.meta.url)), 'utf8'));
 
 type RpcReply = { id: number; result?: any; error?: { message?: string } };

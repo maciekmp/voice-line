@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('orbDesktop', {
   open() { ipcRenderer.send('voice:open'); },
   hover(entered) { ipcRenderer.send('voice:hover', entered); },
   text(text) { return ipcRenderer.invoke('voice:text', text); },
+  copyCode(text) { return ipcRenderer.invoke('voice:copy-code', text); },
   resize(size) { ipcRenderer.send('voice:resize', size); },
   onResizing(callback) {
     const listener = (_event, resizing) => callback(resizing);

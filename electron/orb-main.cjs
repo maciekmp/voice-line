@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain, clipboard } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { mkdirSync } = require('node:fs');
@@ -20,6 +20,7 @@ app.setPath('sessionData', sessionDirectory);
 // Leave transparent space for entry/exit motion and Windows' minimum window size.
 const WINDOW_SIZE = 64;
 const MARGIN = 20;
+const PANEL_MAX_HEIGHT = 500;
 let orbWindow;
 let tray;
 let panelWindow;
@@ -110,7 +111,7 @@ function positionPanel(animate = false) {
   const orb = orbWindow.getBounds();
   const area = screen.getDisplayMatching(orb).workArea;
   const width = Math.min(380, area.width);
-  const height = Math.min(panelHeight, Math.max(1, orb.y - area.y - 8));
+  const height = Math.min(panelHeight, PANEL_MAX_HEIGHT, Math.max(1, orb.y - area.y - 8));
   const target = {
     x: Math.max(area.x, Math.min(orb.x + orb.width - width, area.x + area.width - width)),
     y: Math.max(area.y, orb.y - height - 8), width, height,
@@ -176,13 +177,19 @@ ipcMain.on('voice:resize', (event, size) => {
   if (!panelWindow || event.sender !== panelWindow.webContents || exitStarted
     || !size || !Number.isFinite(size.height) || size.height < 0
     || !['peek', 'chat', 'compose'].includes(size.mode) || size.mode !== panelMode) return;
-  const measuredHeight = Math.max(64, Math.min(50000, Math.ceil(size.height) + 2));
+  const measuredHeight = Math.max(64, Math.min(PANEL_MAX_HEIGHT, Math.ceil(size.height) + 2));
   // Keep the hovered surface stable when a new recording clears the transcript.
   panelHeight = panelWindow.isVisible() && ['listening', 'transcribing', 'thinking'].includes(voice.state)
     ? Math.max(panelHeight, measuredHeight) : measuredHeight;
   panelHeights[size.mode] = panelHeight;
   if (panelResetTimer && !panelWindow.isVisible()) return;
   positionPanel(panelWindow.isVisible() && !size.reducedMotion);
+});
+ipcMain.handle('voice:copy-code', (event, text) => {
+  if (!panelWindow || panelWindow.isDestroyed() || event.sender !== panelWindow.webContents
+    || exitStarted || typeof text !== 'string') return false;
+  try { clipboard.writeText(text); return true; }
+  catch { return false; }
 });
 ipcMain.handle('voice:text', (event, text) => {
   if (!trusted(event) || exitStarted || typeof text !== 'string' || !text.trim() || text.length > 12000
@@ -478,6 +485,69 @@ async function verify() {
   const panelOutput = path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation.png');
   openPanel(false);
   await fs.writeFile(panelOutput, (await panelWindow.webContents.capturePage()).toPNG());
+  const codeSample = 'if (ready) {\n  console.log("<script>unsafe</script>");\n}\n' + '// ' + 'long-line-'.repeat(80) + '\n';
+  const codeReply = 'Użyj `node`.\n```js\n' + codeSample + '```\nGotowe.';
+  sendVoice({ answer: codeReply });
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const codePanel = await panelWindow.webContents.executeJavaScript(`(() => {
+    const answer = document.querySelector('#answer');
+    const pre = answer.querySelector('pre');
+    return {
+      code: pre.querySelector('code').textContent,
+      inline: answer.querySelector('p code').textContent,
+      unsafe: answer.querySelector('script') !== null,
+      scrolls: pre.scrollWidth > pre.clientWidth,
+      fits: document.documentElement.scrollWidth <= innerWidth,
+      keyboard: pre.tabIndex,
+      copyIcon: answer.querySelector('.code-copy svg') !== null,
+      copyLabel: answer.querySelector('.code-copy').getAttribute('aria-label'),
+      copyText: answer.querySelector('.code-copy').textContent,
+    };
+  })()`);
+  assert.equal(codePanel.code, codeSample);
+  assert.equal(codePanel.inline, 'node');
+  assert.equal(codePanel.unsafe, false);
+  assert.equal(codePanel.scrolls, true, 'Long code lines scroll horizontally');
+  assert.equal(codePanel.fits, true, 'Code does not widen the popup');
+  assert.equal(codePanel.keyboard, 0, 'Code scroller supports keyboard focus');
+  assert.equal(codePanel.copyIcon, true, 'Copy uses an icon');
+  assert.equal(codePanel.copyLabel, 'Kopiuj kod');
+  assert.equal(codePanel.copyText, '', 'Copy has no visible text label');
+  // Mock only the native sink: exercise the real renderer/preload/IPC chain
+  // without reading or changing the user's clipboard.
+  const originalClipboardWrite = clipboard.writeText;
+  let copiedText;
+  clipboard.writeText = text => { copiedText = text; };
+  const clickCopy = () => panelWindow.webContents.executeJavaScript(`(async () => {
+    const button = document.querySelector('#answer .code-copy');
+    button.focus(); button.click();
+    for (let attempt = 0; attempt < 50 && button.disabled; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    return {
+      feedback: document.querySelector('#answer [role=status]').textContent,
+      enabled: !button.disabled,
+      copied: button.dataset.copied === 'true',
+      feedbackHidden: document.querySelector('#answer [role=status]').className === 'sr-only',
+    };
+  })()`);
+  try {
+    panelWindow.blur();
+    const copied = await clickCopy();
+    assert.equal(copiedText, codeSample, 'Copy passes exact code through preload and IPC without popup focus');
+    assert.equal(copied.feedback, 'Skopiowano');
+    assert.equal(copied.copied, true, 'Copy icon becomes a checkmark');
+    assert.equal(copied.feedbackHidden, true, 'Success feedback does not add space below code');
+    assert.equal(copied.enabled, true);
+    clipboard.writeText = () => { throw new Error('Unavailable'); };
+    const failed = await clickCopy();
+    assert.match(failed.feedback, /Ctrl\+C/);
+    assert.equal(failed.copied, false);
+    assert.equal(failed.enabled, true);
+  } finally { clipboard.writeText = originalClipboardWrite; }
+  await fs.writeFile(path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation-code.png'), (await panelWindow.webContents.capturePage()).toPNG());
+  sendVoice({ answer: 'Odpowiedź testowa.' });
+  console.log('Code answer checks: passed');
   hidePanel();
   sendVoice({ state: 'idle' }); updateVisibility(true);
   console.log('Conversation capture: passed');
@@ -647,6 +717,7 @@ async function verify() {
   await panelWindow.webContents.executeJavaScript("scrollTo(0, document.documentElement.scrollHeight)");
   await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').getBoundingClientRect().bottom <= innerHeight + 1"), true);
+  assert.ok(panelWindow.getBounds().height <= PANEL_MAX_HEIGHT, 'Long answers cap the popup at 500 px');
   console.log('Text composer checks: passed');
   const chatOutput = path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation-chat.png');
   sendVoice({ state: 'idle', ready: true, question: 'Jak mogę lepiej zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania. Zacznij od jednego i zostaw trochę miejsca na przerwy.' });

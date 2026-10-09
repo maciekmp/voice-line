@@ -8,6 +8,8 @@
     "test:orb": "node scripts/launch-orb.cjs --smoke-test",
     "test:audio-levels": "node --experimental-strip-types --test scripts/test-audio-levels.ts",
     "test:overlay": "node --test scripts/test-overlay.cjs",
+    "test:answers": "node --test scripts/test-answers.js",
+    "test:clipboard": "node --test scripts/test-clipboard.cjs",
     "test:copilot": "node --experimental-strip-types --test scripts/test-copilot.ts",
     "test:codex-errors": "node --experimental-strip-types --test scripts/test-codex-errors.ts",
     "test:conversation": "node --experimental-strip-types --test scripts/test-conversation-session.ts",
