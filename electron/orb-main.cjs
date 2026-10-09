@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain, clipboard } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain, clipboard, dialog } = require('electron');
 const path = require('node:path');
 const fs = require('node:fs/promises');
 const { mkdirSync } = require('node:fs');
@@ -6,6 +6,8 @@ const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const { createOverlayController } = require('./overlay-controller.cjs');
 const { createPointerTracker } = require('./overlay-pointer.cjs');
+const { readImage } = require('./image-files.cjs');
+const imageDirectory = path.join(__dirname, '..', '.chatgpt-button', 'images');
 
 const smokeTest = process.argv.includes('--smoke-test');
 // Set these before Chromium initializes. Keep the orb away from other Electron
@@ -39,7 +41,7 @@ function sendVoice(update = {}) {
   const switchedThread = 'threadId' in update && update.threadId !== voice.threadId;
   if (switchedThread && voice.threadId) {
     const exchanges = [...conversationHistory];
-    if (voice.answer) exchanges.push({ question: voice.question, answer: voice.answer });
+    if (voice.answer) exchanges.push({ question: voice.question, answer: voice.answer, ...(voice.images?.length && { images: voice.images }) });
     previousConversations.delete(voice.threadId);
     previousConversations.set(voice.threadId, exchanges);
     if (previousConversations.size > 2) previousConversations.delete(previousConversations.keys().next().value);
@@ -48,14 +50,15 @@ function sendVoice(update = {}) {
     const exchanges = update.exchanges || previousConversations.get(update.threadId) || [];
     const latest = exchanges.at(-1);
     conversationHistory = exchanges.slice(0, -1);
-    update = { ...update, question: latest?.question || '', answer: latest?.answer || '' };
+    update = { ...update, question: latest?.question || '', answer: latest?.answer || '', images: latest?.images || [] };
   } else if (update.reset) {
     conversationHistory = [];
-    update = { ...update, question: '', answer: '' };
+    update = { ...update, question: '', answer: '', images: [] };
   } else if (voice.answer && (update.state === 'listening'
     || (typeof update.question === 'string' && (update.question !== voice.question || update.answer === '')))) {
-    conversationHistory.push({ question: voice.question, answer: voice.answer });
+    conversationHistory.push({ question: voice.question, answer: voice.answer, ...(voice.images?.length && { images: voice.images }) });
   }
+  if (update.answer === '' && !('images' in update)) update = { ...update, images: [] };
   voice = { ...voice, message: '', ...update, history: conversationHistory };
   overlay.voice(voice.state);
   state = voice.state === 'listening' ? 'listening' : voice.state === 'speaking' ? 'speaking' : 'idle';
@@ -213,6 +216,22 @@ ipcMain.handle('voice:text', (event, text) => {
   sendVoice({ state: 'thinking', question: text.trim(), answer: '' });
   engine.send({ command: 'text', text: text.trim() });
   return true;
+});
+ipcMain.handle('voice:image-preview', async (event, id) => {
+  if (!panelWindow || event.sender !== panelWindow.webContents || exitStarted) return null;
+  try { return `data:image/png;base64,${(await readImage(imageDirectory, id)).toString('base64')}`; }
+  catch { return null; }
+});
+ipcMain.handle('voice:image-save', async (event, id) => {
+  if (!panelWindow || event.sender !== panelWindow.webContents || exitStarted) return 'error';
+  try {
+    const bytes = await readImage(imageDirectory, id);
+    const choice = await dialog.showSaveDialog(panelWindow, { title: 'Zapisz obraz', defaultPath: 'obraz',
+      filters: [{ name: 'Obraz PNG', extensions: ['png'] }] });
+    if (choice.canceled || !choice.filePath) return 'cancelled';
+    await fs.writeFile(choice.filePath, bytes);
+    return 'saved';
+  } catch { return 'error'; }
 });
 ipcMain.on('voice:hover', (event, entered) => {
   if (!trusted(event) || exitStarted || typeof entered !== 'boolean') return;
@@ -586,6 +605,53 @@ async function verify() {
   await fs.writeFile(path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation-code.png'), (await panelWindow.webContents.capturePage()).toPNG());
   sendVoice({ answer: 'Odpowiedź testowa.' });
   console.log('Code answer checks: passed');
+  const imageBytes = nativeImage.createFromBitmap(Buffer.alloc(256 * 256 * 4, 255), { width: 256, height: 256 }).toPNG();
+  const imageId = require('node:crypto').createHash('sha256').update(imageBytes).digest('hex');
+  await fs.mkdir(imageDirectory, { recursive: true });
+  await fs.writeFile(path.join(imageDirectory, `${imageId}.png`), imageBytes);
+  sendVoice({ state: 'thinking', question: 'Wygeneruj obraz kwadratu.', answer: '', generatingImage: true });
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#status').textContent"), 'Generuję obraz…');
+  sendVoice({ state: 'idle', generatingImage: false, answer: 'Gotowe.', images: [{ id: imageId, alt: 'Testowy kwadrat' }] });
+  const imagePanel = await panelWindow.webContents.executeJavaScript(`(async () => {
+    const image = document.querySelector('#images img');
+    for (let i = 0; i < 100 && !image.naturalWidth; i++) await new Promise(resolve => setTimeout(resolve, 20));
+    const button = document.querySelector('#images button');
+    const imageRect = image.getBoundingClientRect(), buttonRect = button.getBoundingClientRect();
+    return { width: image.naturalWidth, alt: image.alt, fits: document.documentElement.scrollWidth <= innerWidth,
+      icon: button.querySelector('svg') !== null, label: button.getAttribute('aria-label'), text: button.textContent,
+      background: getComputedStyle(button).backgroundColor,
+      corner: Math.abs(imageRect.right - buttonRect.right - 4) < 1 && Math.abs(buttonRect.top - imageRect.top - 4) < 1,
+      size: buttonRect.width };
+  })()`);
+  assert.equal(imagePanel.width, 256); assert.equal(imagePanel.alt, 'Testowy kwadrat'); assert.ok(imagePanel.fits);
+  assert.ok(imagePanel.icon && imagePanel.corner); assert.equal(imagePanel.size, 24); assert.equal(imagePanel.text, '');
+  assert.match(imagePanel.label, /Zapisz obraz/); assert.match(imagePanel.background, /0\.75/);
+  assert.equal(await panelWindow.webContents.executeJavaScript("window.orbDesktop.imagePreview('../../.env')"), null);
+  const originalSaveDialog = dialog.showSaveDialog;
+  const savedImage = path.join(profileDirectory, 'image-save-test.png');
+  const clickSaveImage = () => panelWindow.webContents.executeJavaScript(`(async () => {
+    const button = document.querySelector('#images button'); button.focus(); button.click();
+    for (let i = 0; i < 100 && button.disabled; i++) await new Promise(resolve => setTimeout(resolve, 20));
+    return document.querySelector('#images [role=status]').textContent;
+  })()`);
+  try {
+    dialog.showSaveDialog = async () => ({ canceled: true });
+    assert.equal(await clickSaveImage(), '');
+    dialog.showSaveDialog = async () => ({ canceled: false, filePath: savedImage });
+    assert.equal(await clickSaveImage(), 'Zapisano obraz.');
+    assert.deepEqual(await fs.readFile(savedImage), imageBytes);
+    await fs.writeFile(path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation-image.png'), (await panelWindow.webContents.capturePage()).toPNG());
+  } finally { dialog.showSaveDialog = originalSaveDialog; }
+  sendVoice({ images: [], answer: 'Odpowiedź testowa.' });
+  sendVoice({ images: [{ id: 'f'.repeat(64), alt: 'Brak obrazu' }] });
+  const unavailable = await panelWindow.webContents.executeJavaScript(`(async () => {
+    const feedback = document.querySelector('#images [role=status]');
+    for (let i = 0; i < 100 && !feedback.textContent; i++) await new Promise(resolve => setTimeout(resolve, 20));
+    return { message: feedback.textContent, disabled: document.querySelector('#images button').disabled };
+  })()`);
+  assert.match(unavailable.message, /niedostępny/); assert.ok(unavailable.disabled);
+  sendVoice({ images: [] });
+  console.log('Image preview and native save checks: passed');
   hidePanel();
   sendVoice({ state: 'idle' }); updateVisibility(true);
   console.log('Conversation capture: passed');

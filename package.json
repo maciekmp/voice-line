@@ -9,6 +9,7 @@
     "test:audio-levels": "node --experimental-strip-types --test scripts/test-audio-levels.ts",
     "test:realtime": "node --experimental-strip-types --test scripts/test-realtime.ts",
     "test:voice-engine": "node --experimental-strip-types --test scripts/test-voice-engine.ts",
+    "test:images": "node --experimental-strip-types --test scripts/test-images.ts",
     "test:realtime-wire": "node --experimental-strip-types scripts/test-realtime-wire.ts",
     "test:overlay": "node --test scripts/test-overlay.cjs",
     "test:answers": "node --test scripts/test-answers.js",

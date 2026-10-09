@@ -6,6 +6,7 @@ import { createCopilotGesture } from './keyboard/copilot-gesture.ts';
 import { Recorder } from './audio/recorder.ts';
 import { createVoiceEngine } from './voice/create-engine.ts';
 import { codexErrorMessage } from './codex-error.ts';
+import { imageRequest } from './image-artifacts.ts';
 
 const debugKeys = process.argv.includes('--debug-keys');
 const debug = process.argv.includes('--debug');
@@ -98,7 +99,7 @@ async function processSpeech(token: number, releasedAt: number) {
       onUpdate: (state, text) => {
         if (token !== generation) return;
         if (state === 'thinking' && !prepared) { prepareConversation(); prepared = true; }
-        publish(state, text);
+        publish(state, { ...text, generatingImage: state === 'thinking' && Boolean(text?.question && imageRequest(text.question)) });
       },
       onPlaybackStart: () => {
         if (token !== generation || playbackStartedAt !== undefined) return;
@@ -114,7 +115,7 @@ async function processSpeech(token: number, releasedAt: number) {
     logTime('Recording finalization', releasedAt, recordingDoneAt);
     if (playbackStartedAt !== undefined) logTime('Playback duration after player start', playbackStartedAt);
     logTime('Full cycle after key release', releasedAt);
-    publish('idle', { exchanges: engine.currentExchanges });
+    publish('idle', { exchanges: engine.currentExchanges, generatingImage: false });
     console.log('Ready.');
   } catch (error) {
     if (token === generation) { console.error(error); publish('error', { message: codexErrorMessage(error, 'Nie udało się przygotować lub odczytać odpowiedzi. Spróbuj nagrać pytanie ponownie. Szczegóły są w terminalu.'), ready: servicesReady }); }
@@ -134,10 +135,10 @@ async function processText(text: string) {
   const controller = new AbortController();
   current = controller;
   prepareConversation();
-  publish('thinking', { question: text, answer: '' });
+  publish('thinking', { question: text, answer: '', generatingImage: Boolean(imageRequest(text)) });
   try {
-    const { answer } = await engine.respond(text, controller.signal);
-    if (token === generation) publish('idle', { question: text, answer });
+    await engine.respond(text, controller.signal);
+    if (token === generation) publish('idle', { exchanges: engine.currentExchanges, generatingImage: false });
   } catch (error) {
     if (token === generation) {
       console.error(error);

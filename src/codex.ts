@@ -2,11 +2,14 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { launch } from './process.ts';
 import { ConversationSession } from './conversation-session.ts';
+import type { GeneratedImage, ImageTask } from './image-artifacts.ts';
 
 export const INSTRUCTIONS = 'Jesteś asystentem głosowym z oknem rozmowy. Nie uruchamiaj narzędzi, nie czytaj ani nie zmieniaj plików. Dostajesz pytanie tekstowe lub surową transkrypcję po polsku. Najpierw popraw je do zwięzłego pytania: usuń wypełniacze, powtórzenia i wycofane fragmenty, uwzględnij ostatnią samokorektę. Następnie odpowiedz po polsku, krótko i naturalnie, korzystając z kontekstu rozmowy. Zwróć JSON z polami prompt (poprawione pytanie) i answer (pełna odpowiedź do wyświetlenia). Jeśli pytanie wymaga kodu, umieść kompletny kod w blokach Markdown otoczonych potrójnymi backtickami z nazwą języka, zachowując wcięcia i nowe linie. Krótkie fragmenty kodu w zdaniu otaczaj pojedynczymi backtickami. Poza kodem używaj zwykłego tekstu. Opisz krótko rozwiązanie poza blokami kodu; bloki kodu nie będą odczytywane głosowo. Jeśli transkrypcja jest niezrozumiała, poproś o powtórzenie zamiast zgadywać. Pytanie:\n';
 const schemaPath = fileURLToPath(new URL('./response.schema.json', import.meta.url));
+export const LOCAL_INSTRUCTIONS = INSTRUCTIONS.replace('Nie uruchamiaj narzędzi, nie czytaj ani nie zmieniaj plików.',
+  'Możesz używać wyłącznie wbudowanego narzędzia ImageGen, gdy użytkownik prosi o stworzenie obrazu. Sam rozpoznaj tę intencję niezależnie od sformułowania. Nie generuj obrazu przy pytaniach o obrazy lub o sposób ich tworzenia. Generuj jeden obraz, bez zastępowania go opisem lub SVG; po wygenerowaniu podaj krótkie potwierdzenie w answer. Jeśli narzędzie jest niedostępne lub zawiedzie, powiedz to wprost i nie twierdź, że obraz powstał. Prośba do ImageGen ma zawierać tylko bieżącą prośbę użytkownika, bez historii rozmowy. Nie używaj shell, MCP ani innych narzędzi, nie czytaj ani nie zmieniaj plików.');
 type Turn = { text: string; threadId?: string; startupMs?: number; turnMs?: number };
-export type VoiceReply = { prompt: string; answer: string; startupMs?: number; turnMs?: number };
+export type VoiceReply = { prompt: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask; startupMs?: number; turnMs?: number };
 
 export class CodexClient {
   private readonly session: ConversationSession;
@@ -30,7 +33,7 @@ export class CodexClient {
   }
   stop(): void { this.cancel(); this.historyServer?.stop(); }
   reset(): void { this.cancel(); this.session.reset(); }
-  cancel(): void { this.active?.kill(); this.active = null; }
+  cancel(): void { this.active?.kill(); this.active = null; this.historyServer?.cancel(); }
   get currentThreadId(): string | null { return this.session.threadId; }
   get currentExchanges() { return this.session.currentExchanges; }
   get canRestorePrevious(): boolean { return this.session.canRestorePrevious; }
@@ -38,6 +41,10 @@ export class CodexClient {
   async restorePrevious(signal?: AbortSignal): Promise<boolean> {
     await this.start();
     return this.historyServer!.restorePrevious(signal);
+  }
+  async generateImage(raw: string, signal?: AbortSignal): Promise<VoiceReply> {
+    await this.start();
+    return this.historyServer!.generateImage(raw, signal);
   }
   async respond(raw: string, signal?: AbortSignal): Promise<VoiceReply> {
     await this.start();
@@ -47,7 +54,8 @@ export class CodexClient {
     const args = this.session.threadId
       ? ['exec', 'resume', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', this.session.threadId, '-']
       : ['exec', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', '-s', 'read-only', '-'];
-    const result = await this.run(args, INSTRUCTIONS + raw, signal);
+    const result = await this.run(args, LOCAL_INSTRUCTIONS + raw, signal);
+    if (signal?.aborted) throw new Error('Cancelled');
     let reply: VoiceReply;
     try { reply = JSON.parse(result.text); }
     catch { throw new Error(`Codex returned invalid JSON: ${result.text}`); }
@@ -55,6 +63,13 @@ export class CodexClient {
     if (result.threadId) {
       this.session.threadId = result.threadId;
     }
+    // CLI JSON does not reliably carry image bytes; use the authoritative turn items.
+    if (this.session.threadId) {
+      const latest = await this.historyServer!.readLatestExchange(this.session.threadId);
+      if (!latest || latest.question !== reply.prompt || latest.answer !== reply.answer) throw new Error('Codex returned mismatched latest reply history');
+      if (latest.images?.length) reply.images = latest.images;
+    }
+    if (signal?.aborted) throw new Error('Cancelled');
     this.session.answered(reply);
     return { ...reply, startupMs: result.startupMs, turnMs: result.turnMs };
   }

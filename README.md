@@ -189,6 +189,44 @@ The desktop orb fades/slides in over 380 ms. Its scale follows measured micropho
 
 The desktop orb has its own profile and Chromium cache in `.chatgpt-button/electron/desktop/` (cache under `session/`). These paths are configured before Electron starts Chromium, avoiding the shared default Electron cache. Smoke tests use a separate profile per process so they can run while the desktop orb is open. After changing profile configuration, exit the orb via **Zakończ** and run `npm run orb` again.
 
+## Image generation
+
+Type `/image kot w kosmosie` or say **„Wygeneruj obraz kota w kosmosie”**.
+In LOCAL mode, Codex can choose its built-in ImageGen from a natural-language
+request, such as "Chciałbym ilustrację kota w kosmosie. Stwórz ją dla mnie."
+This works for typed messages and Whisper transcripts, with both app-server and
+CLI backends. `/image` remains an explicit command. Automatic selection uses
+`CODEX_MODEL` or the Codex configuration, so that model must support ImageGen;
+`CODEX_IMAGE_MODEL` selects the model only for explicit generation commands.
+In API mode, explicit generation phrases still route requests using the existing
+text rule. Questions about images remain text/audio requests. Each request generates one PNG and shows
+it in the conversation with a **Zapisz obraz** button and a native save dialog.
+
+Generation uses Codex's built-in ImageGen. Explicit generation uses
+`CODEX_IMAGE_MODEL=gpt-6.1-sol` by default; automatic LOCAL generation uses the
+normal conversation model. It requires a ChatGPT account signed in through `codex login`.
+In the tested Codex 0.161.0, API-key sessions do not expose the built-in tool
+even though provider capabilities advertise image generation. API mode therefore
+keeps API audio and generates images in a separate ChatGPT-authenticated Codex
+task. No separate Images API fallback is used. Account limits still apply.
+
+On a final voice transcription requesting an image, realtime audio stops and the
+image task starts. API mode shows the resulting confirmation as text; it does
+not synthesize another audio response for this task. Image generation is not
+streamed as voice. Editing existing images is not implemented.
+
+PNGs are kept in `.chatgpt-button/images/`. Codex retains questions and answers;
+API conversations retain only task IDs and positions in
+`.chatgpt-button/image-links/`, so images can be restored with their conversation.
+The separate `.chatgpt-button-imagegen-session.json` contains only session metadata.
+New conversation clears the displayed images, leaving stored artifacts and Codex
+history intact. Follow-up voice/text requests receive the textual context of image
+tasks, without image pixels. Restart the app after updating the desktop files.
+
+`npm run test:images` checks routing, wire results, artifact validation,
+metadata-only links, history restoration and voice cancellation.
+`npm run test:orb` exercises actual previews, unavailable images and native saving.
+
 ## Tests and type checking
 
 `npm run test:conversation` verifies session expiry, metadata persistence, history

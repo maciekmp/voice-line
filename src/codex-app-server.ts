@@ -4,9 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { mkdir } from 'node:fs/promises';
 import { launch } from './process.ts';
 import { ConversationSession } from './conversation-session.ts';
-import { readConversationHistory } from './conversation-history.ts';
+import { readConversationHistory, readLatestConversationExchange } from './conversation-history.ts';
 import type { VoiceReply } from './codex.ts';
-import { INSTRUCTIONS } from './codex.ts';
+import { LOCAL_INSTRUCTIONS } from './codex.ts';
+import { storeGeneratedImage } from './image-artifacts.ts';
 
 const schema = JSON.parse(readFileSync(fileURLToPath(new URL('./response.schema.json', import.meta.url)), 'utf8'));
 
@@ -16,6 +17,7 @@ type ActiveTurn = {
   threadId: string;
   id?: string;
   text: string;
+  images: any[];
   cancelled: boolean;
   completion: Promise<void>;
   resolve: () => void;
@@ -25,6 +27,8 @@ type ActiveTurn = {
 export class CodexAppServer {
   private readonly cwd: string;
   protected readonly session: ConversationSession;
+  protected readonly threadHistoryMode: 'paginated' | undefined = undefined;
+  protected readonly responseInstructions: string = LOCAL_INSTRUCTIONS;
   private readonly model = process.env.CODEX_MODEL?.trim() || undefined;
   private child: ReturnType<typeof launch> | null = null;
   private startup: Promise<void> | null = null;
@@ -32,6 +36,7 @@ export class CodexAppServer {
   private pending = new Map<number, Pending>();
   private turn: ActiveTurn | null = null;
   private diagnostics = '';
+  lastImageTurnId: string | null = null;
   private readonly historyOnly: boolean;
   private readonly connection: { home?: string; apiKey?: string };
 
@@ -61,7 +66,20 @@ export class CodexAppServer {
   }
 
   protected readHistory(threadId: string) {
-    return readConversationHistory((method, params) => this.request(method, params), threadId);
+    return readConversationHistory((method, params) => this.request(method, params), threadId, this.cwd);
+  }
+  async readImageTurn(threadId: string, turnId: string) {
+    await this.start();
+    return readConversationHistory((method, params) => this.request(method, params), threadId, this.cwd, turnId);
+  }
+  async readLatestExchange(threadId: string) {
+    await this.start();
+    return readLatestConversationExchange((method, params) => this.request(method, params), threadId, this.cwd);
+  }
+  async requireChatGPTImageAuth(): Promise<void> {
+    await this.start();
+    const account = await this.request('account/read', {});
+    if (account?.account?.type !== 'chatgpt') throw new Error('ImageGen wymaga logowania ChatGPT w Codex. Uruchom codex login.');
   }
 
   private async hydrateSavedHistory(): Promise<void> {
@@ -107,7 +125,7 @@ export class CodexAppServer {
       try { reply = await this.request('thread/resume', { threadId: this.session.threadId, ...(this.model && { model: this.model }) }); }
       catch { this.session.reset(); }
     }
-    if (!reply) reply = await this.request('thread/start', { cwd: this.cwd, approvalPolicy: 'never', sandbox: 'read-only', ...(this.model && { model: this.model }) });
+    if (!reply) reply = await this.request('thread/start', { cwd: this.cwd, approvalPolicy: 'never', sandbox: 'read-only', ...(this.threadHistoryMode && { historyMode: this.threadHistoryMode }), ...(this.model && { model: this.model }) });
     const id = reply?.thread?.id;
     if (typeof id !== 'string') throw new Error('Codex app-server returned no thread ID');
     this.session.threadId = id;
@@ -149,6 +167,10 @@ export class CodexAppServer {
     this.onNotification(message.method, message.params);
     const turn = this.turn;
     if (!turn || message.params?.threadId !== turn.threadId) return;
+    if (turn.id && message.params.turnId && message.params.turnId !== turn.id) return;
+    if (message.method === 'item/completed' && message.params.item?.type === 'imageGeneration') {
+      turn.images.push(message.params.item);
+    }
     if (message.method === 'item/completed' && message.params.item?.type === 'agentMessage') {
       turn.text = message.params.item.text ?? turn.text;
     }
@@ -174,16 +196,31 @@ export class CodexAppServer {
   protected onServerExit(_error: Error): void {}
 
   async respond(raw: string, signal?: AbortSignal): Promise<VoiceReply> {
+    return this.runTurn(raw, signal, false);
+  }
+
+  async generateImage(raw: string, signal?: AbortSignal): Promise<VoiceReply> {
+    await this.requireChatGPTImageAuth();
+    if (!(await this.request('modelProvider/capabilities/read', {})).imageGeneration) {
+      throw new Error('ImageGen nie jest dostępny dla tego połączenia Codex.');
+    }
+    return this.runTurn(raw, signal, true);
+  }
+
+  private async runTurn(raw: string, signal: AbortSignal | undefined, image: boolean): Promise<VoiceReply> {
     await this.start();
     if (this.turn) await this.turn.completion.catch(() => {});
     if (signal?.aborted) throw new Error('Cancelled');
     this.session.expire();
+    // CLI can create/resume this session through another Codex process.
+    if (this.historyOnly && this.session.threadId) await this.request('thread/resume', { threadId: this.session.threadId });
     if (!this.session.threadId) await this.openThread();
     if (!this.session.threadId) throw new Error('Codex thread is unavailable');
+    if (signal?.aborted) throw new Error('Cancelled');
     let resolve!: () => void, reject!: (error: Error) => void;
     const completion = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
     void completion.catch(() => {});
-    const turn: ActiveTurn = { threadId: this.session.threadId, text: '', cancelled: false, completion, resolve, reject };
+    const turn: ActiveTurn = { threadId: this.session.threadId, text: '', images: [], cancelled: false, completion, resolve, reject };
     this.turn = turn;
     const abort = () => {
       turn.cancelled = true;
@@ -191,11 +228,14 @@ export class CodexAppServer {
     };
     signal?.addEventListener('abort', abort, { once: true });
     const startedAt = performance.now();
+    const timeout = setTimeout(() => { abort(); turn.reject(new Error('Codex response timed out')); }, 300_000);
     try {
       const reply = await this.request('turn/start', {
         threadId: turn.threadId,
-        input: [{ type: 'text', text: INSTRUCTIONS + raw }],
-        ...(this.model && { model: this.model }),
+        input: [{ type: 'text', text: image
+          ? 'Wygeneruj dokładnie jeden obraz zgodny z prośbą, używając wyłącznie wbudowanego narzędzia generowania obrazów. Nie używaj shell, MCP ani innych narzędzi. Nie czytaj ani nie zmieniaj plików projektu. Nie zastępuj obrazu opisem ani kodem SVG. Po wygenerowaniu zwróć JSON z polami prompt (prośba użytkownika) i answer (bardzo krótkie potwierdzenie po polsku). Prośba użytkownika:\n' + raw
+          : this.responseInstructions + raw }],
+        ...(image ? { model: process.env.CODEX_IMAGE_MODEL?.trim() || 'gpt-6.1-sol' } : this.model && { model: this.model }),
         effort: process.env.CODEX_EFFORT ?? 'low',
         approvalPolicy: 'never',
         sandboxPolicy: { type: 'readOnly' },
@@ -211,9 +251,16 @@ export class CodexAppServer {
       try { parsed = JSON.parse(turn.text); }
       catch { throw new Error(`Codex returned invalid JSON: ${turn.text}`); }
       if (typeof parsed.prompt !== 'string' || typeof parsed.answer !== 'string' || !parsed.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
+      if (image && !turn.images.length) throw new Error(`Codex nie wygenerował obrazu: ${parsed.answer}`);
+      if (turn.images.length) {
+        parsed.images = await Promise.all(turn.images.map(item => storeGeneratedImage(this.cwd, item)));
+        if (signal?.aborted || turn.cancelled) throw new Error('Cancelled');
+        this.lastImageTurnId = turn.id;
+      }
       this.session.answered(parsed);
       return { ...parsed, startupMs, turnMs: performance.now() - startedAt - startupMs };
     } finally {
+      clearTimeout(timeout);
       signal?.removeEventListener('abort', abort);
       if (this.turn === turn && !turn.id) { this.turn = null; turn.resolve(); }
     }

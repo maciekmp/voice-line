@@ -1,8 +1,9 @@
 import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import type { GeneratedImage, ImageTask } from './image-artifacts.ts';
 
 const CONTEXT_TTL_MS = 2 * 60 * 1000;
-export type ConversationExchange = { question: string; answer: string };
+export type ConversationExchange = { question: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask };
 
 export class ConversationSession {
   threadId: string | null = null;
@@ -56,9 +57,9 @@ export class ConversationSession {
     writeFileSync(this.file, JSON.stringify({ threadId: this.threadId, lastAnswerAt: this.lastAnswerAt }), 'utf8');
   }
 
-  answered(reply: { prompt: string; answer: string }): void {
+  answered(reply: { prompt: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask }): void {
     if (!this.threadId) return;
-    this.exchanges.push({ question: reply.prompt, answer: reply.answer });
+    this.exchanges.push({ question: reply.prompt, answer: reply.answer, ...(reply.images?.length && { images: reply.images }), ...(reply.imageTask && { imageTask: reply.imageTask }) });
     this.lastAnswerAt = this.now();
     this.persist();
   }

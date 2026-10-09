@@ -1,4 +1,5 @@
 import { renderAnswer } from './answer-renderer.js';
+import { renderImages } from './image-renderer.js';
 
 const get = id => document.getElementById(id);
 let snapshot = { state: 'starting', ready: false };
@@ -8,6 +9,7 @@ let resizeFrame;
 let scrollToLatest = false;
 let renderedHistory = '';
 let renderedAnswer;
+let renderedImages = '';
 function reportSize() {
   clearTimeout(resizeFrame);
   resizeFrame = setTimeout(() => window.orbDesktop.resize({
@@ -93,12 +95,15 @@ window.orbDesktop.onVoice(value => {
         else p.textContent = exchange[key] || '';
         article.append(p);
       }
+      const attachments = document.createElement('div');
+      renderImages(attachments, exchange.images);
+      article.append(attachments);
       return article;
     }));
   }
   get('history').hidden = document.body.dataset.mode !== 'chat' || !history.length;
   if (nearBottom) scrollToLatest = true;
-  get('status').textContent = labels[value.state] || '';
+  get('status').textContent = value.state === 'thinking' && value.generatingImage ? 'Generuję obraz…' : labels[value.state] || '';
   get('status').hidden = Boolean(value.answer) || !get('status').textContent;
   get('error').hidden = !value.message;
   get('error').textContent = value.message || '';
@@ -111,6 +116,8 @@ window.orbDesktop.onVoice(value => {
     get(`${key}-block`).hidden = !value[key];
   }
   get('empty').hidden = Boolean(value.question || value.answer || value.message || value.state !== 'idle');
+  const imagesKey = JSON.stringify(value.images || []);
+  if (imagesKey !== renderedImages) { renderedImages = imagesKey; renderImages(get('images'), value.images); }
   updateComposer();
   reportSize();
 });

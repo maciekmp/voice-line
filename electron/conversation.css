@@ -43,6 +43,13 @@ body[data-mode="compose"] main { display: none; }
 article + article { margin-top: 8px; }
 p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 #question { color: var(--color-muted); }
+.generated-image { margin: 8px 0 0; }
+.generated-image img { display: block; width: 100%; aspect-ratio: auto 1; object-fit: contain; border-radius: var(--radius-control); background: var(--color-surface); }
+.image-preview { position: relative; }
+.image-save { position: absolute; background: color-mix(in srgb, var(--color-background) 75%, transparent); color: var(--color-text); }
+.image-save:hover:not(:disabled) { background: color-mix(in srgb, var(--color-background) 90%, transparent); }
+.image-save:active:not(:disabled) { background: var(--color-background); }
+.image-feedback { color: var(--color-muted); }
 code { font-family: Consolas, 'Cascadia Code', monospace; }
 p code { padding: 1px 3px; border-radius: 3px; background: var(--color-surface); }
 .code-block { position: relative; min-width: 0; margin-block: 8px; border: 1px solid var(--color-border); border-radius: var(--radius-control); background: var(--color-surface); overflow: hidden; }

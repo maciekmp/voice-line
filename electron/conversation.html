@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src data:">
 <title>Voice Line — rozmowa</title>
 <link rel="stylesheet" href="conversation.css">
 <script type="module" src="conversation.js"></script>
@@ -21,6 +21,7 @@
 <p id="empty">Przytrzymaj Copilot, aby zapytać.</p>
 <article id="question-block" aria-label="Twoje pytanie" hidden><p id="question"></p></article>
 <article id="answer-block" aria-label="Odpowiedź" hidden><div id="answer"></div></article>
+<div id="images" aria-label="Wygenerowane obrazy"></div>
 </section>
 <p id="status" role="status" hidden></p>
 <p id="error" role="alert" hidden></p>

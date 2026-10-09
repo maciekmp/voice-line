@@ -1,8 +1,10 @@
 import type { CodexClient, VoiceReply } from './codex.ts';
 import type { ConversationExchange } from './conversation-session.ts';
+import { imageRequest, explicitImageRequest } from './image-artifacts.ts';
 
 export type ConversationClient = Pick<CodexClient, 'start' | 'stop' | 'cancel' | 'reset' | 'respond'
-  | 'currentThreadId' | 'currentExchanges' | 'canRestorePrevious' | 'expireConversation' | 'restorePrevious'>;
+  | 'currentThreadId' | 'currentExchanges' | 'canRestorePrevious' | 'expireConversation' | 'restorePrevious'>
+  & { generateImage?: (text: string, signal?: AbortSignal) => Promise<VoiceReply> };
 export type VoiceCallbacks = {
   onUpdate?: (state: string, text?: { question?: string; answer?: string; exchanges?: ConversationExchange[] }) => void;
   onPlaybackStart?: () => void;
@@ -30,6 +32,13 @@ export abstract class BaseVoiceEngine implements VoiceEngine {
   reset() { this.cancel(); this.client.reset(); }
   expireConversation() { this.client.expireConversation(); }
   restorePrevious(signal?: AbortSignal) { return this.client.restorePrevious(signal); }
-  respond(text: string, signal?: AbortSignal) { return this.client.respond(text, signal); }
+  respond(text: string, signal?: AbortSignal) {
+    const image = this.mode === 'local' ? explicitImageRequest(text) : imageRequest(text);
+    return image ? this.generateImage(image, signal) : this.client.respond(text, signal);
+  }
+  generateImage(text: string, signal?: AbortSignal) {
+    if (!this.client.generateImage) return Promise.reject(new Error('ImageGen jest niedostępny.'));
+    return this.client.generateImage(text, signal);
+  }
   abstract respondAudio(wav: string, signal?: AbortSignal, callbacks?: VoiceCallbacks): Promise<VoiceReply>;
 }

@@ -77,6 +77,21 @@ test('local lifecycle manages its services and typed messages do not use STT/TTS
   assert.ok(calls.includes('client.stop') && calls.includes('stt.stop') && calls.includes('tts.shutdown'));
 });
 
+test('LOCAL leaves natural image intent to Codex, while /image explicitly selects generation', async () => {
+  const { calls, client, stt, engine } = fixture();
+  client.generateImage = async text => { calls.push(`image:${text}`); return { prompt: text, answer: 'Gotowe.' }; };
+  await engine.respond('Wygeneruj obraz kota');
+  assert.deepEqual(calls, ['respond:Wygeneruj obraz kota']);
+  calls.length = 0;
+  await engine.respond('/image kot');
+  assert.deepEqual(calls, ['image:kot']);
+  calls.length = 0;
+  stt.transcribe = async () => 'Chciałbym ilustrację kota';
+  await engine.respondAudio('speech.wav');
+  assert.ok(calls.includes('respond:Chciałbym ilustrację kota'));
+  assert.ok(!calls.some(call => call.startsWith('image:')));
+});
+
 test('abort after recognition or generation prevents starting the next stage', async () => {
   for (const stage of ['recognition', 'generation']) {
     const { calls, client, stt, engine } = fixture();

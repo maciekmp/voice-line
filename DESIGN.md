@@ -199,3 +199,17 @@ Codex conversation persistence and optional SAVE_AUDIO behavior remain as
 documented in README.md. New conversation clears the displayed exchange and
 resets Codex context. Undo can restore the previous thread during this app run.
 No transcript is added to renderer persistent storage.
+
+Generated PNGs use the shared `electron/image-renderer.js` in the latest exchange
+and history. Previews fit the conversation width, preserve the image aspect ratio,
+and use existing surface and control tokens. Zapisz obraz is an icon-only 24 px
+Lucide save button, 4 px inside the image's top-right corner. It reuses popup-action
+geometry and uses the background token at 75% opacity (90% on hover), with the text
+token for contrast over images. A Polish accessible name and tooltip identify it.
+It retains existing focus and disabled states; inline Polish status announces save
+success or recoverable errors. Generuję obraz… is the pending state. Missing files
+show recovery text and disable saving. A native OS save dialog owns the destination.
+Renderer IPC accepts only SHA-256 image IDs, never arbitrary file paths. Artifacts
+remain under the ignored app directory; conversation/task links contain metadata
+only, and message content is restored from Codex history. Reset hides artifacts
+without deleting them. Verification: test:images and the real Electron test:orb.

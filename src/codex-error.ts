@@ -1,6 +1,7 @@
 /** Preserve Codex usage-limit details in the message shown to the user. */
 export function codexErrorMessage(error: unknown, fallback: string): string {
   const detail = error instanceof Error ? error.message : typeof error === 'string' ? error : '';
+  if (/^(?:ImageGen |Codex nie wygenerował obrazu:|Nie można odczytać obrazu)/.test(detail)) return detail;
   if (/requires OPENAI_API_KEY|realtime conversation requires API key auth/i.test(detail)) {
     return 'Tryb realtime wymaga OPENAI_API_KEY w .env i korzysta z rozliczeń API. Aby używać abonamentu ChatGPT, ustaw VOICE_MODE=local.';
   }
