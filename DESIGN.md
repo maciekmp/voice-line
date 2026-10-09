@@ -135,6 +135,20 @@ Przypnij popup/Odepnij popup names, tooltips and pressed state describe the acti
 The overlay controller owns pinning: it cancels automatic departure hiding and
 keeps the popup and orb visible when switching applications. Unpinning restores
 the one-second departure delay. Pinning lasts until unpinned or dismissed.
+The adjacent 24 px Lucide undo button restores the previous Codex conversation
+after reset or context expiry, including exchanges read from Codex history.
+It shares the pin control's style and fixed positioning, 32 px from the right.
+Its Polish accessible name is Wróć do poprzedniej rozmowy. It is disabled while
+work is active, services are unavailable, or no previous nonempty thread exists.
+A thread is nonempty after at least one successful answer. Returning
+renews the two-minute context window; a subsequent return can switch back to the
+conversation just left. The session owns thread selection; the Electron main
+process keeps at most two prior display snapshots in memory. The existing local
+session file stores only the thread ID and timestamp. Startup and undo read
+messages through Codex app-server, then publish them with their restored context.
+Paginated history loads all turn and item pages. Empty history disables undo;
+failed reads or cancelled returns do not switch the selected thread. Older local
+message copies are removed by metadata-only migration.
 Focus/blur does not change mode
 or independently schedule hiding. One controller owns visibility and mode;
 voice snapshots do not reactivate windows or replace chat with peek. Starting
@@ -168,10 +182,14 @@ never HTML. Speech reads the prose and inline code, skipping fenced blocks; a
 code-only reply announces that the code is available in the conversation window.
 Hover displays only the latest exchange. Chat displays previous exchanges above
 it and supports document scrolling, with the composer flush to the window bottom.
-Exchanges collected during the current app run are kept in main-process memory;
-they survive popup dismissal and clear on New conversation. Earlier Codex thread
-messages from previous app runs are not loaded by this view. Updates keep readers
+Exchanges are kept in main-process memory and stored only in Codex history.
+The ignored local `.chatgpt-button-session.json` holds thread ID and timestamp,
+never message content. Messages survive popup dismissal and load through the
+Codex history API with their thread on restart. New conversation clears the
+display and removes the session file, while leaving Codex history intact; undo
+retains the previous thread during this app run. Updates keep readers
 at their scroll position unless they were already at the bottom.
 Codex conversation persistence and optional SAVE_AUDIO behavior remain as
 documented in README.md. New conversation clears the displayed exchange and
-resets Codex context. No transcript is added to renderer persistent storage.
+resets Codex context. Undo can restore the previous thread during this app run.
+No transcript is added to renderer persistent storage.

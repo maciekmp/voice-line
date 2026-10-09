@@ -27,13 +27,27 @@ let panelWindow;
 let engine;
 let voice = { state: 'starting', ready: false, question: '', answer: '', message: '' };
 let conversationHistory = [];
+const previousConversations = new Map();
 const preview = process.argv.includes('--preview');
 let testLiveVisibility = false;
 let testNativePointer = false;
 let pointerPoll;
 
 function sendVoice(update = {}) {
-  if (update.reset) {
+  const switchedThread = 'threadId' in update && update.threadId !== voice.threadId;
+  if (switchedThread && voice.threadId) {
+    const exchanges = [...conversationHistory];
+    if (voice.answer) exchanges.push({ question: voice.question, answer: voice.answer });
+    previousConversations.delete(voice.threadId);
+    previousConversations.set(voice.threadId, exchanges);
+    if (previousConversations.size > 2) previousConversations.delete(previousConversations.keys().next().value);
+  }
+  if (Array.isArray(update.exchanges) || update.restored) {
+    const exchanges = update.exchanges || previousConversations.get(update.threadId) || [];
+    const latest = exchanges.at(-1);
+    conversationHistory = exchanges.slice(0, -1);
+    update = { ...update, question: latest?.question || '', answer: latest?.answer || '' };
+  } else if (update.reset) {
     conversationHistory = [];
     update = { ...update, question: '', answer: '' };
   } else if (voice.answer && (update.state === 'listening'
@@ -208,6 +222,14 @@ ipcMain.on('voice:hover', (event, entered) => {
 ipcMain.on('voice:command', (event, command) => {
   if (!trusted(event) || exitStarted) return;
   if (command === 'pin' && event.sender === panelWindow?.webContents) { overlay.togglePin(); return; }
+  if (command === 'previous') {
+    if (event.sender !== panelWindow?.webContents || !voice.ready || !voice.canRestorePrevious
+      || !['idle', 'error'].includes(voice.state) || !engine?.connected) return;
+    sendVoice({ state: 'thinking' });
+    engine.send({ command });
+    overlay.open();
+    return;
+  }
   if (command === 'hide') { hidePanel(); return; }
   if (command === 'retry' && !voice.ready) {
     if (engine) { const previous = engine; engine = undefined; previous.send({ command: 'shutdown' }); previous.once('exit', startEngine); }
@@ -646,6 +668,57 @@ async function verify() {
   const commands = [];
   console.log('Conversation mode checks: passed');
   engine = { connected: true, send: message => commands.push(message) };
+  previousConversations.clear();
+  const savedExchanges = [{ question: 'Zapisane pytanie', answer: 'Zapisana odpowiedź' },
+    { question: 'Kolejne zapisane pytanie', answer: 'Kolejna zapisana odpowiedź' }];
+  onEngineMessage({ type: 'voice', state: 'idle', ready: true, threadId: 'saved-thread',
+    canRestorePrevious: false, exchanges: savedExchanges });
+  assert.equal(voice.question, savedExchanges[1].question, 'Startup displays the resumed thread latest question');
+  assert.equal(voice.answer, savedExchanges[1].answer);
+  assert.deepEqual(voice.history, savedExchanges.slice(0, -1));
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#answer').textContent"), savedExchanges[1].answer);
+  previousConversations.clear();
+  onEngineMessage({ type: 'voice', state: 'idle', ready: true, threadId: 'expired-saved-thread',
+    restored: true, canRestorePrevious: false, exchanges: savedExchanges });
+  assert.equal(voice.answer, savedExchanges[1].answer, 'Undo loads messages even when the Electron archive is empty after restart');
+  assert.deepEqual(voice.history, savedExchanges.slice(0, -1));
+  console.log('Restart conversation hydration checks: passed');
+  sendVoice({ state: 'idle', ready: true, reset: true, threadId: 'undo-first', canRestorePrevious: false });
+  sendVoice({ question: 'Pierwsze pytanie', answer: 'Pierwsza odpowiedź' });
+  sendVoice({ state: 'thinking', question: 'Drugie pytanie', answer: '' });
+  sendVoice({ state: 'idle', answer: 'Druga odpowiedź' });
+  sendVoice({ reset: true, threadId: null, canRestorePrevious: true });
+  await panelWindow.webContents.executeJavaScript("document.querySelector('#previous').click(); document.querySelector('#previous').click()");
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.deepEqual(commands, [{ command: 'previous' }], 'Undo sends one command and blocks duplicate clicks while pending');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#previous').disabled"), true);
+  onEngineMessage({ type: 'voice', state: 'idle', threadId: 'undo-first', restored: true, canRestorePrevious: false });
+  assert.equal(voice.question, 'Drugie pytanie');
+  assert.equal(voice.answer, 'Druga odpowiedź');
+  assert.deepEqual(voice.history, [{ question: 'Pierwsze pytanie', answer: 'Pierwsza odpowiedź' }]);
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#previous').disabled"), true, 'No previous conversation disables undo');
+  sendVoice({ reset: true, threadId: null, canRestorePrevious: true });
+  sendVoice({ state: 'idle', threadId: 'undo-second', question: 'Nowy temat', answer: 'Nowa odpowiedź' });
+  await panelWindow.webContents.executeJavaScript("document.querySelector('#previous').focus()");
+  assert.equal(await panelWindow.webContents.executeJavaScript('document.activeElement.id'), 'previous');
+  panelWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+  panelWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+  await new Promise(resolve => setTimeout(resolve, 80));
+  assert.equal(commands.at(-1).command, 'previous', 'Undo supports keyboard activation');
+  onEngineMessage({ type: 'voice', state: 'idle', threadId: 'undo-first', restored: true, canRestorePrevious: true });
+  assert.equal(voice.answer, 'Druga odpowiedź');
+  onEngineMessage({ type: 'voice', state: 'idle', threadId: 'undo-second', restored: true, canRestorePrevious: true });
+  assert.equal(voice.answer, 'Nowa odpowiedź', 'Returning also preserves the conversation being left');
+  const undoGeometry = await panelWindow.webContents.executeJavaScript(`(() => {
+    const undo = document.querySelector('#previous').getBoundingClientRect();
+    const pin = document.querySelector('#pin').getBoundingClientRect();
+    return { width: undo.width, height: undo.height, adjacent: undo.right <= pin.left, top: undo.top === pin.top };
+  })()`);
+  assert.deepEqual(undoGeometry, { width: 24, height: 24, adjacent: true, top: true });
+  sendVoice({ reset: true, threadId: null, canRestorePrevious: false });
+  commands.length = 0;
+  console.log('Previous conversation undo checks: passed');
+  sendVoice({ question: 'Jak zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania i zacznij od jednego.' });
   testLiveVisibility = true;
   onEngineMessage({ type: 'ui', action: 'compose' });
   await new Promise(resolve => setTimeout(resolve, 350));

@@ -12,6 +12,16 @@ Hold the Copilot key to record. Release it to transcribe locally, clean the tran
 
 ## Configure and run
 
+The local, Git-ignored `.chatgpt-button-session.json` stores only the current
+thread ID and last-answer timestamp. Message content remains in Codex's history.
+On restart and undo, the app reads messages through Codex app-server before
+restoring the conversation, including paginated history. The CLI fallback uses
+an app-server connection only to read history; answers still use `codex exec`.
+Empty conversations do not enable undo. Failed reads preserve the selected
+conversation and report an error. Older session files containing message copies
+are migrated to metadata only. New conversation removes the session file but
+does not delete Codex history.
+
 ```powershell
 npm.cmd run keys
 ```

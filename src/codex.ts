@@ -13,16 +13,34 @@ export class CodexClient {
   private active: ReturnType<typeof launch> | null = null;
   private readonly cwd: string;
   private readonly executable: string;
+  private historyServer: import('./codex-app-server.ts').CodexAppServer | null = null;
+  private startup: Promise<void> | null = null;
   constructor(cwd: string, executable = 'codex.cmd') {
     this.cwd = cwd; this.executable = executable;
     this.session = new ConversationSession(cwd);
   }
-  start(): Promise<void> { return Promise.resolve(); }
-  stop(): void { this.cancel(); }
+  start(): Promise<void> {
+    if (!this.startup) this.startup = this.openHistory().catch(error => { this.startup = null; throw error; });
+    return this.startup;
+  }
+  private async openHistory(): Promise<void> {
+    const { CodexAppServer } = await import('./codex-app-server.ts');
+    this.historyServer = new CodexAppServer(this.cwd, this.session, true);
+    await this.historyServer.start();
+  }
+  stop(): void { this.cancel(); this.historyServer?.stop(); }
   reset(): void { this.cancel(); this.session.reset(); }
   cancel(): void { this.active?.kill(); this.active = null; }
   get currentThreadId(): string | null { return this.session.threadId; }
+  get currentExchanges() { return this.session.currentExchanges; }
+  get canRestorePrevious(): boolean { return this.session.canRestorePrevious; }
+  expireConversation(): void { this.session.expire(); }
+  async restorePrevious(signal?: AbortSignal): Promise<boolean> {
+    await this.start();
+    return this.historyServer!.restorePrevious(signal);
+  }
   async respond(raw: string, signal?: AbortSignal): Promise<VoiceReply> {
+    await this.start();
     this.session.expire();
     const model = process.env.CODEX_MODEL?.trim();
     const modelArgs = model ? ['-m', model] : [];
@@ -37,7 +55,7 @@ export class CodexClient {
     if (result.threadId) {
       this.session.threadId = result.threadId;
     }
-    this.session.answered();
+    this.session.answered(reply);
     return { ...reply, startupMs: result.startupMs, turnMs: result.turnMs };
   }
   private run(args: string[], prompt: string, signal?: AbortSignal): Promise<Turn> {

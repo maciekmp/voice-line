@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { launch } from './process.ts';
 import { ConversationSession } from './conversation-session.ts';
+import { readConversationHistory } from './conversation-history.ts';
 import type { VoiceReply } from './codex.ts';
 import { INSTRUCTIONS } from './codex.ts';
 
@@ -30,13 +31,42 @@ export class CodexAppServer {
   private pending = new Map<number, Pending>();
   private turn: ActiveTurn | null = null;
   private diagnostics = '';
+  private readonly historyOnly: boolean;
 
-  constructor(cwd: string) {
+  constructor(cwd: string, session = new ConversationSession(cwd), historyOnly = false) {
     this.cwd = cwd;
-    this.session = new ConversationSession(cwd);
+    this.session = session;
+    this.historyOnly = historyOnly;
   }
 
   get currentThreadId(): string | null { return this.session.threadId; }
+  get currentExchanges() { return this.session.currentExchanges; }
+  get canRestorePrevious(): boolean { return this.session.canRestorePrevious; }
+  expireConversation(): void { this.session.expire(); }
+  async restorePrevious(signal?: AbortSignal): Promise<boolean> {
+    await this.start();
+    const id = this.session.previousConversationId;
+    if (!id) return false;
+    const exchanges = await this.readHistory(id);
+    if (signal?.aborted || this.session.previousConversationId !== id) return false;
+    this.session.loadHistory(id, exchanges);
+    if (!this.session.canRestorePrevious) return false;
+    if (!this.historyOnly) await this.request('thread/resume', { threadId: id, ...(this.model && { model: this.model }) });
+    if (signal?.aborted || this.session.previousConversationId !== id) return false;
+    const restored = this.session.restorePrevious();
+    return restored;
+  }
+
+  private readHistory(threadId: string) {
+    return readConversationHistory((method, params) => this.request(method, params), threadId);
+  }
+
+  private async hydrateSavedHistory(): Promise<void> {
+    for (const id of [this.session.threadId, this.session.previousConversationId]) {
+      if (id) this.session.loadHistory(id, await this.readHistory(id));
+    }
+    if (this.session.threadId && !this.session.currentExchanges.length) this.session.reset();
+  }
 
   start(): Promise<void> {
     if (!this.startup) this.startup = this.open().catch(error => { this.startup = null; throw error; });
@@ -51,9 +81,11 @@ export class CodexAppServer {
     child.once('error', error => this.onExit(error));
     child.once('close', code => this.onExit(new Error(`Codex app-server exited (${code}): ${this.diagnostics}`)));
     try {
-      await this.request('initialize', { clientInfo: { name: 'chatgpt_button', title: 'ChatGPT Button', version: '0.1.0' } });
+      await this.request('initialize', { clientInfo: { name: 'chatgpt_button', title: 'ChatGPT Button', version: '0.1.0' },
+        capabilities: { experimentalApi: true } });
       this.send({ method: 'initialized', params: {} });
-      await this.openThread();
+      await this.hydrateSavedHistory();
+      if (!this.historyOnly) await this.openThread();
     } catch (error) {
       child.kill();
       throw error;
@@ -81,9 +113,16 @@ export class CodexAppServer {
   private request(method: string, params: object): Promise<any> {
     const id = ++this.nextId;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timeout = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`Codex ${method} timed out`));
+      }, 30_000);
+      this.pending.set(id, {
+        resolve: value => { clearTimeout(timeout); resolve(value); },
+        reject: error => { clearTimeout(timeout); reject(error); },
+      });
       try { this.send({ id, method, params }); }
-      catch (error) { this.pending.delete(id); reject(error); }
+      catch (error) { clearTimeout(timeout); this.pending.delete(id); reject(error); }
     });
   }
 
@@ -159,7 +198,7 @@ export class CodexAppServer {
       try { parsed = JSON.parse(turn.text); }
       catch { throw new Error(`Codex returned invalid JSON: ${turn.text}`); }
       if (typeof parsed.prompt !== 'string' || typeof parsed.answer !== 'string' || !parsed.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
-      this.session.answered();
+      this.session.answered(parsed);
       return { ...parsed, startupMs, turnMs: performance.now() - startedAt - startupMs };
     } finally {
       signal?.removeEventListener('abort', abort);

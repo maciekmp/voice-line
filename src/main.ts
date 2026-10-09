@@ -16,7 +16,8 @@ const debugKeys = process.argv.includes('--debug-keys');
 const debug = process.argv.includes('--debug');
 const desktop = process.argv.includes('--desktop');
 function publish(state: string, extra: Record<string, unknown> = {}) {
-  if (desktop && process.connected) process.send?.({ type: 'voice', state, ...extra });
+  if (desktop && process.connected) process.send?.({ type: 'voice', state,
+    threadId: codex.currentThreadId, canRestorePrevious: codex.canRestorePrevious, ...extra });
 }
 const saveAudio = process.env.SAVE_AUDIO === '1';
 const key = Number(process.env.COPILOT_VK ?? '134'); // F23; verify with --debug-keys.
@@ -73,6 +74,30 @@ function resetConversation() {
   console.log('New conversation.');
 }
 
+function prepareConversation() {
+  const previous = codex.currentThreadId;
+  codex.expireConversation();
+  if (previous && !codex.currentThreadId) publish('thinking', { reset: true });
+}
+
+async function restorePreviousConversation() {
+  if (!servicesReady || current || held || !codex.canRestorePrevious) return;
+  const controller = new AbortController();
+  const token = generation;
+  current = controller;
+  publish('thinking');
+  try {
+    const restored = await codex.restorePrevious(controller.signal);
+    if (token !== generation) return;
+    if (restored) publish('idle', { restored: true, exchanges: codex.currentExchanges });
+    else publish('idle');
+  } catch (error) {
+    if (token !== generation) return;
+    console.error(error);
+    publish('error', { message: 'Nie udało się przywrócić rozmowy. Spróbuj ponownie.' });
+  } finally { if (current === controller) current = null; }
+}
+
 async function processSpeech(token: number, releasedAt: number) {
   const controller = new AbortController();
   current = controller;
@@ -90,6 +115,7 @@ async function processSpeech(token: number, releasedAt: number) {
     if (!raw || !raw.replace(/\*[^*]+\*/g, '').trim()) { publish('error', { message: 'Nie rozpoznano mowy. Sprawdź mikrofon i spróbuj ponownie.', ready: true }); console.log('No intelligible speech recognized. Check the microphone or save the WAV with SAVE_AUDIO=1.'); return; }
     if (debug) console.log(`\n[Raw transcription]\n${raw}\n`);
     console.log('Preparing answer...');
+    prepareConversation();
     publish('thinking', { question: raw });
     const { prompt, answer, startupMs, turnMs } = await codex.respond(raw, controller.signal);
     if (token !== generation) return;
@@ -138,6 +164,7 @@ async function processText(text: string) {
   const token = generation;
   const controller = new AbortController();
   current = controller;
+  prepareConversation();
   publish('thinking', { question: text, answer: '' });
   try {
     const { answer } = await codex.respond(text, controller.signal);
@@ -216,7 +243,7 @@ else {
   console.log(`Starting microphone, Whisper${process.env.WHISPER_THREADS ? ` (${process.env.WHISPER_THREADS} threads)` : ''}, Codex${process.env.CODEX_MODEL ? ` (${process.env.CODEX_MODEL})` : ''}, and TTS (${ttsMode})...`);
   void Promise.all([recorder.startCapture(), stt.start(), codex.start(), speaker.start()]).then(() => {
     servicesReady = true;
-    publish('idle', { ready: true });
+    publish('idle', { ready: true, exchanges: codex.currentExchanges });
     console.log(`Ready. Hold Copilot (vk=${key}); Ctrl+Shift+N resets; Ctrl+C exits.`);
   }).catch(error => { console.error(error); publish('error', { message: codexErrorMessage(error, 'Nie udało się uruchomić usług. Sprawdź mikrofon, Whisper, Codex i ustawienia .env, a następnie uruchom usługi ponownie.'), ready: false }); });
 }
@@ -233,6 +260,7 @@ if (desktop) {
       if (typeof text === 'string' && text.trim() && text.length <= 12000) void processText(text.trim());
     }
     else if (command === 'reset') resetConversation();
+    else if (command === 'previous') void restorePreviousConversation();
     else if (command === 'cancel') { desktopCopilot.cancel(); interrupt(); recorder.cancel(); held = false; publish(servicesReady ? 'idle' : 'starting'); }
     else if (command === 'record') handle({ event: 'down', vk: key, scan: 0, flags: 0 });
     else if (command === 'release') handle({ event: 'up', vk: key, scan: 0, flags: 0 });

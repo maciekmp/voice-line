@@ -20,6 +20,9 @@ const sizeObserver = new ResizeObserver(reportSize);
 sizeObserver.observe(document.querySelector('main'));
 sizeObserver.observe(get('composer'));
 get('pin').addEventListener('click', () => window.orbDesktop.command('pin'));
+get('previous').addEventListener('click', () => {
+  if (!get('previous').disabled) window.orbDesktop.command('previous');
+});
 window.orbDesktop.onPinned(pinned => {
   get('pin').setAttribute('aria-pressed', String(pinned));
   get('pin').setAttribute('aria-label', pinned ? 'Odepnij popup' : 'Przypnij popup');
@@ -36,6 +39,10 @@ const busy = () => ['listening', 'transcribing', 'thinking', 'preparing-speech',
 const canSubmit = () => !pending && !busy() && snapshot.ready && Boolean(get('message').value.trim());
 function updateComposer() {
   get('composer').setAttribute('aria-busy', String(pending || busy()));
+  get('previous').disabled = pending || busy() || !snapshot.ready || !snapshot.canRestorePrevious;
+  get('previous').title = !snapshot.canRestorePrevious ? 'Brak poprzedniej rozmowy'
+    : pending || busy() || !snapshot.ready ? 'Poczekaj na zakończenie odpowiedzi'
+      : 'Wróć do poprzedniej rozmowy';
 }
 function resizeMessage() {
   const minimum = document.body.dataset.mode === 'compose' ? 64 : 40;
