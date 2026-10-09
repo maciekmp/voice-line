@@ -1,23 +1,36 @@
 # ChatGPT Button (Windows prototype)
 
-Hold the Copilot key to record. Release it to transcribe locally, clean the transcript with Codex CLI, ask Codex in a persistent conversation, and hear the reply through Windows SAPI or local Piper TTS. Press the key again while the reply is playing to interrupt it. `npm start` runs the voice loop together with an Electron conversation panel and desktop orb, without an `OPENAI_API_KEY` or paid API integration. `npm run start:cli` runs the terminal-only loop.
+Hold the Copilot key to record. Release it to transcribe locally with whisper.cpp, then send the transcript to Codex app-server. A single Codex turn cleans the question and generates an answer in a persistent conversation. Hear the reply through Windows SAPI or local Piper TTS. Press the key again while the reply is playing to interrupt it. `npm start` runs the voice loop together with an Electron conversation panel and desktop orb, using the signed-in Codex account without an `OPENAI_API_KEY`. `npm run start:cli` runs the terminal-only voice loop with the same default app-server backend. The assistant is currently instructed to clean questions and answer in Polish.
 
 ## Requirements
 
 - Windows 11, Node.js 22.18+, PowerShell 5.1, FFmpeg with DirectShow input.
 - A working microphone visible to FFmpeg.
-- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) `whisper-cli.exe` and a multilingual GGML model such as `ggml-small.bin`. The English-only `.en` models cannot transcribe Polish. `WHISPER_BIN` can point to the executable if it is not on `PATH`.
-- [Codex CLI](https://learn.chatgpt.com/docs/non-interactive-mode), signed in with `codex.cmd login`. The prototype uses `codex exec` and `codex exec resume` with the signed-in account. It does not use an API key.
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) `whisper-server.exe` for the default mode, plus a multilingual GGML model such as `ggml-small.bin`. Keep `whisper-server.exe` beside the executable specified by `WHISPER_BIN`, put it on `PATH` when using the default binary name, or set `WHISPER_SERVER_BIN` explicitly. `whisper-cli.exe` is needed for `STT_MODE=cli` and the STT benchmark. English-only `.en` models cannot transcribe Polish.
+- [Codex CLI](https://learn.chatgpt.com/docs/app-server), available as `codex.cmd` on `PATH` and signed in with `codex.cmd login`. The default backend keeps `codex app-server --listen stdio://` running and uses it for answers and conversation history. `CODEX_MODE=cli` switches answer generation to `codex exec` / `codex exec resume`; that fallback still requires app-server for history.
 - A Polish Windows SAPI voice for the default TTS mode, or Piper and FFplay for local neural speech. The app selects an installed Polish SAPI voice automatically. To choose a specific installed voice, set `CHATGPT_BUTTON_VOICE` in `.env` to part of its name, for example `CHATGPT_BUTTON_VOICE=Paulina`. List SAPI voices with `powershell -NoProfile -Command "$v=New-Object -ComObject SAPI.SpVoice; $v.GetVoices() | ForEach-Object { $_.GetDescription() }"`.
 
 ## Configure and run
+
+Run commands from the repository root. Install dependencies first:
+
+```powershell
+npm.cmd install
+```
+
+The first Electron launch may download its official runtime binary.
 
 The local, Git-ignored `.chatgpt-button-session.json` stores only the current
 thread ID and last-answer timestamp. Message content remains in Codex's history.
 On restart and undo, the app reads messages through Codex app-server before
 restoring the conversation, including paginated history. The CLI fallback uses
 an app-server connection only to read history; answers still use `codex exec`.
-Empty conversations do not enable undo. Failed reads preserve the selected
+The popup's **Wróć do poprzedniej rozmowy** control restores the previous conversation
+after a reset or expiry and is unavailable while a request is running. The previous
+conversation reference is kept only in memory, so a conversation explicitly reset
+before quitting cannot be restored after restart. An expired saved conversation
+can still be loaded as the previous conversation during startup. Empty
+conversations do not enable undo. Failed reads preserve the selected
 conversation and report an error. Older session files containing message copies
 are migrated to metadata only. New conversation removes the session file but
 does not delete Codex history.
@@ -32,17 +45,37 @@ Hold and release Copilot. Read the `vk` of its DOWN and UP events. F23 is `134`,
 npm.cmd run devices
 ```
 
-Set the exact DirectShow audio device name from the output. FFmpeg returns a nonzero code after listing devices; that is normal. Copy `.env.example` to `.env` and edit the four values. Node loads `.env` automatically when you run `npm start` or `npm run debug`; no shell exports are needed. `.env` is ignored by Git. Missing or invalid setup is reported in the panel with a restart action; detailed service diagnostics remain in the terminal.
+Set the exact DirectShow audio device name from the output. FFmpeg returns a nonzero code after listing devices; that is normal. Copy `.env.example` to `.env`, then set `MIC_DEVICE`, `WHISPER_BIN`, `WHISPER_MODEL`, and `COPILOT_VK`:
+
+```powershell
+Copy-Item .env.example .env
+```
+
+Node loads `.env` automatically when you run `npm start`, `npm run debug`, or `npm run start:cli`; no shell exports are needed. `.env` is ignored by Git. Missing or invalid setup is reported in the panel with a restart action; detailed service diagnostics remain in the terminal.
 
 ```powershell
 npm.cmd start
 ```
 
-In Git Bash, run `npm start` instead.
+In Git Bash, use `cp .env.example .env` to create the configuration and run `npm start`. Use `npm` instead of `npm.cmd` for the other commands.
 
 To inspect recognition and speech output, run `npm.cmd run debug` instead of `npm.cmd start` (in Git Bash, `npm run debug`). Both modes print the cleaned question and the full AI answer; TTS skips fenced code blocks. Debug mode additionally prints the raw transcription, audio levels, timing measurements, and Codex thread ID. `Ctrl+Shift+N` starts a new conversation; `Ctrl+C` exits. Conversation context expires 2 minutes after the last successful answer; the next voice or text question then starts a new conversation. The Codex thread ID and last-answer timestamp are stored in `.chatgpt-button-session.json`, so a restart resumes the conversation only within that window. Older session files without a timestamp start a new conversation.
 
-Only debug mode prints `[time]` measurements. Its main total is `Recording end to playback start`, measured from Copilot key release until the selected player reports active playback. The contiguous components are recording finalization, STT, Codex, and TTS startup to playback; they add up to that total apart from display rounding. Codex request acceptance and turn generation are nested details within the Codex component. Debug also reports playback duration and the full cycle. SAPI's audio queue status and FFplay's audio clock are approximate playback markers, not speaker-loopback measurements of the first audible sample. Console status messages and labels are in English; spoken question and answer text retains its original language.
+Only debug mode prints `[time]` measurements. Its main total is `Recording end to playback start`, measured from Copilot key release until the selected player reports active playback. The contiguous components are recording finalization, STT, Codex, and TTS startup to playback; they add up to that total apart from display rounding. Codex request acceptance and turn generation are nested details within the Codex component. Debug also reports playback duration and the full cycle. SAPI's audio queue status and FFplay's audio clock are approximate playback markers, not speaker-loopback measurements of the first audible sample. Console status messages and labels are in English; the assistant currently returns Polish questions and answers.
+
+### Backend and model settings
+
+| Setting | Default | Effect |
+| --- | --- | --- |
+| `CODEX_MODE` | app-server (unset) | Set `cli` to generate answers with a separate `codex exec` process per question. History still uses app-server. |
+| `CODEX_MODEL` | Codex configuration | Override the model for new and resumed conversations in both backends; for example, `gpt-6-luna` if available to your account. |
+| `CODEX_EFFORT` | `low` | Reasoning effort for app-server turns; for example, `medium`. The CLI fallback does not pass this setting to Codex. |
+| `STT_MODE` | server (unset) | Keep the Whisper model loaded between questions. Set `cli` to launch `whisper-cli.exe` for each transcription. |
+| `WHISPER_SERVER_BIN` | Beside an absolute `WHISPER_BIN`, otherwise on `PATH` | Override the location of `whisper-server.exe`. |
+| `WHISPER_THREADS` | Whisper default | Positive integer for CPU threads in either STT mode. Benchmark before choosing it. |
+| `STT_LANGUAGE` | `pl` | Whisper recognition language; this does not change the assistant's Polish response instructions. |
+
+`start:cli` selects the terminal interface; `CODEX_MODE=cli` selects the answer backend. These settings are independent. Both Codex backends request structured JSON containing the cleaned question and full answer. New threads use a read-only sandbox, and app-server turns explicitly enforce it.
 
 ### Try Piper TTS
 
@@ -56,7 +89,7 @@ PIPER_MODEL=C:\path\to\pl_PL-gosia-medium.onnx
 
 FFplay must be available on `PATH`, or set `FFPLAY_BIN` to its executable. The app pipes Piper's 16-bit mono PCM into FFplay as it is synthesized and reads the sample rate from the voice JSON. Piper runs locally without an API key. Switch back with `TTS_MODE=sapi`. On this machine, the trial files are under `.chatgpt-button/piper/` and are ignored by Git.
 
-To compare Whisper CPU thread counts on exactly the same speech, add `SAVE_AUDIO=1` to `.env`, record one question, and use the printed WAV path with `npm run bench-stt -- "C:\path\to\recording.wav"`. The script loads the configured model with 4 and 8 threads and transcribes the WAV twice per setting. Compare the second run and its text; model loading is shown separately. Set `WHISPER_THREADS` in `.env` to the faster value, then remove `SAVE_AUDIO=1` when finished. The current setting is `WHISPER_THREADS=8`: on one recorded Polish question, 8 threads took 5.08 s and 4.99 s versus 6.14 s and 6.30 s with 4 threads, with identical transcription. Results may vary with longer audio and system load.
+To compare Whisper CPU thread counts on exactly the same speech, add `SAVE_AUDIO=1` to `.env`, record one question, and use the printed WAV path with `npm run bench-stt -- "C:\path\to\recording.wav"`. The script loads the configured model with 4 and 8 threads and transcribes the WAV twice per setting. Compare the second run and its text; model loading is shown separately. Set `WHISPER_THREADS` in `.env` to the faster value, then remove `SAVE_AUDIO=1` when finished. Results vary with the machine, audio length, and system load; `.env.example` leaves the thread count unset.
 
 ## Blue orb visual prototype
 
@@ -78,7 +111,8 @@ one second. A new recording cancels stale hide requests. Click
 the tray icon to reopen the popup at any time. Hover over the visible orb to show
 the frameless conversation popup above it without taking focus. Move into the
 popup to read or use its controls; leaving both surfaces dismisses it after a
-short delay. Press the orb to open text chat; press it again to return to the
+short delay. Use **Przypnij popup** to keep the panel open when the pointer leaves;
+Escape dismisses it and clears the pin. Press the orb to open text chat; press it again to return to the
 compact latest-exchange view, preserving the draft. Press Escape to dismiss it.
 Window focus changes do not close the conversation.
 The dark hover popup shows the latest question and answer, with no answer-generation
@@ -86,6 +120,8 @@ status text. A short Copilot press (under 250 ms) shows the orb and a focused po
 containing only the text input, hiding earlier messages until the next question.
 Holding Copilot for at least 250 ms records a voice question; audio is collected
 from key-down to preserve its beginning, and a short tap discards it without transcription.
+This tap/hold distinction applies to the desktop app; terminal mode records every
+Copilot press until release.
 Clicking the orb or tray reveals the conversation and a text composer: Enter sends,
 Shift+Enter adds a newline. Typed questions continue the same Codex conversation
 and receive a text reply without speech playback. The composer has no send or cancel button.
@@ -103,7 +139,9 @@ the isolated orb preview does not install a keyboard hook.
 Closing the panel hides it without stopping services; **Zakończ** in the tray
 menu quits and shuts down the microphone, keyboard hook and voice workers.
 The microphone remains active between questions, as in terminal mode; only
-question recording retains samples. The transcript is not stored in the renderer.
+question recording retains samples. Conversation text is held in memory in the
+main process and renderers for display; the session file contains only metadata,
+while Codex retains its own history.
 
 The following `npm run orb` mode remains an isolated animation preview:
 
@@ -111,13 +149,19 @@ Run `npm run orb` to show the 45 px orb in a transparent, frameless, always-on-t
 
 Right-click the orb or its system-tray icon to choose a test state, pause animation, or select **Zakończ** to exit. This remains a separate visual prototype; it is not connected to the Copilot recording/TTS loop. It loads local files and shares the same `voice-orb` component with the browser preview. The renderer is sandboxed with Node integration disabled and a narrow IPC bridge for visual settings.
 
-The desktop orb fades/slides in over 380 ms. Listening uses a slow breathing pulse; speaking combines a quicker pulse with irregular color mixing. **Zakończ** fades/slides the orb out over 240 ms before quitting; a timeout still allows quitting if the renderer stops responding. Reduced-motion settings disable these animations, and the pause control freezes the breathing/color animation. Restart `npm run orb` after changing the desktop files.
+The desktop orb fades/slides in over 380 ms. Its scale follows measured microphone levels while listening and measured synthesized audio levels during playback. Color mixing remains a visual animation; the browser preview uses simulated breathing pulses. **Zakończ** fades/slides the orb out over 240 ms before quitting; a timeout still allows quitting if the renderer stops responding. Reduced-motion settings disable these animations, and the pause control freezes the color animation. Restart the desktop app or preview after changing the desktop files.
 
-`npm run test:orb` checks positioning, transparency, WebGL, state/pause IPC, conversation snapshots, safe text rendering, error recovery labels, reset, keyboard focus, narrow layout, and orb visibility through a simulated voice cycle. It runs without microphone or Codex calls and saves captures under the ignored `.chatgpt-button/` directory. The first Electron launch may download its official runtime binary.
+`npm run test:orb` checks positioning, transparency, WebGL, state/pause IPC, audio-reactive scale, conversation snapshots and restoration, safe text rendering, code copying, pinning, error recovery labels, reset, keyboard focus, narrow layout, and orb visibility through a simulated voice cycle. It runs without microphone or Codex calls and saves captures under the ignored `.chatgpt-button/` directory.
 
 The desktop orb has its own profile and Chromium cache in `.chatgpt-button/electron/desktop/` (cache under `session/`). These paths are configured before Electron starts Chromium, avoiding the shared default Electron cache. Smoke tests use a separate profile per process so they can run while the desktop orb is open. After changing profile configuration, exit the orb via **Zakończ** and run `npm run orb` again.
 
-## Type checking
+## Tests and type checking
+
+`npm run test:conversation` verifies session expiry, metadata persistence, history
+loading and previous-conversation restoration. `npm run test:codex-errors` checks
+user-facing Codex error messages. `npm run test:audio-levels` checks PCM levels
+and playback tracking; `npm run test:clipboard` checks native code copying and
+clipboard failure handling.
 
 `npm run test:overlay` exercises the overlay controller and native cursor tracker
 with deterministic timers: next-question cycles, stale hide cancellation, surface
@@ -131,10 +175,9 @@ It does not press the physical Copilot key or start voice services.
 `npm run debug` prints `[overlay]`
 mode/visibility changes and open requests without logging input text in those entries.
 
-Install development dependencies and check all TypeScript files in `src/` and `scripts/`:
+Check all TypeScript files in `src/` and `scripts/` after installing dependencies:
 
 ```powershell
-npm.cmd install
 npm.cmd run typecheck
 ```
 
@@ -145,11 +188,19 @@ The check runs TypeScript in strict mode without generating JavaScript. Node's t
 - `src/keyboard/bridge.ps1`: a small Win32 low-level keyboard hook bridge. It emits physical DOWN and UP events as JSON lines. `src/keyboard/copilot-key.ts` reads them in Node.
 - `src/audio/recorder.ts`: FFmpeg opens the microphone at startup and streams 16 kHz mono PCM. Samples are kept only while Copilot is held; release writes a WAV immediately. This keeps the microphone in use while the app runs, even between utterances. Set `FFMPEG_BIN` to the real executable if your `ffmpeg.exe` on `PATH` is a launcher such as Chocolatey's shim.
 - `src/stt/transcriber.ts`: local whisper.cpp server loaded once at startup. The model stays in memory between utterances; `STT_MODE=cli` in `.env` restores the old per-utterance CLI mode for troubleshooting.
-- `src/codex-app-server.ts`: keeps [Codex app-server](https://learn.chatgpt.com/docs/app-server) running, resumes the saved conversation, and sends each question as a structured-output turn. Set `CODEX_MODEL=gpt-6-luna` in `.env` for a faster model suited to short questions; omit it to use Codex's `config.toml` model. This setting also applies to resumed conversations and the `CODEX_MODE=cli` fallback. Turns use low reasoning effort by default; set `CODEX_EFFORT=medium` for more complex answers.
+- `src/codex-app-server.ts`: keeps [Codex app-server](https://learn.chatgpt.com/docs/app-server) running, reads saved history, resumes conversations, and sends each question as a structured-output turn. See the backend settings above for model and reasoning configuration.
+- `src/codex.ts`: shared Polish assistant instructions and the optional `CODEX_MODE=cli` answer backend, using `codex exec` / `codex exec resume` and an app-server connection for history.
+- `src/conversation-session.ts` and `src/conversation-history.ts`: session metadata, two-minute expiry, previous-conversation restoration, and paginated Codex history loading.
 - `src/speaker.ts`: prewarms a Windows SAPI voice when the app starts and keeps the PowerShell worker between answers. A new key press interrupts speech and starts a fresh worker while recording. Speaking rate defaults to `2` on SAPI's `-10` to `10` scale; set `CHATGPT_BUTTON_TTS_RATE=0` in `.env` for the former pace.
 - `src/piper-speaker.ts`: optional local Piper voice streamed to FFplay. Each utterance starts a Piper process; a new key press stops both Piper and FFplay.
 
-The answer layer currently waits for the full Codex reply before TTS. To inspect a bad transcription, add `SAVE_AUDIO=1` to `.env`; the terminal prints the saved WAV path. Remove the option afterward to avoid accumulating recordings. `codex exec --json` supplies streamed events for a later sentence-level speech pipeline.
+The answer layer currently waits for the full structured Codex reply before TTS;
+answers are not displayed or spoken token by token. SAPI synthesizes the full
+utterance to PCM before playback; Piper streams synthesized PCM to FFplay.
+To inspect a bad transcription, add `SAVE_AUDIO=1` to `.env`; the terminal prints
+the saved WAV path. Recordings are created in the system temporary directory and
+normally deleted after processing. Remove the option afterward to avoid
+accumulating recordings.
 
 Debug mode also prints captured WAV duration and sound levels (RMS and peak in dBFS). Compare WAV duration with the key-hold time to spot missing audio. Codex timing is split into request acceptance and turn completion. The Whisper server is bound to `127.0.0.1` and loads the model once.
 
