@@ -1,5 +1,6 @@
 import { splitAnswer, splitInline } from './answer-format.js';
 
+/** @param {HTMLElement} container @param {string} answer */
 export function renderAnswer(container, answer) {
   const fragment = document.createDocumentFragment();
   for (const part of splitAnswer(answer)) {
@@ -38,6 +39,7 @@ export function renderAnswer(container, answer) {
     copy.append(svg);
     const check = document.createElementNS('http://www.w3.org/2000/svg', 'path');
     check.setAttribute('d', 'M20 6 9 17l-5-5');
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
     let resetTimer;
     const resetCopy = () => {
       svg.replaceChildren(rect, path);

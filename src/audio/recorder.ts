@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { launch } from '../process.ts';
 import { AudioLevels } from './levels.ts';
+import { loadRecorderConfig } from '../app-config.ts';
 
 function wavHeader(bytes: number): Buffer {
   const header = Buffer.alloc(44);
@@ -31,11 +32,13 @@ export class Recorder {
   private audioPeakDbfs = -Infinity;
   private readonly directory: string;
   private readonly inputArgs: string[];
+  private readonly binary: string;
   onLevel?: (level: number) => void;
   private levels = new AudioLevels(16000);
-  constructor(device: string, directory: string, inputArgs?: string[]) {
+  constructor(device: string, directory: string, inputArgs?: string[], binary = loadRecorderConfig().ffmpeg) {
     this.directory = directory;
     this.inputArgs = inputArgs ?? ['-f', 'dshow', '-i', `audio=${device}`];
+    this.binary = binary;
   }
 
   get lastDurationSeconds(): number { return this.audioSeconds; }
@@ -44,7 +47,7 @@ export class Recorder {
 
   startCapture(): Promise<void> {
     if (this.ready) return this.ready;
-    const child = launch(process.env.FFMPEG_BIN ?? 'ffmpeg.exe', ['-hide_banner', '-loglevel', 'error', ...this.inputArgs, '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1']);
+    const child = launch(this.binary, ['-hide_banner', '-loglevel', 'error', ...this.inputArgs, '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1']);
     this.capture = child;
     this.error = '';
     this.ready = new Promise((resolve, reject) => {

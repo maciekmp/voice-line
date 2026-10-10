@@ -1,5 +1,9 @@
-import type { ConversationExchange } from './conversation-session.ts';
-import { storeGeneratedImage } from './image-artifacts.ts';
+import type { ConversationExchange } from './conversation-contract.ts';
+import { resolve } from 'node:path';
+import { ArtifactStore, imageFromProtocol } from './artifact-store.ts';
+import type { GeneratedImage } from './conversation-contract.ts';
+
+export type MappedConversationExchange = { exchange: ConversationExchange; blobs: { image: GeneratedImage; bytes: Buffer }[] };
 
 type Request = (method: string, params: object) => Promise<any>;
 
@@ -42,7 +46,7 @@ export async function readConversationHistory(request: Request, threadId: string
     }
     turns = history.thread.turns;
   }
-  return exchangesFromTurns(turns, cwd, onlyTurnId, dataDirectory);
+  return hydrateConversationExchanges(mapConversationTurns(turns, onlyTurnId, !!cwd), cwd, dataDirectory);
 }
 
 export async function readLatestConversationExchange(request: Request, threadId: string, cwd: string, dataDirectory?: string): Promise<ConversationExchange | undefined> {
@@ -59,25 +63,33 @@ export async function readLatestConversationExchange(request: Request, threadId:
     if (history?.thread?.id !== threadId || !Array.isArray(history.thread.turns)) throw new Error('Codex returned invalid conversation history');
     turn = history.thread.turns.at(-1);
   }
-  return (await exchangesFromTurns(turn ? [turn] : [], cwd, undefined, dataDirectory))[0];
+  return (await hydrateConversationExchanges(mapConversationTurns(turn ? [turn] : []), cwd, dataDirectory))[0];
 }
 
-async function exchangesFromTurns(turns: any[], cwd?: string, onlyTurnId?: string, dataDirectory?: string): Promise<ConversationExchange[]> {
-  const exchanges: ConversationExchange[] = [];
+export function mapConversationTurns(turns: any[], onlyTurnId?: string, includeImages = true): MappedConversationExchange[] {
+  const exchanges: MappedConversationExchange[] = [];
   for (const turn of turns) {
     if (turn.status !== 'completed' || !Array.isArray(turn.items) || (onlyTurnId && turn.id !== onlyTurnId)) continue;
-    const images = cwd ? await Promise.all(turn.items.filter((item: any) => item.type === 'imageGeneration' && item.status === 'completed')
-      .map((item: any) => storeGeneratedImage(cwd, item, dataDirectory))) : [];
+    const blobs = includeImages ? turn.items.filter((item: any) => item?.type === 'imageGeneration' && item.status === 'completed')
+      .map((item: any) => imageFromProtocol(item)) : [];
+    const images = blobs.map((blob: { image: GeneratedImage }) => blob.image);
     for (const item of [...turn.items].reverse()) {
       if (item?.type !== 'agentMessage' || item.phase === 'commentary' || typeof item.text !== 'string') continue;
       try {
         const reply = JSON.parse(item.text);
         if (typeof reply?.prompt === 'string' && typeof reply.answer === 'string' && reply.answer.trim()) {
-          exchanges.push({ question: reply.prompt, answer: reply.answer, ...(images.length && { images }) });
+          exchanges.push({ exchange: { question: reply.prompt, answer: reply.answer, ...(images.length && { images }) }, blobs });
           break;
         }
       } catch { /* Non-answer items are not part of the voice conversation. */ }
     }
   }
   return exchanges;
+}
+export async function hydrateConversationExchanges(mapped: MappedConversationExchange[], cwd?: string, dataDirectory?: string): Promise<ConversationExchange[]> {
+  if (cwd) {
+    const store = new ArtifactStore(dataDirectory ?? resolve(cwd, '.chatgpt-button'));
+    await Promise.all(mapped.flatMap(entry => entry.blobs).map(blob => store.ensure(blob.image, blob.bytes)));
+  }
+  return mapped.map(entry => entry.exchange);
 }

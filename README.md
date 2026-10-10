@@ -48,11 +48,18 @@ codex login # only if not already signed in
 Realtime audio still uses `OPENAI_API_KEY`. Choose the model with `CODEX_MODEL` or your normal
 Codex configuration. Old private Codex histories are left intact.
 
-Each home's `session.json` stores only current/previous thread IDs and timestamps.
+Each home's versioned `session.json` stores current/previous application conversation
+IDs, timestamps, revision, commit receipts and the mapping to retained Codex thread IDs.
+New retained conversations have an application UUID independent of the Codex UUID.
+The compatibility API name `currentThreadId` refers to the application conversation;
+RPC adapters resolve the Codex ID separately. Old records retain their original IDs.
 The popup's **Wróć do poprzedniej rozmowy** control works after reset, expiry and
-restart. LOCAL and ImageGen messages are stored in application-owned `<id>.json`
-files and supplied as context to fresh ephemeral turns. Realtime messages are
-read from its isolated Codex history, including paginated history.
+restart. Completed messages in every mode are stored in application-owned `<id>.json`
+files. LOCAL and ImageGen supply them as context to fresh ephemeral turns. Realtime
+uses the same committed history after restart, preserving exchange IDs and excluding
+requests cancelled before commit. Older private realtime conversations without a
+local file import available Codex history once; later timeline entries cannot overwrite
+committed application history.
 Empty conversations do not enable undo; failed reads preserve the selected
 conversation. Context still expires two minutes after the last successful answer.
 
@@ -138,7 +145,16 @@ Run `npm start` or `npm run start:cli`. FFmpeg, FFplay and Codex CLI must be ava
 
 Hold Copilot to record and release it to upload the utterance. The app converts the recording to mono PCM16 at 24 kHz, adds a short silence tail for voice activity detection, and uses the **v2** realtime protocol over the existing stdio app-server connection. Audio starts playing as chunks arrive through FFplay. A final transcript followed by a 250 ms quiet window ends the output stream; the player drains queued audio before returning to idle. Pressing Copilot again, cancelling or resetting stops playback and closes the current realtime session. Recordings are limited to 60 seconds. The conversation panel displays question and answer transcripts as soon as Codex sends them, updating partial text during audio playback. Completed transcript segments are also displayed immediately; the full answer need not wait for playback to finish. The exchange is saved to application history after playback completes. Typed questions continue to use normal text turns without spoken playback.
 
-Each voice request creates a new realtime session and includes all saved exchanges from the selected conversation in its prompt, including voice transcripts and typed replies. History is loaded from Codex after an application restart and when restoring a previous conversation. Resetting the conversation or the existing two-minute inactivity expiry starts an empty context; restoring the previous conversation brings its context back. Generic realtime startup context forwarding is disabled. Longer histories increase API input usage and remain subject to the audio model's context limit. Typed questions retain the normal Codex thread behavior.
+Each voice request creates a new realtime session and supplies recent committed exchanges from the selected conversation, including voice transcripts and typed replies. Committed application history supplies restart and previous-conversation context; old private conversations without that history import Codex data once. Resetting the conversation or the existing two-minute inactivity expiry starts an empty context; restoring the previous conversation brings its context back. Generic realtime startup context forwarding is disabled. Typed questions retain the normal Codex thread behavior.
+
+LOCAL ephemeral prompts and realtime audio prompts share a history policy: at most
+32 newest exchanges and 32 KiB of UTF-8 JSON, including escaping and role overhead.
+The builder keeps complete pairs in chronological order. If the newest pair alone
+exceeds the budget, it keeps the beginning and end of its question/answer with an
+explicit truncation marker. The current question and base instructions are outside
+this history budget and remain intact. This is a byte limit, not an estimate of
+model tokens. The stored history, export and undo retain all committed exchanges;
+only the context sent with a new request is shortened.
 
 Realtime uses `%LOCALAPPDATA%\ChatGPTButton\realtime-codex` as its dedicated Codex home, including API credentials, history, retention index and `session.json` metadata. The account login RPC stores the API key in that dedicated home's credential store. History is restored from Codex's paginated timeline, including voice transcripts and typed answers. The two-minute expiry, durable previous-conversation control and 24-hour retention also apply to this separate session.
 
@@ -282,16 +298,27 @@ its temporary data. Tests needing simulated authentication create their own dumm
 | Command | Scope and requirements |
 | --- | --- |
 | `check` | Typecheck plus unit tests; the default development and CI check. |
-| `test` | Twelve unit test files using mocks and temporary fixtures; no external executables or inference. |
+| `test` | Unit tests using mocks and temporary fixtures; no external executables or inference. |
 | `test:integration` | Mock PowerShell speaker worker, installed Codex storage protocol, and simulated realtime provider with FFplay. Requires Windows PowerShell, Codex and FFplay; no paid inference. |
 | `test:desktop` | Real Electron windows, rendering and IPC with mocked clipboard writes and save dialogs; requires an interactive desktop. |
 | `test:keyboard` | Real Windows keyboard hooks and injected F24/F22 events; run explicitly on an interactive desktop. |
-| `typecheck` | Strict checking of TypeScript in `src/`, `scripts/` and `tests/`; emits no JavaScript. |
+| `typecheck` | Strict TypeScript checking in `src/`, `scripts/` and `tests/`, plus checkJs for desktop adapters, preload and conversation/answer/image/history renderers; emits no JavaScript. |
+
+`.github/workflows/check.yml` runs `npm ci` and `check` on Windows with Node
+22.18.0 for pushes and pull requests, and supports manual dispatch. It skips the
+Electron runtime download because this job checks types and isolated unit tests;
+native desktop/keyboard, integration and live inference remain explicit commands.
+The installation and check sequence has also passed in a fresh local Windows copy.
 
 Unit and integration files live in `tests/unit/` and `tests/integration/`;
 the keyboard test is in `tests/native/`, with support code in `tests/helpers/`.
-The Electron smoke remains in `electron/orb-main.cjs`, which the runner starts
-with `--smoke-test`. `scripts/` contains launchers, the test runner,
+The Electron smoke lives in `tests/native/desktop-smoke.cjs`. The runner starts
+the production host `electron/orb-main.cjs` with `--smoke-test`, which passes its
+windows and native adapters to the harness. The smoke also measures the production
+history renderer against the captured earlier algorithm at 100, 1000 and 3000
+exchanges, and saves `history-scale.json` beside the screenshots. Timing values
+are observations; identity preservation, incremental creation and lazy previews
+are asserted. `scripts/` contains launchers, the test runner,
 diagnostics, benchmarks and explicit probes. Select a file within its group for
 focused work:
 
@@ -339,7 +366,9 @@ npm.cmd run typecheck
 ```
 
 Node's type stripping only removes types when running the app; it does not check
-them. Electron and preview JavaScript are not yet included in TypeScript checking.
+them. Selected Electron modules and the preload are checked through
+`tsconfig.desktop.json`, including the conversation, history, answer and image
+renderers. Orb component and preview JavaScript remain outside that gradual migration.
 
 ### Application and development commands
 
@@ -364,6 +393,12 @@ test history and session metadata without inference. Neither probe is a default 
 
 ## Components
 
+- `src/main.ts`: composition root for desktop and terminal input, keyboard/IPC adapters and process signals. The legacy `--debug-keys` flag delegates to the keyboard-only diagnostic.
+- `src/application-controller.ts`: injected voice engine, recorder, clock and event sink; coordinates startup, voice/text operations, cancellation, reset, previous, history maintenance and shutdown. Responses wait for the previous provider call and audio cleanup; stale callbacks cannot publish after reset or cancel.
+- `src/app-config.ts`: one immutable configuration snapshot for the selected services, passed by the factory to Codex, Whisper, recording and playback. Invalid `VOICE_MODE`, `CODEX_MODE`, `STT_MODE` and `TTS_MODE` values report their setting instead of silently choosing another backend; LOCAL-only settings are not validated in realtime mode.
+- `src/conversation-contract.ts` and `src/application-contract.ts`: neutral service interfaces, reply/history types, application command validation, service health and operation snapshot fields. Backend exports remain compatible adapters.
+- `src/desktop-contract.ts` and `src/desktop-validation.cjs`: preload API, requests/events and runtime validation of renderer requests and worker snapshots. `electron/desktop-worker.cjs` dispatches validated events; `desktop-conversation.cjs` presents authoritative completed/pending exchanges; `desktop-windows.cjs` applies native geometry and window lifecycle.
+- `src/answer-format.js` and `src/app-data.cjs`: shared answer formatting and data-root resolution, independent of Electron. Renderer/host imports retain thin compatibility adapters.
 - `src/keyboard/bridge.ps1`: a small Win32 low-level keyboard hook bridge. It emits physical DOWN and UP events as JSON lines. `src/keyboard/copilot-key.ts` reads them in Node.
 - `src/audio/recorder.ts`: FFmpeg opens the microphone at startup and streams 16 kHz mono PCM. Samples are kept only while Copilot is held; release writes a WAV immediately. This keeps the microphone in use while the app runs, even between utterances. Set `FFMPEG_BIN` to the real executable if your `ffmpeg.exe` on `PATH` is a launcher such as Chocolatey's shim.
 - `src/stt/transcriber.ts`: local whisper.cpp server loaded once at startup. The model stays in memory between utterances; `STT_MODE=cli` in `.env` restores the old per-utterance CLI mode for troubleshooting.

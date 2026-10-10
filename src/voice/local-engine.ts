@@ -1,13 +1,12 @@
 import { BaseVoiceEngine, type ConversationClient, type VoiceCallbacks } from '../voice-engine.ts';
-import type { WhisperTranscriber } from '../stt/transcriber.ts';
-import type { Speaker } from '../speaker.ts';
-import { speechText } from '../../electron/answer-format.js';
+import type { Transcriber, SpeechPlayer } from '../conversation-contract.ts';
+import { speechText } from '../answer-format.js';
 
 export class LocalVoiceEngine extends BaseVoiceEngine {
   readonly mode = 'local' as const;
   readonly startupDescription: string;
-  private readonly stt: Pick<WhisperTranscriber, 'start' | 'stop' | 'transcribe'>;
-  private readonly speaker: Pick<Speaker, 'start' | 'stop' | 'shutdown' | 'speak'>;
+  private readonly stt: Transcriber;
+  private readonly speaker: SpeechPlayer;
   constructor(client: ConversationClient, stt: LocalVoiceEngine['stt'], speaker: LocalVoiceEngine['speaker'], tts = 'sapi') {
     super(client); this.stt = stt; this.speaker = speaker;
     this.startupDescription = `Whisper, Codex and TTS (${tts})`;
@@ -32,7 +31,7 @@ export class LocalVoiceEngine extends BaseVoiceEngine {
     if (reply.startupMs !== undefined) callbacks.onTiming?.('Codex: request accepted', reply.startupMs);
     if (reply.turnMs !== undefined) callbacks.onTiming?.('Codex: turn to final answer', reply.turnMs);
     callbacks.onUpdate?.('preparing-speech', { question: reply.prompt, answer: reply.answer,
-      ...(reply.images?.length && { exchanges: this.currentExchanges }) });
+      exchanges: this.currentExchanges });
     const ttsStarted = performance.now();
     await this.speaker.speak(speechText(reply.answer), signal, () => {
       callbacks.onTiming?.('TTS startup to playback', performance.now() - ttsStarted);

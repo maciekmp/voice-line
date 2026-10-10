@@ -1,9 +1,12 @@
 import { launch } from '../process.ts';
 import { AudioLevels, followPlayback } from './levels.ts';
 import { decodeRealtimeAudio, type RealtimeAudioChunk } from './realtime-pcm.ts';
+import { loadPlaybackConfig } from '../app-config.ts';
 
 /** One FFplay stream per reply; pipe EOF drains all queued audio before idle. */
 export class PcmPlayer {
+  private readonly binary: string;
+  constructor(binary = loadPlaybackConfig().ffplay) { this.binary = binary; }
   private child: ReturnType<typeof launch> | null = null;
   private completion: Promise<void> | null = null;
   private cancel?: () => void;
@@ -38,7 +41,7 @@ export class PcmPlayer {
   }
 
   private open(sampleRate: number, channels: number, onPlayback?: () => void, onLevel?: (level: number) => void, onFailure?: (error: Error) => void): void {
-    const child = launch(process.env.FFPLAY_BIN ?? 'ffplay.exe', ['-hide_banner', '-loglevel', 'info', '-stats', '-nodisp', '-autoexit',
+    const child = launch(this.binary, ['-hide_banner', '-loglevel', 'info', '-stats', '-nodisp', '-autoexit',
       '-f', 's16le', '-sample_rate', String(sampleRate), '-ch_layout', channels === 1 ? 'mono' : 'stereo', '-i', 'pipe:0']);
     this.child = child;
     this.sampleRate = sampleRate;

@@ -1,12 +1,10 @@
-import type { CodexClient, VoiceReply } from './codex.ts';
-import type { ConversationExchange } from './conversation-session.ts';
+import type { ConversationClient, ConversationExchange, VoiceReply } from './conversation-contract.ts';
+export type { ConversationClient } from './conversation-contract.ts';
+import type { ResponsePhase } from './application-contract.ts';
 import { imageRequest, explicitImageRequest } from './image-artifacts.ts';
 
-export type ConversationClient = Pick<CodexClient, 'start' | 'stop' | 'cancel' | 'reset' | 'respond'
-  | 'currentThreadId' | 'currentExchanges' | 'canRestorePrevious' | 'expireConversation' | 'restorePrevious'>
-  & { generateImage?: (text: string, signal?: AbortSignal) => Promise<VoiceReply>; maintainHistory?: () => Promise<boolean> };
 export type VoiceCallbacks = {
-  onUpdate?: (state: string, text?: { question?: string; answer?: string; exchanges?: ConversationExchange[] }) => void;
+  onUpdate?: (state: ResponsePhase, text?: { question?: string; answer?: string; exchanges?: ConversationExchange[] }) => void;
   onPlaybackStart?: () => void;
   onLevel?: (level: number) => void;
   onTiming?: (label: string, milliseconds: number) => void;

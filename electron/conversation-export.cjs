@@ -1,4 +1,4 @@
-const fs = require('node:fs/promises');
+const { writeAtomic } = require('./atomic-file.cjs');
 const { readImage } = require('./image-files.cjs');
 
 async function conversationMarkdown(exchanges, imageDirectory) {
@@ -22,6 +22,6 @@ async function conversationMarkdown(exchanges, imageDirectory) {
 async function saveConversation(filename, exchanges, imageDirectory) {
   // Validate and load all artifacts before replacing a user-selected file.
   const markdown = await conversationMarkdown(exchanges, imageDirectory);
-  await fs.writeFile(filename, markdown, 'utf8');
+  await writeAtomic(filename, markdown);
 }
 module.exports = { conversationMarkdown, saveConversation };

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, writeFile, rm, access } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, rm, access, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
@@ -109,7 +109,7 @@ test('ephemeral ImageGen saves pixels and app history without a persisted Codex 
       if (method === 'thread/unsubscribe') return {};
       assert.equal(method, 'turn/start');
       setTimeout(() => {
-        const notify = (method: string, item: object) => (server as any).onLine(JSON.stringify({ method, params: { threadId: second, turnId: 'turn_test', ...item } }));
+        const notify = (method: string, item: object) => (server as any).onMessage({ method, params: { threadId: second, turnId: 'turn_test', ...item } });
         notify('item/completed', { item: { type: 'imageGeneration', status: 'completed', result: png.toString('base64') } });
         notify('item/completed', { item: { type: 'agentMessage', text: JSON.stringify(reply) } });
         notify('turn/completed', { turn: { id: 'turn_test', status: 'completed' } });
@@ -168,7 +168,11 @@ test('corrupt current or previous history is isolated, preserving the other conv
       if (corrupt.status !== 'corrupt') assert.fail('expected corrupt result');
       assert.equal(await readFile(corrupt.preservedFile!, 'utf8'), content);
       await assert.rejects(access(join(home, `${first}.json`)));
-      assert.equal(await readFile(join(home, `${second}.json`), 'utf8'), healthy);
+      const migrated = JSON.parse(await readFile(join(home, `${second}.json`), 'utf8'));
+      assert.equal(migrated.version, 2);
+      assert.deepEqual(migrated.exchanges.map(({ id, revision, ...exchange }: any) => exchange), JSON.parse(healthy));
+      const backup = (await readdir(home)).find(name => name.startsWith(`${second}.json.legacy-`))!;
+      assert.equal(await readFile(join(home, backup), 'utf8'), healthy);
       assert.equal(storage.session.threadId, role === 'current' ? null : second);
       assert.equal(storage.session.previousConversationId, role === 'previous' ? null : second);
       assert.equal(storage.session.canRestorePrevious, role === 'current');

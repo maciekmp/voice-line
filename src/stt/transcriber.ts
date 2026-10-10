@@ -1,7 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { createServer } from 'node:net';
-import { dirname, isAbsolute, join } from 'node:path';
+import { isAbsolute } from 'node:path';
 import { launch, collect } from '../process.ts';
+import { loadWhisperConfig, type WhisperConfig } from '../app-config.ts';
 
 function availablePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -28,43 +29,66 @@ export class WhisperTranscriber {
   private startPromise: Promise<void> | null = null;
   private port = 0;
   private diagnostics = '';
+  private generation = 0;
+  private inferenceAbort = new AbortController();
+  protected readonly inferenceTimeoutMs: number = 120_000;
 
-  constructor(binary: string, model: string, language: string) {
+  constructor(binary: string, model: string, language: string, config: WhisperConfig = loadWhisperConfig(undefined, { binary, model, language })) {
     this.binary = binary; this.model = model; this.language = language;
-    this.serverBinary = process.env.WHISPER_SERVER_BIN ?? (isAbsolute(binary) ? join(dirname(binary), 'whisper-server.exe') : 'whisper-server.exe');
-    this.useCli = process.env.STT_MODE === 'cli';
-    const configuredThreads = process.env.WHISPER_THREADS;
-    const threads = configuredThreads === undefined ? null : Number(configuredThreads);
-    if (threads !== null && (!Number.isInteger(threads) || threads < 1)) throw new Error('WHISPER_THREADS must be a positive integer');
-    this.threads = threads;
+    this.serverBinary = config.serverBinary;
+    this.useCli = config.mode === 'cli';
+    this.threads = config.threads;
   }
 
   start(): Promise<void> {
     if (this.useCli) return Promise.resolve();
-    if (!this.startPromise) this.startPromise = this.startServer();
+    if (!this.startPromise) {
+      const startup = this.startServer(this.generation).catch(error => {
+        if (this.startPromise === startup) this.startPromise = null;
+        throw error;
+      });
+      this.startPromise = startup;
+    }
     return this.startPromise;
   }
 
-  private async startServer(): Promise<void> {
+  protected launchServer(args: string[]): ReturnType<typeof launch> { return launch(this.serverBinary, args); }
+  protected http(url: string, options: RequestInit): Promise<Response> { return fetch(url, options); }
+
+  private async startServer(generation: number): Promise<void> {
     if (!existsSync(this.model)) throw new Error(`Whisper model not found: ${this.model}`);
     if (isAbsolute(this.serverBinary) && !existsSync(this.serverBinary)) throw new Error(`whisper-server.exe not found: ${this.serverBinary}. Set STT_MODE=cli to use the old mode.`);
-    this.port = await availablePort();
-    const child = launch(this.serverBinary, ['-m', this.model, '-l', this.language, '-nt', '-sns', ...(this.threads ? ['-t', String(this.threads)] : []), '--host', '127.0.0.1', '--port', String(this.port)]);
+    const port = await availablePort();
+    if (this.generation !== generation) throw new Error('Whisper startup stopped');
+    this.port = port;
+    this.diagnostics = '';
+    this.inferenceAbort = new AbortController();
+    const child = this.launchServer(['-m', this.model, '-l', this.language, '-nt', '-sns', ...(this.threads ? ['-t', String(this.threads)] : []), '--host', '127.0.0.1', '--port', String(port)]);
     this.server = child;
     let failed = false;
     child.stdout.resume();
-    child.stderr.setEncoding('utf8').on('data', chunk => this.diagnostics = (this.diagnostics + chunk).slice(-4000));
-    child.on('error', error => { failed = true; this.diagnostics = (this.diagnostics + String(error)).slice(-4000); });
-    child.on('exit', () => { failed = true; });
+    child.stderr.setEncoding('utf8').on('data', chunk => {
+      if (this.server === child) this.diagnostics = (this.diagnostics + chunk).slice(-4000);
+    });
+    const failure = (error?: Error) => {
+      failed = true;
+      if (this.server !== child) return;
+      if (error) this.diagnostics = (this.diagnostics + String(error)).slice(-4000);
+      this.stop();
+    };
+    child.on('error', failure);
+    child.once('exit', () => failure());
+    child.once('close', () => failure());
+    for (const stream of [child.stdin, child.stdout, child.stderr]) stream.on('error', failure);
     const deadline = performance.now() + 120_000;
-    while (performance.now() < deadline && !failed) {
+    while (performance.now() < deadline && !failed && this.server === child) {
       try {
-        const response = await fetch(`http://127.0.0.1:${this.port}/`, { signal: AbortSignal.timeout(1000) });
-        if (response.ok) return;
+        const response = await this.http(`http://127.0.0.1:${port}/`, { signal: AbortSignal.any([AbortSignal.timeout(1000), this.inferenceAbort.signal]) });
+        if (response.ok && this.server === child) return;
       } catch { /* Model is still loading. */ }
       await pause(150);
     }
-    child.kill();
+    if (this.server === child) this.stop();
     throw new Error(`whisper-server.exe did not become ready: ${this.diagnostics}`);
   }
 
@@ -76,17 +100,35 @@ export class WhisperTranscriber {
       return result.stdout.trim();
     }
     await this.start();
+    if (signal?.aborted) throw signal.reason;
+    if (!this.server) throw new Error('Whisper server is unavailable');
     const data = new FormData();
     data.append('file', new Blob([readFileSync(wav)], { type: 'audio/wav' }), 'speech.wav');
     data.append('response_format', 'json');
     data.append('language', this.language);
     data.append('no_timestamps', 'true');
-    const response = await fetch(`http://127.0.0.1:${this.port}/inference`, { method: 'POST', body: data, signal });
+    const server = this.server;
+    const deadline = AbortSignal.timeout(this.inferenceTimeoutMs);
+    let response: Response;
+    try {
+      response = await this.http(`http://127.0.0.1:${this.port}/inference`, { method: 'POST', body: data,
+        signal: AbortSignal.any([this.inferenceAbort.signal, deadline, ...(signal ? [signal] : [])]) });
+    } catch (error) {
+      if (deadline.aborted && this.server === server) this.stop();
+      throw error;
+    }
     if (!response.ok) throw new Error(`Whisper server HTTP ${response.status}: ${(await response.text()).slice(0, 500)}`);
     const result = await response.json() as { text?: unknown };
     if (typeof result.text !== 'string') throw new Error('Whisper server returned no text');
     return result.text.trim();
   }
 
-  stop(): void { this.server?.kill(); this.server = null; }
+  stop(): void {
+    const child = this.server;
+    this.server = null;
+    this.startPromise = null;
+    this.generation++;
+    this.inferenceAbort.abort(new Error('Whisper server stopped'));
+    child?.kill();
+  }
 }

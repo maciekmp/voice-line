@@ -119,7 +119,7 @@ test('idle hides an untouched orb and repeated snapshots do not reactivate windo
 test('native pointer tracking keeps a stationary cursor inside a resized popup', () => {
   const { controller: c, advance } = setup();
   const track = createPointerTracker((surface, entered) => c.hover(surface, entered));
-  const orb = { x: 400, y: 500, width: 64, height: 64 };
+  const orb = { x: 400, y: 500, width: 64, height: 80 };
   const panel = { x: 84, y: 300, width: 380, height: 192 };
   track({ x: 432, y: 532 }, { orb, panel: null }); c.open();
   track({ x: 100, y: 400 }, { orb, panel });

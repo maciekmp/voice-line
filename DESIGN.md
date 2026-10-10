@@ -88,7 +88,7 @@ the sole state indicator: transcript text and the tray identify the current oper
 
 | Capability | Canonical owner | Source | Verification |
 | --- | --- | --- | --- |
-| Voice lifecycle | src/main.ts | Existing Copilot loop | typecheck; Electron snapshots |
+| Voice lifecycle | src/application-controller.ts; src/main.ts adapters | Injected controller for Copilot/text, cancellation, reset, previous and shutdown | typecheck; controller public API tests; Electron snapshots |
 | State fan-out and visibility | electron/orb-main.cjs | User request: hide until listening, hide after speech | `npm run test:desktop` |
 | Overlay behavior | electron/overlay-controller.cjs | hidden/peek/chat/compose; one exit timer; new recording cancels stale hides | `npm test -- test-overlay.cjs`; `npm run test:desktop` |
 | Copilot gestures | src/keyboard/copilot-gesture.ts | tap opens input; hold records; repeat and cancellation handling | `npm test -- test-copilot.ts`; typecheck |
@@ -148,10 +148,10 @@ Its Polish accessible name is Wróć do poprzedniej rozmowy. It is disabled whil
 work is active, services are unavailable, or no previous nonempty thread exists.
 A thread is nonempty after at least one successful answer. Returning
 renews the two-minute context window; a subsequent return can switch back to the
-conversation just left. The session owns thread selection; the Electron main
-process keeps at most two prior display snapshots in memory. Each mode's
+conversation just left. The session owns thread selection; Electron presents
+the worker's authoritative completed/pending snapshot and keeps no undo archive. Each mode's
 session file stores current/previous conversation IDs and timestamps. Startup and undo read
-app-owned LOCAL files or isolated realtime Codex history, then publish restored context.
+app-owned committed files, importing older realtime Codex history when needed, then publish restored context.
 Paginated history loads all turn and item pages. Empty history disables undo;
 failed reads or cancelled returns do not switch the selected thread.
 Focus/blur does not change mode
@@ -189,18 +189,35 @@ Hover displays only the latest exchange. Chat displays previous exchanges above
 it and supports document scrolling, with the composer flush to the window bottom.
 Exchanges are kept in main-process memory and in the application's private Codex
 history under `%LOCALAPPDATA%\ChatGPTButton` (override: `CHATGPT_BUTTON_DATA_DIR`).
-LOCAL and realtime ImageGen use ephemeral Codex threads and the existing Codex
-account. Only realtime audio uses a separate Codex home for its API-key login.
-Each home's `session.json` holds current/previous thread IDs and timestamps,
-never message content. LOCAL and ImageGen save messages in app-owned JSON files;
-startup and undo load those files and replay context into ephemeral turns.
-Realtime startup and undo restore messages through its isolated Codex history,
-including after an explicit reset before quitting. Two-minute context expiry is
+LOCAL and realtime ImageGen use the existing Codex account. Only realtime audio
+uses a separate Codex home for its API-key login. Versioned session metadata
+holds current/previous application IDs, provider mappings, revisions and receipts.
+All modes save committed exchanges in app-owned versioned JSON files;
+startup and undo load those files. Older realtime conversations without a local
+file import available Codex history once. Two-minute context expiry is
 independent of 24-hour history retention. Startup, requests and idle maintenance
 delete registered expired threads through Codex, retry failures, and remove unused
-image artifacts; active requests remain protected. Purge clears cached Electron
-display snapshots. Updates preserve readers' scroll position unless already at
+image artifacts; active requests remain protected. The worker publishes the
+remaining completed history after purge. Updates preserve readers' scroll position unless already at
 the bottom. No transcript is added to renderer persistent storage.
+
+The history renderer keys rows by conversation/exchange ID and revision, preserving
+existing DOM and copy/focus state when a reply is appended. Unchanged conversation
+revision and history length skip history work. Only the current conversation's
+rows are retained; reset, prune and conversation switches dispose obsolete rows.
+Historical PNG previews load near the viewport and release their base64 source
+when offscreen. A shared LRU preview cache retains at most 24 entries and 16 MiB
+of conservatively counted string data; oversized images are displayed without
+being cached. Concurrent requests for the same hash share one read, and failed
+reads/decodes can be retried. Latest-image preview remains eager. Native smoke
+checks these rules and writes renderer-only timing observations to history-scale.json.
+
+`conversation-context.ts` owns the shared history budget for LOCAL ephemeral and
+realtime audio prompts: a chronological suffix of at most 32 complete exchanges,
+whose serialized UTF-8 JSON fits 32 KiB. An oversized newest pair keeps its
+beginning/end with a visible truncation marker; older history is not summarized
+or mutated. The current question and base instructions are excluded from this
+history-only byte budget. Stored history and undo remain complete.
 
 The native tray/orb menu owns Zapisz rozmowę… beside Nowa rozmowa. It is unavailable
 without a completed reply, while work is active or while another save is pending.

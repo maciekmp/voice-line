@@ -1,25 +1,43 @@
 import { renderAnswer } from './answer-renderer.js';
-import { renderImages } from './image-renderer.js';
+import { renderImages, refreshImageVisibility } from './image-renderer.js';
+import { createHistoryRenderer } from './history-renderer.js';
 
-const get = id => document.getElementById(id);
+/** @typedef {{pin: HTMLButtonElement, previous: HTMLButtonElement, retry: HTMLButtonElement,
+ * composer: HTMLFormElement, message: HTMLTextAreaElement, history: HTMLElement, status: HTMLElement,
+ * error: HTMLElement, empty: HTMLElement, question: HTMLElement, answer: HTMLElement, images: HTMLElement,
+ * 'question-block': HTMLElement, 'answer-block': HTMLElement}} Elements */
+/** @template {keyof Elements} K @param {K} id @returns {Elements[K]} */
+const get = id => {
+  const element = document.getElementById(id);
+  if (!element) throw new Error(`Missing conversation element: ${id}`);
+  return /** @type {Elements[K]} */ (element);
+};
+const main = (() => {
+  const element = document.querySelector('main');
+  if (!element) throw new Error('Missing conversation main');
+  return element;
+})();
+/** @type {Partial<import('../src/desktop-contract.ts').DesktopVoice>} */
 let snapshot = { state: 'starting', ready: false };
 let pending = false;
 let composing = false;
+/** @type {ReturnType<typeof setTimeout> | undefined} */
 let resizeFrame;
 let scrollToLatest = false;
-let renderedHistory = '';
+const historyRenderer = createHistoryRenderer(get('history'));
+/** @type {string | undefined} */
 let renderedAnswer;
 let renderedImages = '';
 function reportSize() {
   clearTimeout(resizeFrame);
   resizeFrame = setTimeout(() => window.orbDesktop.resize({
-    height: Math.ceil(document.querySelector('main').getBoundingClientRect().height + (get('composer').hidden ? 0 : get('composer').offsetHeight)),
-    mode: document.body.dataset.mode,
+    height: Math.ceil(main.getBoundingClientRect().height + (get('composer').hidden ? 0 : get('composer').offsetHeight)),
+    mode: panelMode(),
     reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
   }), 0);
 }
 const sizeObserver = new ResizeObserver(reportSize);
-sizeObserver.observe(document.querySelector('main'));
+sizeObserver.observe(main);
 sizeObserver.observe(get('composer'));
 get('pin').addEventListener('click', () => window.orbDesktop.command('pin'));
 get('previous').addEventListener('click', () => {
@@ -37,7 +55,11 @@ window.orbDesktop.onResizing(resizing => {
     scrollTo(0, document.documentElement.scrollHeight);
   }
 });
-const busy = () => ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking'].includes(snapshot.state);
+function panelMode() {
+  const mode = document.body.dataset.mode;
+  return mode === 'chat' || mode === 'compose' ? mode : 'peek';
+}
+const busy = () => ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking'].includes(snapshot.state || 'starting');
 const canSubmit = () => !pending && !busy() && snapshot.ready && Boolean(get('message').value.trim());
 function updateComposer() {
   get('composer').setAttribute('aria-busy', String(pending || busy()));
@@ -63,6 +85,7 @@ window.orbDesktop.onMode(mode => {
   const editable = mode === 'chat' || mode === 'compose';
   get('composer').hidden = !editable;
   get('history').hidden = mode !== 'chat' || !(snapshot.history?.length);
+  refreshImageVisibility();
   if (mode === 'chat' && changed) scrollToLatest = true;
   if (!editable) get('message').blur();
   if (editable) {
@@ -81,34 +104,16 @@ window.orbDesktop.onVoice(value => {
   const nearBottom = innerHeight + scrollY >= document.documentElement.scrollHeight - 32;
   snapshot = value;
   const history = value.history || [];
-  const historyKey = JSON.stringify(history);
-  if (historyKey !== renderedHistory) {
-    renderedHistory = historyKey;
-    get('history').replaceChildren(...history.map(exchange => {
-      const article = document.createElement('article');
-      article.className = 'exchange';
-      for (const key of ['question', 'answer']) {
-        const p = document.createElement(key === 'answer' ? 'div' : 'p');
-        p.className = `previous-${key}`;
-        p.setAttribute('aria-label', key === 'question' ? 'Twoje pytanie' : 'Odpowiedź');
-        if (key === 'answer') renderAnswer(p, exchange[key] || '');
-        else p.textContent = exchange[key] || '';
-        article.append(p);
-      }
-      const attachments = document.createElement('div');
-      renderImages(attachments, exchange.images);
-      article.append(attachments);
-      return article;
-    }));
-  }
+  historyRenderer.update(history, { conversationId: value.conversation?.id, revision: value.conversation?.revision });
   get('history').hidden = document.body.dataset.mode !== 'chat' || !history.length;
+  refreshImageVisibility();
   if (nearBottom) scrollToLatest = true;
   get('status').textContent = value.state === 'thinking' && value.generatingImage ? 'Generuję obraz…' : labels[value.state] || '';
   get('status').hidden = Boolean(value.answer) || !get('status').textContent;
   get('error').hidden = !value.message;
   get('error').textContent = value.message || '';
   get('retry').hidden = value.state !== 'error' || value.ready;
-  for (const key of ['question', 'answer']) {
+  for (const key of /** @type {const} */ (['question', 'answer'])) {
     if (key === 'answer') {
       const answer = value.answer || '';
       if (answer !== renderedAnswer) { renderAnswer(get(key), answer); renderedAnswer = answer; }

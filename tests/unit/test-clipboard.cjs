@@ -3,19 +3,20 @@ const assert = require('node:assert/strict');
 const { readFileSync } = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { registerDesktopIpc } = require('../../electron/desktop-ipc.cjs');
 
 function setup() {
-  const source = readFileSync(path.join(__dirname, '../../electron/orb-main.cjs'), 'utf8');
-  const registration = source.match(/ipcMain\.handle\('voice:copy-code',[\s\S]*?\n}\);/)[0];
   let handler;
   const writes = [];
   const context = {
-    ipcMain: { handle(name, callback) { assert.equal(name, 'voice:copy-code'); handler = callback; } },
     panelWindow: { webContents: {}, isDestroyed: () => false },
     exitStarted: false,
     clipboard: { writeText(text) { writes.push(text); } },
   };
-  vm.runInNewContext(registration, context);
+  registerDesktopIpc({
+    on() {},
+    handle(name, callback) { if (name === 'voice:copy-code') handler = callback; },
+  }, context);
   return { context, writes, copy: text => handler({ sender: context.panelWindow.webContents }, text), handler };
 }
 

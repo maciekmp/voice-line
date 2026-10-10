@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { CodexRealtime, realtimeHistory } from '../../src/codex-realtime.ts';
 import { realtimePcm, decodeRealtimeAudio, type RealtimeAudioChunk } from '../../src/audio/realtime-pcm.ts';
 import { codexErrorMessage } from '../../src/codex-error.ts';
+import { createAppStorage } from '../../src/app-storage.ts';
 
 const threadId = '11111111-1111-1111-1111-111111111111';
 function wav(samples = [100, 200, -100, -200]): Buffer {
@@ -93,7 +94,7 @@ test('sends 24 kHz speech with a VAD silence tail, drains playback, saves separa
   assert.equal(readFileSync(join(cwd, '.chatgpt-button-session.json'), 'utf8'), 'original-local-session');
 });
 
-test('every earlier voice/text exchange reaches subsequent audio prompts in order', async t => {
+test('voice/text exchanges within the budget reach subsequent audio prompts in order', async t => {
   const { path, client } = fixture(t);
   const history = Array.from({ length: 12 }, (_, i) => ({ question: `Question ${i}: "quoted"\nline`, answer: `Answer ${i}` }));
   client.seed(history);
@@ -108,6 +109,22 @@ test('every earlier voice/text exchange reaches subsequent audio prompts in orde
     { role: 'user', content: reply.prompt }, { role: 'assistant', content: reply.answer },
   ]);
   assert.equal(prompts[0].includeStartupContext, false);
+});
+
+test('audio provider forwards a bounded recent context without deleting older committed exchanges', async t => {
+  const { path, client } = fixture(t);
+  const history = Array.from({ length: 60 }, (_, i) => ({ question: `History question ${i}`, answer: `History answer ${i}` }));
+  client.seed(history);
+  await client.respondAudio(path);
+  const prompt = client.calls.find(call => call.method === 'thread/realtime/start')!.params.prompt;
+  const json = prompt.slice(prompt.lastIndexOf('\n') + 1);
+  assert.ok(Buffer.byteLength(json, 'utf8') <= 32 * 1024);
+  assert.deepEqual(JSON.parse(json), history.slice(-32).flatMap(({ question, answer }) => [
+    { role: 'user', content: question }, { role: 'assistant', content: answer },
+  ]));
+  assert.match(prompt, /pominięto 28/);
+  assert.equal(client.currentExchanges.length, 61);
+  assert.equal(client.currentExchanges[0].question, history[0].question);
 });
 
 test('reset and inactivity expiry remove previous context from the next audio session', async t => {
@@ -207,6 +224,90 @@ test('abort stops playback and rejects the request; late audio cannot restart pl
   await assert.rejects(task, /Cancelled/);
   assert.equal(client.player.chunks.length, 1); assert.ok(client.player.stopped);
   assert.ok(!existsSync(join(cwd, '.chatgpt-button-realtime-session.json')));
+});
+
+test('audio delayed beyond completion while playback drains cannot commit a partial answer', async t => {
+  const { cwd, path, client } = fixture(t);
+  let finish!: () => void;
+  client.player.finish = () => new Promise<void>(resolve => { finish = resolve; });
+  const response = client.respondAudio(path);
+  const rejected = assert.rejects(response, /Cancelled|completion boundary/);
+  await until(() => !!finish);
+  client.emit('outputAudio/delta', { audio: chunk });
+  finish(); await rejected;
+  assert.equal(client.player.chunks.length, 1);
+  assert.equal(client.currentExchanges.length, 0);
+  assert.equal(existsSync(join(cwd, '.chatgpt-button-realtime-session.json')), false);
+});
+
+test('failed realtime stop after playback leaves the answer uncommitted', async t => {
+  const { cwd, path, client } = fixture(t);
+  client.handler = async method => {
+    if (method === 'thread/start') return { thread: { id: threadId } };
+    if (method === 'thread/realtime/start') client.emit('started');
+    if (method === 'thread/realtime/appendAudio') {
+      client.emit('outputAudio/delta', { audio: chunk });
+      client.emit('transcript/done', { role: 'assistant', text: 'Uncommitted' });
+      client.emit('itemAdded', { item: { type: 'response.done' } });
+    }
+    if (method === 'thread/realtime/stop') throw new Error('stop failed');
+    return {};
+  };
+  await assert.rejects(client.respondAudio(path), /stop failed/);
+  assert.equal(client.currentExchanges.length, 0);
+  assert.equal(existsSync(join(cwd, '.chatgpt-button-realtime-session.json')), false);
+});
+
+test('restart keeps committed realtime IDs and excludes transcripts from an aborted operation', async t => {
+  const { cwd, path } = fixture(t);
+  const storage = createAppStorage('realtime', cwd);
+  const client = new FakeRealtime(cwd, storage, createAppStorage('imagegen', cwd));
+  await client.respondAudio(path);
+  const committed = client.currentExchanges;
+  const controller = new AbortController();
+  client.handler = async method => {
+    if (method === 'thread/realtime/start') client.emit('started');
+    if (method === 'thread/realtime/appendAudio') {
+      client.emit('transcript/done', { role: 'user', text: 'Cancelled question' });
+      client.emit('transcript/done', { role: 'assistant', text: 'Cancelled answer' });
+      controller.abort();
+    }
+    return {};
+  };
+  await assert.rejects(client.respondAudio(path, controller.signal), /Cancelled/);
+  client.stop();
+  const restarted = new FakeRealtime(cwd, createAppStorage('realtime', cwd), createAppStorage('imagegen', cwd));
+  restarted.handler = async () => { throw new Error('Committed history must not read the cancelled remote timeline'); };
+  const history = await (restarted as any).readHistory(client.currentThreadId);
+  assert.deepEqual(history, committed);
+  assert.deepEqual(restarted.currentExchanges, committed);
+  assert.ok(history.every((exchange: any) => !exchange.question.includes('Cancelled')));
+});
+
+test('legacy realtime metadata imports remote history once, then preserves its stored IDs', async t => {
+  const { cwd } = fixture(t);
+  const home = join(cwd, 'realtime-codex');
+  const initial = createAppStorage('realtime', cwd);
+  await initial.prepare();
+  initial.session.threadId = threadId;
+  // This reproduces pre-migration retained metadata with no application history file.
+  writeFileSync(join(home, 'session.json'), JSON.stringify({ threadId, lastAnswerAt: Date.now() }));
+  const client = new FakeRealtime(cwd, createAppStorage('realtime', cwd), createAppStorage('imagegen', cwd));
+  let reads = 0;
+  client.handler = async method => {
+    if (method === 'thread/timeline/list') { reads++; return { data: [
+      { position: 1, type: 'realtime', item: { type: 'transcriptSegment', role: 'user', text: 'Legacy Q' } },
+      { position: 2, type: 'realtime', item: { type: 'transcriptSegment', role: 'assistant', text: 'Legacy A' } },
+    ] }; }
+    return {};
+  };
+  await (client as any).readHistory(threadId);
+  const stored = client.currentExchanges;
+  assert.equal(stored[0].answer, 'Legacy A');
+  assert.ok(stored[0].id);
+  assert.deepEqual(await (client as any).readHistory(threadId), stored);
+  assert.equal(reads, 1);
+  assert.deepEqual(createAppStorage('realtime', cwd).session.currentExchanges, stored);
 });
 
 test('an already aborted request does not start a session', async t => {

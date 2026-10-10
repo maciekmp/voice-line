@@ -3,16 +3,18 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { launch } from './process.ts';
 import { ConversationSession } from './conversation-session.ts';
-import type { GeneratedImage, ImageTask } from './image-artifacts.ts';
+import type { GeneratedImage } from './conversation-contract.ts';
 import { imageRequest, storeGeneratedImage } from './image-artifacts.ts';
 import type { AppStorage } from './app-storage.ts';
+import type { VoiceReply } from './conversation-contract.ts';
+export type { VoiceReply } from './conversation-contract.ts';
+import { loadCodexConfig, type CodexConfig } from './app-config.ts';
 
 export const INSTRUCTIONS = 'Jesteś asystentem głosowym z oknem rozmowy. Nie uruchamiaj narzędzi, nie czytaj ani nie zmieniaj plików. Dostajesz pytanie tekstowe lub surową transkrypcję po polsku. Najpierw popraw je do zwięzłego pytania: usuń wypełniacze, powtórzenia i wycofane fragmenty, uwzględnij ostatnią samokorektę. Następnie odpowiedz po polsku, krótko i naturalnie, korzystając z kontekstu rozmowy. Zwróć JSON z polami prompt (poprawione pytanie) i answer (pełna odpowiedź do wyświetlenia). Jeśli pytanie wymaga kodu, umieść kompletny kod w blokach Markdown otoczonych potrójnymi backtickami z nazwą języka, zachowując wcięcia i nowe linie. Krótkie fragmenty kodu w zdaniu otaczaj pojedynczymi backtickami. Poza kodem używaj zwykłego tekstu. Opisz krótko rozwiązanie poza blokami kodu; bloki kodu nie będą odczytywane głosowo. Jeśli transkrypcja jest niezrozumiała, poproś o powtórzenie zamiast zgadywać. Pytanie:\n';
 const schemaPath = fileURLToPath(new URL('./response.schema.json', import.meta.url));
 export const LOCAL_INSTRUCTIONS = INSTRUCTIONS.replace('Nie uruchamiaj narzędzi, nie czytaj ani nie zmieniaj plików.',
   'Możesz używać wyłącznie wbudowanego narzędzia ImageGen, gdy użytkownik prosi o stworzenie obrazu. Sam rozpoznaj tę intencję niezależnie od sformułowania. Nie generuj obrazu przy pytaniach o obrazy lub o sposób ich tworzenia. Generuj jeden obraz, bez zastępowania go opisem lub SVG; po wygenerowaniu podaj krótkie potwierdzenie w answer. Jeśli narzędzie jest niedostępne lub zawiedzie, powiedz to wprost i nie twierdź, że obraz powstał. Prośba do ImageGen ma zawierać tylko bieżącą prośbę użytkownika, bez historii rozmowy. Nie używaj shell, MCP ani innych narzędzi, nie czytaj ani nie zmieniaj plików.');
 type Turn = { text: string; threadId?: string; images?: GeneratedImage[]; startupMs?: number; turnMs?: number };
-export type VoiceReply = { prompt: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask; startupMs?: number; turnMs?: number };
 
 export class CodexClient {
   private readonly session: ConversationSession;
@@ -21,22 +23,29 @@ export class CodexClient {
   private readonly executable: string;
   private historyServer: import('./codex-app-server.ts').CodexAppServer | null = null;
   private startup: Promise<void> | null = null;
+  private lifecycle = 0;
   private readonly storage?: AppStorage;
-  constructor(cwd: string, executable = 'codex.cmd', storage?: AppStorage) {
+  private readonly config: CodexConfig;
+  constructor(cwd: string, executable = 'codex.cmd', storage?: AppStorage, config: CodexConfig = loadCodexConfig()) {
     this.cwd = cwd; this.executable = executable;
     this.storage = storage;
+    this.config = config;
     this.session = storage?.session ?? new ConversationSession(cwd);
   }
   start(): Promise<void> {
-    if (!this.startup) this.startup = this.openHistory().catch(error => { this.startup = null; throw error; });
+    if (!this.startup) {
+      const startup = this.openHistory(this.lifecycle).catch(error => { if (this.startup === startup) this.startup = null; throw error; });
+      this.startup = startup;
+    }
     return this.startup;
   }
-  private async openHistory(): Promise<void> {
+  private async openHistory(lifecycle: number): Promise<void> {
     const { CodexAppServer } = await import('./codex-app-server.ts');
-    this.historyServer = new CodexAppServer(this.cwd, this.session, true, { home: this.storage?.home, storage: this.storage });
+    if (this.lifecycle !== lifecycle) throw new Error('Codex startup stopped');
+    this.historyServer = new CodexAppServer(this.cwd, this.session, true, { home: this.storage?.home, storage: this.storage, config: this.config });
     await this.historyServer.start();
   }
-  stop(): void { this.cancel(); this.historyServer?.stop(); }
+  stop(): void { this.lifecycle++; this.startup = null; this.cancel(); this.historyServer?.stop(); }
   reset(): void { this.cancel(); this.session.reset(); }
   cancel(): void { this.active?.kill(); this.active = null; this.historyServer?.cancel(); }
   get currentThreadId(): string | null { return this.session.threadId; }
@@ -61,7 +70,7 @@ export class CodexClient {
     const release = this.storage ? await this.historyServer!.beginExternalTurn() : undefined;
     try {
       this.session.expire();
-      const model = process.env.CODEX_MODEL?.trim();
+      const model = this.config.model;
       const modelArgs = model ? ['-m', model] : [];
       const ephemeral = this.storage?.ephemeral;
       if (ephemeral) {
@@ -71,32 +80,37 @@ export class CodexClient {
       const args = ephemeral
         ? ['exec', ...modelArgs, '--ephemeral', '--json', '--output-schema', schemaPath, '--skip-git-repo-check', '-s', 'read-only', '-']
         : this.session.threadId
-        ? ['exec', 'resume', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', this.session.threadId, '-']
+        ? ['exec', 'resume', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', this.session.codexThreadId!, '-']
         : ['exec', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', '-s', 'read-only', '-'];
-      const result = await this.run(args, LOCAL_INSTRUCTIONS + (ephemeral ? this.session.contextPrompt(raw) : raw), signal);
-      if (signal?.aborted) throw new Error('Cancelled');
+      const operation = this.session.captureOperation();
+      const conversationId = this.session.threadId ?? randomUUID();
+      const exchangeId = this.storage ? randomUUID() : undefined;
+      const result = await this.run(args, LOCAL_INSTRUCTIONS + (ephemeral ? this.session.contextPrompt(raw) : raw), signal, conversationId);
+      if (signal?.aborted || !this.session.matchesOperation(operation)) throw new Error('Cancelled');
       let reply: VoiceReply;
       try { reply = JSON.parse(result.text); }
       catch { throw new Error(`Codex returned invalid JSON: ${result.text}`); }
       if (typeof reply.prompt !== 'string' || typeof reply.answer !== 'string' || !reply.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
+      if (exchangeId) reply.exchangeId = exchangeId;
       if (result.images?.length) reply.images = result.images;
       if (ephemeral) this.session.threadId ??= randomUUID();
       else if (result.threadId) {
-        this.session.threadId = result.threadId;
+        this.session.bindCodexThread(result.threadId, conversationId);
       }
       // CLI JSON does not reliably carry image bytes; use the authoritative turn items.
+      const commitOperation = this.session.captureOperation();
       if (this.session.threadId && !ephemeral) {
         const latest = await this.historyServer!.readLatestExchange(this.session.threadId);
         if (!latest || latest.question !== reply.prompt || latest.answer !== reply.answer) throw new Error('Codex returned mismatched latest reply history');
         if (latest.images?.length) reply.images = latest.images;
       }
-      if (signal?.aborted) throw new Error('Cancelled');
-      this.session.answered(reply);
-      if (this.session.threadId) this.storage?.retention.touch(this.session.threadId, reply.images);
+      if (signal?.aborted || !this.session.matchesOperation(commitOperation)) throw new Error('Cancelled');
+      if (this.storage) await this.storage.commitReply(reply, undefined, () => !signal?.aborted && this.session.matchesOperation(commitOperation));
+      else this.session.answered(reply);
       return { ...reply, startupMs: result.startupMs, turnMs: result.turnMs };
     } finally { release?.(); }
   }
-  private run(args: string[], prompt: string, signal?: AbortSignal): Promise<Turn> {
+  private run(args: string[], prompt: string, signal?: AbortSignal, conversationId?: string): Promise<Turn> {
     return new Promise((resolve, reject) => {
       const privateStorage = this.storage && !this.storage.ephemeral ? this.storage : undefined;
       const child = launch(this.executable, [...(privateStorage ? ['-c', 'cli_auth_credentials_store="file"'] : []), ...args],
@@ -112,7 +126,7 @@ export class CodexClient {
           const event = JSON.parse(line);
           if (event.type === 'thread.started') {
             threadId = event.thread_id;
-            if (threadId && !this.storage?.ephemeral) this.storage?.retention.touch(threadId);
+            if (threadId && conversationId && !this.storage?.ephemeral) this.storage?.retention.touch(conversationId, [], undefined, threadId);
           }
           if (event.type === 'turn.started' && turnStartedAt === undefined) turnStartedAt = performance.now();
           if (event.type === 'item.completed' && event.item?.type === 'agent_message') text = event.item.text;
@@ -133,7 +147,6 @@ export class CodexClient {
         else {
           try {
             const artifacts = await Promise.all(images.map(item => storeGeneratedImage(this.cwd, item, this.storage?.dataDirectory)));
-            if (this.storage?.ephemeral && this.session.threadId) this.storage.retention.touch(this.session.threadId, artifacts);
             resolve({ text, threadId, images: artifacts, startupMs: turnStartedAt === undefined ? undefined : turnStartedAt - startedAt, turnMs: turnStartedAt === undefined ? undefined : performance.now() - turnStartedAt });
           } catch (error) { reject(error); }
         }

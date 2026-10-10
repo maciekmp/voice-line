@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "allowJs": true, "checkJs": true },
+  "include": ["electron/desktop-conversation.cjs", "electron/desktop-worker.cjs", "electron/desktop-windows.cjs", "electron/preload.cjs", "electron/conversation.js", "electron/history-renderer.js", "electron/image-renderer.js", "electron/image-preview-cache.js", "electron/answer-renderer.js", "src/desktop-validation.cjs", "src/desktop-contract.ts"]
+}

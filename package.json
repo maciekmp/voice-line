@@ -10,7 +10,7 @@
     "preview:desktop": "node scripts/launch-orb.cjs --preview",
     "preview:web": "node --experimental-strip-types scripts/preview-orb.ts",
     "check": "npm run typecheck && npm test",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.desktop.json",
     "test": "node scripts/run-tests.cjs unit",
     "test:integration": "node scripts/run-tests.cjs integration",
     "test:desktop": "node scripts/run-tests.cjs desktop",

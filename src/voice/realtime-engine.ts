@@ -1,11 +1,11 @@
-import { BaseVoiceEngine, type ConversationClient, type VoiceCallbacks } from '../voice-engine.ts';
-import type { CodexRealtime } from '../codex-realtime.ts';
+import { BaseVoiceEngine, type VoiceCallbacks } from '../voice-engine.ts';
+import type { RealtimeConversationClient } from '../conversation-contract.ts';
 import { imageRequest } from '../image-artifacts.ts';
 
 export class RealtimeVoiceEngine extends BaseVoiceEngine {
   readonly mode = 'realtime' as const;
   readonly startupDescription = 'Codex realtime (API key)';
-  private readonly realtime: ConversationClient & Pick<CodexRealtime, 'respondAudio'>;
+  private readonly realtime: RealtimeConversationClient;
   constructor(client: RealtimeVoiceEngine['realtime']) { super(client); this.realtime = client; }
   async respondAudio(wav: string, signal?: AbortSignal, callbacks: VoiceCallbacks = {}) {
     let question = '', answer = '', speaking = false;
@@ -25,7 +25,7 @@ export class RealtimeVoiceEngine extends BaseVoiceEngine {
           if (requestedImage) { audioController.abort(); return; }
         } else answer = text;
         callbacks.onUpdate?.(speaking ? 'speaking' : 'thinking', {
-          exchanges: [...this.currentExchanges, { question, answer }],
+          question, answer,
         });
       },
       onPlaybackStart: () => { speaking = true; callbacks.onPlaybackStart?.(); },

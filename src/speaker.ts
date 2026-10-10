@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 import { launch } from './process.ts';
 import { AudioLevels, followPlayback } from './audio/levels.ts';
+import { loadSapiConfig, type SapiConfig } from './app-config.ts';
 
 type Worker = ReturnType<typeof launch>;
 type ActiveSpeech = {
@@ -22,13 +23,16 @@ export class Speaker {
   private ready: Promise<void> | null = null;
   private active: ActiveSpeech | null = null;
   private closing = false;
+  private readonly config: SapiConfig;
 
-  constructor(script = fileURLToPath(new URL('./speak.ps1', import.meta.url))) { this.script = script; }
+  constructor(script = fileURLToPath(new URL('./speak.ps1', import.meta.url)), config: SapiConfig = loadSapiConfig()) { this.script = script; this.config = config; }
 
   start(): Promise<void> {
     if (this.ready) return this.ready;
     if (this.closing) return Promise.reject(new Error('TTS has shut down'));
-    const worker = launch('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', this.script]);
+    const worker = launch('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', this.script], {
+      env: { CHATGPT_BUTTON_VOICE: this.config.voice, CHATGPT_BUTTON_TTS_RATE: String(this.config.rate) },
+    });
     this.worker = worker;
     let diagnostics = '';
     this.ready = new Promise((resolve, reject) => {

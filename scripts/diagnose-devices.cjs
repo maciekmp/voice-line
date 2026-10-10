@@ -1,5 +1,6 @@
 const { spawn } = require('node:child_process');
 const { loadProjectEnv, projectRoot } = require('./lib/project.cjs');
+const { loadRecorderConfig } = require('../src/app-config.ts');
 
 function deviceListingSucceeded(output) {
   return /\[dshow[^\]]*\]\s+"[^"\r\n]+"\s+\((?:audio|video)\)/i.test(output)
@@ -8,7 +9,7 @@ function deviceListingSucceeded(output) {
 
 function diagnoseDevices() {
   loadProjectEnv();
-  const child = spawn(process.env.FFMPEG_BIN || 'ffmpeg.exe', ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'],
+  const child = spawn(loadRecorderConfig().ffmpeg, ['-hide_banner', '-list_devices', 'true', '-f', 'dshow', '-i', 'dummy'],
     { cwd: projectRoot, windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
   let failed = false;

@@ -49,10 +49,10 @@ for (const mode of ['cli', 'app-server'] as const) {
         }
         if (method === 'turn/start') {
           if (fail) throw new Error('Failed');
-          const turn = (server as unknown as { turn: { text: string; resolve: () => void } }).turn;
-          turn.text = JSON.stringify(reply);
-          turn.resolve();
-          Object.assign(server, { turn: null });
+          (server as any).onMessage({ method: 'item/completed', params: { threadId: params.threadId,
+            item: { type: 'agentMessage', text: JSON.stringify(reply) } } });
+          (server as any).onMessage({ method: 'turn/completed', params: { threadId: params.threadId,
+            turn: { id: 'turn-id', status: 'completed' } } });
           return { turn: { id: 'turn-id' } };
         }
         throw new Error(`Unexpected request: ${method}`);

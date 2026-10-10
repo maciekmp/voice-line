@@ -129,14 +129,15 @@ Automatyczne pokrycie stanu UI nie potwierdza działania fizycznego mikrofonu,
 klawisza ani usług STT/Codex/TTS. Kolumna ręczna wskazuje dodatkową kontrolę,
 którą należy wykonać z uruchomioną aplikacją; nie oznacza, że została wykonana.
 
-`npm test` uruchamia 12 plików z `tests/unit/`, w tym testy narzędzi i izolacji środowiska.
+`npm test` uruchamia pliki `test-*` z `tests/unit/`, w tym testy narzędzi i izolacji środowiska.
 `npm run check` łączy typecheck i ten zestaw. `npm run test:integration`
 uruchamia mock speakera, storage-wire i realtime-wire z `tests/integration/`;
 wymaga PowerShell, Codex i FFplay, ale używa symulowanych providerów i nie
 wykonuje płatnej inferencji. FFplay otwiera wyjście audio dla testowego PCM.
 Test klawiatury jest w `tests/native/`, a pomocnicze fixture i skrypty
-w `tests/helpers/`. Smoke Electron nadal jest w `electron/orb-main.cjs`;
-runner uruchamia ten host z `--smoke-test`.
+w `tests/helpers/`. Smoke Electron jest w `tests/native/desktop-smoke.cjs`;
+runner uruchamia produkcyjny host `electron/orb-main.cjs` z `--smoke-test`,
+który przekazuje harnessowi rzeczywiste okna i adaptery.
 
 Runner nie ładuje `.env`, usuwa odziedziczone klucze API oraz ustawia tymczasowe
 `CHATGPT_BUTTON_DATA_DIR`, `CODEX_HOME` i `CODEX_SQLITE_HOME`. Testy tworzące mock
@@ -208,7 +209,7 @@ zakończeniu; zrzuty desktop zostają w `.chatgpt-button/test-results/desktop-<i
 | ID | Kroki | Oczekiwany wynik | Pokrycie / kontrola ręczna |
 | --- | --- | --- | --- |
 | H01 | Uruchom LOCAL i realtime z różnych katalogów projektu. | Dane w katalogu aplikacji; LOCAL używa obecnego logowania i ephemeral, realtime osobnego domu API. | storage, storage-wire |
-| H02 | Nowa rozmowa, zamknij aplikację, uruchom ponownie, Wróć do poprzedniej rozmowy. | LOCAL przywraca plik aplikacji i kontekst; realtime swoją historię Codex. | storage, conversation, desktop |
+| H02 | Nowa rozmowa, zamknij aplikację, uruchom ponownie, Wróć do poprzedniej rozmowy. | LOCAL i realtime przywracają lokalną historię zatwierdzonych wymian i kontekst; starszy realtime bez lokalnego pliku importuje historię Codex jeden raz. | storage, conversation, realtime, desktop |
 | H03 | Przesuń zegar testowy o 24 godziny. | Wygasłe zarejestrowane wątki naprawdę usunięte; świeże i powiązane obrazy zachowane. | storage, storage-wire |
 | H04 | Zapisz rozmowę… w menu; anuluj, zapisz tekst z obrazem, zasymuluj błąd pliku. | Anulowanie bez zmian, samodzielny plik Markdown, komunikat odzyskania po błędzie; zapis niedostępny w trakcie odpowiedzi. | storage, desktop |
 

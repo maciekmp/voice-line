@@ -59,7 +59,10 @@ try {
   assert.equal(listed.data.length, 0, 'Ephemeral conversations never enter Codex history');
   assert.equal(JSON.parse(await readFile(join(testCodexHome, 'auth.json'), 'utf8')).OPENAI_API_KEY, 'test-not-a-real-key');
   await assert.rejects(readFile(join(storage.home, 'auth.json')));
-  assert.equal(JSON.parse(await readFile(join(storage.home, `${id}.json`), 'utf8'))[0].answer, 'Odpowiedź testowa');
+  const history = JSON.parse(await readFile(join(storage.home, `${id}.json`), 'utf8'));
+  assert.equal(history.version, 2);
+  assert.equal(history.exchanges[0].answer, 'Odpowiedź testowa');
+  assert.match(history.exchanges[0].id, /^[a-f0-9]{64}$/);
   storage.session.reset();
   const restarted = createAppStorage('local', data);
   assert.equal(restarted.session.restorePrevious(), true);

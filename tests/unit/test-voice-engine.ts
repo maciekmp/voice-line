@@ -60,7 +60,7 @@ test('local engine reports stages, question and answer before playback', async (
   assert.deepEqual(result, { prompt: 'Corrected', answer: 'Answer' });
   assert.deepEqual(calls, ['transcribe', 'respond:Raw', 'speak:Answer']);
   assert.deepEqual(updates, [{ state: 'transcribing' }, { state: 'thinking', question: 'Raw' },
-    { state: 'preparing-speech', question: 'Corrected', answer: 'Answer' }, 'playback', 0.5]);
+    { state: 'preparing-speech', question: 'Corrected', answer: 'Answer', exchanges: [] }, 'playback', 0.5]);
 });
 
 test('local lifecycle manages its services and typed messages do not use STT/TTS', async () => {
@@ -132,9 +132,7 @@ test('realtime adapter replaces partial text, preserves prior context and ignore
   const callbacks: VoiceCallbacks = { onUpdate: (state, text) => updates.push({ state, ...text }) };
   await engine.respondAudio('speech.wav', controller.signal, callbacks);
   assert.equal(updates.length, 4);
-  assert.deepEqual(updates.at(-1), { state: 'speaking', exchanges: [
-    { question: 'Earlier', answer: 'Earlier answer' }, { question: 'Question', answer: 'Full answer' },
-  ] });
+  assert.deepEqual(updates.at(-1), { state: 'speaking', question: 'Question', answer: 'Full answer' });
   assert.equal(client.currentExchanges.length, 1);
   assert.equal(engine.mode, 'realtime');
 });

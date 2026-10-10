@@ -1,18 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { imageRequest, storeGeneratedImage, readImageLinks } from '../../src/image-artifacts.ts';
 import { CodexAppServer } from '../../src/codex-app-server.ts';
-import { CodexRealtime } from '../../src/codex-realtime.ts';
+import { CodexRealtime, mapRealtimeHistory } from '../../src/codex-realtime.ts';
 import { ConversationSession } from '../../src/conversation-session.ts';
 import { RealtimeVoiceEngine } from '../../src/voice/realtime-engine.ts';
 import type { RealtimeCallbacks } from '../../src/codex-realtime.ts';
 import { codexErrorMessage } from '../../src/codex-error.ts';
 import { CodexClient } from '../../src/codex.ts';
-import { readLatestConversationExchange } from '../../src/conversation-history.ts';
+import { readLatestConversationExchange, mapConversationTurns, hydrateConversationExchanges } from '../../src/conversation-history.ts';
 
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1sAAAAASUVORK5CYII=';
 const threadId = '11111111-1111-1111-1111-111111111111';
@@ -44,6 +44,30 @@ test('PNG artifacts survive reload and renderer IPC accepts IDs only', async t =
   }
 });
 
+test('protocol mapping is pure and filesystem hydration is an explicit second operation', async t => {
+  const cwd = await directory(t);
+  const turns = [{ id: turnId, status: 'completed', items: [item,
+    { type: 'agentMessage', text: '{"prompt":"Q","answer":"A"}' }] }];
+  const original = structuredClone(turns);
+  Object.freeze(turns[0]); Object.freeze(turns[0].items);
+  const mapped = mapConversationTurns(turns);
+  assert.deepEqual(turns, original);
+  assert.equal(mapped[0].blobs.length, 1);
+  assert.match(mapped[0].exchange.images![0].id, /^[a-f0-9]{64}$/);
+  assert.deepEqual(await readdir(cwd), []);
+  const entries = [
+    { type: 'item', position: 1, turnId, item },
+    { type: 'item', position: 2, turnId, item: { type: 'agentMessage', text: '{"prompt":"Q","answer":"A"}' } },
+  ];
+  const before = structuredClone(entries);
+  const realtime = mapRealtimeHistory(entries);
+  assert.deepEqual(entries, before);
+  assert.equal(realtime.history[0].images![0].id, mapped[0].exchange.images![0].id);
+  assert.deepEqual(await readdir(cwd), []);
+  await hydrateConversationExchanges(mapped, cwd);
+  assert.deepEqual(await readFile(join(cwd, '.chatgpt-button', 'images', `${mapped[0].exchange.images![0].id}.png`)), Buffer.from(png, 'base64'));
+});
+
 class FakeImageServer extends CodexAppServer {
   calls: { method: string; params: any }[] = [];
   includeImage = true;
@@ -57,7 +81,7 @@ class FakeImageServer extends CodexAppServer {
     if (method === 'thread/start') return { thread: { id: threadId } };
     if (method === 'turn/start') {
       queueMicrotask(() => {
-        const emit = (method: string, params: any) => (this as any).onLine(JSON.stringify({ method, params: { threadId, turnId, ...params } }));
+        const emit = (method: string, params: any) => (this as any).onMessage({ method, params: { threadId, turnId, ...params } });
         if (this.includeImage) emit('item/completed', { item });
         emit('item/completed', { item: { type: 'agentMessage', text: JSON.stringify({ prompt: 'Kwadrat', answer: 'Gotowe.' }) } });
         emit('turn/completed', { turn: { id: turnId, status: 'completed' } });

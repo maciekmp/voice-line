@@ -1,30 +1,32 @@
-import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { mkdir } from 'node:fs/promises';
-import { unlink } from 'node:fs/promises';
-import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { launch } from './process.ts';
+import { CodexRpcTransport } from './codex-rpc-transport.ts';
 import { ConversationSession } from './conversation-session.ts';
 import { readConversationHistory, readLatestConversationExchange } from './conversation-history.ts';
-import type { VoiceReply } from './codex.ts';
+import type { VoiceReply, ConversationExchange } from './conversation-contract.ts';
 import { LOCAL_INSTRUCTIONS } from './codex.ts';
 import { storeGeneratedImage } from './image-artifacts.ts';
 import type { AppStorage } from './app-storage.ts';
+import { loadCodexConfig, type CodexConfig } from './app-config.ts';
+import { stableExchangeId } from './conversation-format.ts';
+import { codexThreadId, turnId, type CodexThreadId, type TurnId } from './conversation-identifiers.ts';
 
-export type CodexConnection = { home?: string; apiKey?: string; storage?: AppStorage };
+export type CodexConnection = { home?: string; apiKey?: string; storage?: AppStorage; config?: CodexConfig };
 
 const schema = JSON.parse(readFileSync(fileURLToPath(new URL('./response.schema.json', import.meta.url)), 'utf8'));
 
-type RpcReply = { id: number; result?: any; error?: { message?: string } };
-type Pending = { resolve: (value: any) => void; reject: (error: Error) => void };
 type ActiveTurn = {
-  threadId: string;
-  id?: string;
+  threadId: CodexThreadId;
+  id?: TurnId;
   text: string;
   images: any[];
   cancelled: boolean;
+  state: 'running' | 'cancelling' | 'finished' | 'disconnected';
+  finished: Promise<void>;
+  finish: () => void;
   completion: Promise<void>;
   resolve: () => void;
   reject: (error: Error) => void;
@@ -35,18 +37,20 @@ export class CodexAppServer {
   protected readonly session: ConversationSession;
   protected readonly threadHistoryMode: 'paginated' | undefined = undefined;
   protected readonly responseInstructions: string = LOCAL_INSTRUCTIONS;
-  private readonly model = process.env.CODEX_MODEL?.trim() || undefined;
-  private child: ReturnType<typeof launch> | null = null;
+  private readonly model: string | undefined;
+  protected readonly codexConfig: CodexConfig;
+  private transport: CodexRpcTransport | null = null;
   private startup: Promise<void> | null = null;
-  private nextId = 0;
-  private pending = new Map<number, Pending>();
+  private lifecycle = 0;
   private turn: ActiveTurn | null = null;
-  private diagnostics = '';
-  lastImageTurnId: string | null = null;
+  private operation: Promise<unknown> = Promise.resolve();
+  protected readonly turnTimeoutMs: number = 300_000;
+  protected readonly interruptTimeoutMs: number = 3000;
+  lastImageTurnId: TurnId | null = null;
   private readonly historyOnly: boolean;
   private readonly connection: CodexConnection;
   private externalTurn = false;
-  private ephemeralThreadId: string | null = null;
+  private ephemeralThreadId: CodexThreadId | null = null;
   private get ephemeral(): boolean { return this.connection.storage?.ephemeral ?? false; }
 
   constructor(cwd: string, session = new ConversationSession(cwd), historyOnly = false, connection: CodexConnection = {}) {
@@ -54,9 +58,13 @@ export class CodexAppServer {
     this.session = session;
     this.historyOnly = historyOnly;
     this.connection = connection;
+    this.codexConfig = connection.config ?? loadCodexConfig();
+    this.model = this.codexConfig.model;
   }
 
   get currentThreadId(): string | null { return this.session.threadId; }
+  get currentCodexThreadId(): CodexThreadId | null { return this.ephemeralThreadId ?? this.session.codexThreadId; }
+  protected providerThreadId(id: string): CodexThreadId { return this.session.providerThreadFor(id); }
   get hasRetainedHistory(): boolean { return this.connection.storage?.retention.hasRecords ?? false; }
   get currentExchanges() { return this.session.currentExchanges; }
   get canRestorePrevious(): boolean { return this.session.canRestorePrevious; }
@@ -66,29 +74,48 @@ export class CodexAppServer {
     await this.cleanHistory();
     const id = this.session.previousConversationId;
     if (!id) return false;
-    const exchanges = await this.readHistory(id);
-    if (signal?.aborted || this.session.previousConversationId !== id) return false;
-    this.session.loadHistory(id, exchanges);
-    if (!this.session.canRestorePrevious) return false;
-    if (!this.historyOnly && !this.ephemeral) await this.request('thread/resume', { threadId: id, ...(this.model && { model: this.model }) });
-    if (signal?.aborted || this.session.previousConversationId !== id) return false;
-    const restored = this.session.restorePrevious();
-    if (restored) this.rememberActivity();
-    return restored;
+    const release = await this.acquireActivity(id);
+    try {
+      const exchanges = await this.readHistory(id);
+      if (signal?.aborted || this.session.previousConversationId !== id) return false;
+      this.session.loadHistory(id, exchanges);
+      if (!this.session.canRestorePrevious) return false;
+      if (!this.historyOnly && !this.ephemeral) await this.request('thread/resume', { threadId: this.providerThreadId(id), ...(this.model && { model: this.model }) });
+      if (signal?.aborted || this.session.previousConversationId !== id) return false;
+      const restored = this.connection.storage
+        ? await this.connection.storage.restorePrevious(() => !signal?.aborted && this.session.previousConversationId === id)
+        : this.session.restorePrevious();
+      return restored;
+    } finally { release(); }
   }
 
-  protected readHistory(threadId: string) {
-    if (this.ephemeral) return Promise.resolve(this.session.readLocalHistory(threadId));
-    return readConversationHistory((method, params) => this.request(method, params), threadId, this.cwd, undefined, this.connection.storage?.dataDirectory);
+  protected storedHistory(threadId: string): ConversationExchange[] | undefined {
+    if (!this.connection.storage) return;
+    const result = this.session.readLocalHistoryResult(threadId);
+    if (result.status === 'corrupt') throw result.error;
+    return result.status === 'loaded' ? result.exchanges : undefined;
+  }
+  protected async readHistory(threadId: string) {
+    const stored = this.storedHistory(threadId);
+    if (stored) return stored;
+    if (this.ephemeral) return this.session.readLocalHistory(threadId);
+    const release = await this.acquireActivity(threadId);
+    try {
+      const history = await readConversationHistory((method, params) => this.request(method, params), this.providerThreadId(threadId), this.cwd, undefined, this.connection.storage?.dataDirectory);
+      return this.connection.storage ? await this.connection.storage.importHistory(threadId, history) : history;
+    } finally { release(); }
+  }
+  protected importHistory(threadId: string, history: ConversationExchange[]): Promise<ConversationExchange[]> {
+    return this.connection.storage?.importHistory(threadId, history) ?? Promise.resolve(history);
   }
   async readImageTurn(threadId: string, turnId: string) {
     await this.start();
     if (this.ephemeral) return this.session.readLocalHistory(threadId);
-    return readConversationHistory((method, params) => this.request(method, params), threadId, this.cwd, turnId, this.connection.storage?.dataDirectory);
+    return readConversationHistory((method, params) => this.request(method, params), this.providerThreadId(threadId), this.cwd, turnId, this.connection.storage?.dataDirectory);
   }
   async readLatestExchange(threadId: string) {
     await this.start();
-    return readLatestConversationExchange((method, params) => this.request(method, params), threadId, this.cwd, this.connection.storage?.dataDirectory);
+    return readLatestConversationExchange((method, params) => this.request(method, params), this.providerThreadId(threadId), this.cwd, this.connection.storage?.dataDirectory);
   }
   async requireChatGPTImageAuth(): Promise<void> {
     await this.start();
@@ -104,56 +131,79 @@ export class CodexAppServer {
   }
 
   start(): Promise<void> {
-    if (!this.startup) this.startup = this.open().catch(error => { this.startup = null; throw error; });
+    if (!this.startup) {
+      const startup = this.open(this.lifecycle).catch(error => { if (this.startup === startup) this.startup = null; throw error; });
+      this.startup = startup;
+    }
     return this.startup;
   }
 
-  private async open(): Promise<void> {
+  private async open(lifecycle: number): Promise<void> {
     await this.connection.storage?.prepare();
+    if (this.lifecycle !== lifecycle) throw new Error('Codex startup stopped');
     const home = this.ephemeral ? undefined : this.connection.home;
     if (home) await mkdir(home, { recursive: true });
-    const child = launch('codex.cmd', ['app-server', '--listen', 'stdio://',
+    if (this.lifecycle !== lifecycle) throw new Error('Codex startup stopped');
+    const child = this.launchServer(['app-server', '--listen', 'stdio://',
       ...(this.connection.storage && !this.ephemeral ? ['-c', 'cli_auth_credentials_store="file"'] : [])], { cwd: this.cwd,
       ...(home && { env: { CODEX_HOME: home, CODEX_SQLITE_HOME: home, CODEX_ACCESS_TOKEN: undefined } }),
     });
-    this.child = child;
-    child.stderr.setEncoding('utf8').on('data', chunk => this.diagnostics = (this.diagnostics + chunk).slice(-4000));
-    createInterface({ input: child.stdout }).on('line', line => this.onLine(line));
-    child.once('error', error => { if (this.child === child) this.onExit(error); });
-    child.once('close', code => { if (this.child === child) this.onExit(new Error(`Codex app-server exited (${code}): ${this.diagnostics}`)); });
+    const transport = new CodexRpcTransport(child,
+      message => { if (this.transport === transport) this.onMessage(message); },
+      error => { if (this.transport === transport) this.onExit(error); },
+      method => {
+        if (method === 'item/commandExecution/requestApproval' || method === 'item/fileChange/requestApproval') return { decision: 'decline' };
+        if (method === 'item/permissions/requestApproval') return { permissions: {}, scope: 'turn' };
+        if (method === 'mcpServer/elicitation/request') return { action: 'decline', content: null };
+        throw Object.assign(new Error(`Voice Line does not support server method: ${method}`), { code: -32601 });
+      });
+    this.transport = transport;
+    const ensureCurrent = () => {
+      if (this.lifecycle !== lifecycle || this.transport !== transport) throw new Error('Codex startup stopped');
+    };
     try {
       await this.request('initialize', { clientInfo: { name: 'chatgpt_button', title: 'ChatGPT Button', version: '0.1.0' },
         capabilities: { experimentalApi: true } });
+      ensureCurrent();
       this.send({ method: 'initialized', params: {} });
       // API credentials belong to the dedicated realtime home, never the user's ChatGPT login.
-      if (this.connection.apiKey) await this.request('account/login/start', { type: 'apiKey', apiKey: this.connection.apiKey });
+      if (this.connection.apiKey) { await this.request('account/login/start', { type: 'apiKey', apiKey: this.connection.apiKey }); ensureCurrent(); }
       else if (this.connection.storage && !this.ephemeral) {
         const account = await this.request('account/read', {});
+        ensureCurrent();
         if (account?.account?.type !== 'chatgpt') throw new Error('Brak logowania ChatGPT w Codex. Uruchom codex login.');
       }
       await this.cleanHistory();
+      ensureCurrent();
       await this.hydrateSavedHistory();
+      ensureCurrent();
       if (!this.historyOnly && !this.ephemeral) await this.openThread();
+      ensureCurrent();
     } catch (error) {
-      child.kill();
+      transport.stop();
       throw error;
     }
+  }
+
+  protected launchServer(args: string[], options: Parameters<typeof launch>[2]): ReturnType<typeof launch> {
+    return launch('codex.cmd', args, options);
   }
 
   protected async openThread(): Promise<void> {
     this.session.expire();
     let reply: any;
     if (this.session.threadId && !this.ephemeral) {
-      try { reply = await this.request('thread/resume', { threadId: this.session.threadId, ...(this.model && { model: this.model }) }); }
+      try { reply = await this.request('thread/resume', { threadId: this.session.codexThreadId, ...(this.model && { model: this.model }) }); }
       catch { this.session.reset(); }
+      if (reply && reply?.thread?.id !== this.session.codexThreadId) throw new Error('Codex returned a different conversation');
     }
     if (!reply) reply = await this.request('thread/start', { cwd: this.cwd, approvalPolicy: 'never', sandbox: 'read-only', ...(this.ephemeral && { ephemeral: true }), ...(this.threadHistoryMode && { historyMode: this.threadHistoryMode }), ...(this.model && { model: this.model }) });
     const id = reply?.thread?.id;
     if (typeof id !== 'string') throw new Error('Codex app-server returned no thread ID');
     if (this.ephemeral) {
-      this.ephemeralThreadId = id;
+      this.ephemeralThreadId = codexThreadId(id);
       this.session.threadId ??= randomUUID();
-    } else this.session.threadId = id;
+    } else this.session.bindCodexThread(id);
     this.rememberActivity();
   }
 
@@ -161,59 +211,43 @@ export class CodexAppServer {
   async maintainHistory(): Promise<boolean> { return this.maintenanceBusy ? false : this.cleanHistory(); }
   async beginExternalTurn(): Promise<() => void> {
     await this.cleanHistory();
+    const release = await this.acquireActivity();
     this.externalTurn = true;
-    this.rememberActivity();
-    return () => { this.externalTurn = false; };
+    try { this.rememberActivity(); }
+    catch (error) { this.externalTurn = false; release(); throw error; }
+    return () => { this.externalTurn = false; release(); };
+  }
+  protected acquireActivity(id = this.session.threadId): Promise<() => void> {
+    return this.connection.storage?.retention.acquireActivity(id) ?? Promise.resolve(() => {});
   }
   protected async cleanHistory(): Promise<boolean> {
     if (!this.connection.storage) return false;
-    const removed = await this.connection.storage.retention.prune(async threadId => {
-      if (this.ephemeral) {
-        try { await unlink(join(this.connection.storage!.home, `${threadId}.json`)); }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-      } else await this.request('thread/delete', { threadId });
-      this.session.forget([threadId]);
-    });
-    if (removed.length) this.session.forget(removed);
-    return removed.length > 0;
+    return this.connection.storage.conversation.prune(async threadId => { await this.request('thread/delete', { threadId }); });
   }
   protected rememberActivity(reply?: VoiceReply): void {
-    if (this.session.threadId) this.connection.storage?.retention.touch(this.session.threadId, reply?.images, reply?.imageTask);
+    if (this.session.threadId) this.connection.storage?.retention.touch(this.session.threadId, reply?.images, reply?.imageTask, this.ephemeral ? undefined : this.session.codexThreadId ?? undefined);
+  }
+  protected exchangeIdentity(source: string): string | undefined {
+    return this.connection.storage && this.session.threadId ? stableExchangeId(this.session.threadId, source) : undefined;
+  }
+  protected async commitReply(reply: VoiceReply, link?: import('./artifact-store.ts').ImageLink, canCommit?: () => boolean): Promise<void> {
+    if (this.connection.storage) await this.connection.storage.commitReply(reply, link, canCommit);
+    else {
+      if (canCommit && !canCommit()) throw new Error('Cancelled');
+      this.session.answered(reply);
+    }
   }
 
   private send(message: object): void {
-    if (!this.child || this.child.exitCode !== null || this.child.stdin.destroyed) throw new Error(`Codex app-server is unavailable: ${this.diagnostics}`);
-    this.child.stdin.write(`${JSON.stringify(message)}\n`);
+    if (!this.transport) throw new Error('Codex app-server is unavailable');
+    this.transport.send(message);
   }
 
   protected request(method: string, params: object): Promise<any> {
-    const id = ++this.nextId;
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`Codex ${method} timed out`));
-      }, 30_000);
-      this.pending.set(id, {
-        resolve: value => { clearTimeout(timeout); resolve(value); },
-        reject: error => { clearTimeout(timeout); reject(error); },
-      });
-      try { this.send({ id, method, params }); }
-      catch (error) { clearTimeout(timeout); this.pending.delete(id); reject(error); }
-    });
+    return this.transport?.request(method, params) ?? Promise.reject(new Error('Codex app-server is unavailable'));
   }
 
-  private onLine(line: string): void {
-    let message: any;
-    try { message = JSON.parse(line); } catch { return; }
-    if (typeof message.id === 'number') {
-      const pending = this.pending.get(message.id);
-      if (!pending) return;
-      this.pending.delete(message.id);
-      const reply = message as RpcReply;
-      if (reply.error) pending.reject(new Error(`Codex ${reply.error.message ?? 'RPC error'}`));
-      else pending.resolve(reply.result);
-      return;
-    }
+  private onMessage(message: any): void {
     this.onNotification(message.method, message.params);
     const turn = this.turn;
     if (!turn || message.params?.threadId !== turn.threadId) return;
@@ -225,19 +259,23 @@ export class CodexAppServer {
       turn.text = message.params.item.text ?? turn.text;
     }
     if (message.method === 'turn/completed' && (!turn.id || message.params.turn?.id === turn.id)) {
+      turn.state = 'finished';
+      turn.finish();
       if (message.params.turn?.status === 'completed') turn.resolve();
       else turn.reject(new Error(`Codex turn ${message.params.turn?.status ?? 'failed'}: ${message.params.turn?.error?.message ?? ''}`));
-      if (this.turn === turn) this.turn = null;
     }
   }
 
   private onExit(error: Error): void {
-    if (!this.child) return;
-    this.child = null;
+    if (!this.transport) return;
+    this.transport = null;
+    this.lifecycle++;
     this.startup = null;
-    for (const pending of this.pending.values()) pending.reject(error);
-    this.pending.clear();
-    this.turn?.reject(error);
+    if (this.turn) {
+      this.turn.state = 'disconnected';
+      this.turn.finish();
+      this.turn.reject(error);
+    }
     this.turn = null;
     this.onServerExit(error);
   }
@@ -258,74 +296,100 @@ export class CodexAppServer {
   }
 
   private async runTurn(raw: string, signal: AbortSignal | undefined, image: boolean): Promise<VoiceReply> {
+    const operation = this.operation.then(() => this.performTurn(raw, signal, image));
+    this.operation = operation.catch(() => {});
+    return operation;
+  }
+
+  private async performTurn(raw: string, signal: AbortSignal | undefined, image: boolean): Promise<VoiceReply> {
+    if (signal?.aborted) throw new Error('Cancelled');
     await this.start();
-    if (this.turn) await this.turn.completion.catch(() => {});
     await this.cleanHistory();
     if (signal?.aborted) throw new Error('Cancelled');
     this.session.expire();
     // CLI can create/resume this session through another Codex process.
-    if (this.historyOnly && this.session.threadId && !this.ephemeral) await this.request('thread/resume', { threadId: this.session.threadId });
+    if (this.historyOnly && this.session.threadId && !this.ephemeral) await this.request('thread/resume', { threadId: this.session.codexThreadId });
     if (this.ephemeral || !this.session.threadId) await this.openThread();
     if (!this.session.threadId) throw new Error('Codex thread is unavailable');
-    this.rememberActivity();
-    if (signal?.aborted) throw new Error('Cancelled');
-    let resolve!: () => void, reject!: (error: Error) => void;
-    const completion = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
-    void completion.catch(() => {});
-    const turn: ActiveTurn = { threadId: this.ephemeral ? this.ephemeralThreadId! : this.session.threadId, text: '', images: [], cancelled: false, completion, resolve, reject };
-    this.turn = turn;
-    const abort = () => {
-      turn.cancelled = true;
-      if (turn.id) void this.request('turn/interrupt', { threadId: turn.threadId, turnId: turn.id }).catch(() => {});
-    };
-    signal?.addEventListener('abort', abort, { once: true });
-    const startedAt = performance.now();
-    const timeout = setTimeout(() => { abort(); turn.reject(new Error('Codex response timed out')); }, 300_000);
+    const operation = this.session.captureOperation();
+    const release = await this.acquireActivity();
     try {
-      const reply = await this.request('turn/start', {
-        threadId: turn.threadId,
-        input: [{ type: 'text', text: image
-          ? 'Wygeneruj dokładnie jeden obraz zgodny z prośbą, używając wyłącznie wbudowanego narzędzia generowania obrazów. Nie używaj shell, MCP ani innych narzędzi. Nie czytaj ani nie zmieniaj plików projektu. Nie zastępuj obrazu opisem ani kodem SVG. Po wygenerowaniu zwróć JSON z polami prompt (prośba użytkownika) i answer (bardzo krótkie potwierdzenie po polsku). Prośba użytkownika:\n' + raw
-          : this.responseInstructions + (this.ephemeral ? this.session.contextPrompt(raw) : raw) }],
-        ...(image ? { model: process.env.CODEX_IMAGE_MODEL?.trim() || 'gpt-6.1-sol' } : this.model && { model: this.model }),
-        effort: process.env.CODEX_EFFORT ?? 'low',
-        approvalPolicy: 'never',
-        sandboxPolicy: { type: 'readOnly' },
-        outputSchema: schema,
-      });
-      const startupMs = performance.now() - startedAt;
-      turn.id = reply?.turn?.id;
-      if (!turn.id) throw new Error('Codex app-server returned no turn ID');
-      if (turn.cancelled) abort();
-      await completion;
-      if (turn.cancelled || signal?.aborted) throw new Error('Cancelled');
-      let parsed: VoiceReply;
-      try { parsed = JSON.parse(turn.text); }
-      catch { throw new Error(`Codex returned invalid JSON: ${turn.text}`); }
-      if (typeof parsed.prompt !== 'string' || typeof parsed.answer !== 'string' || !parsed.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
-      if (image && !turn.images.length) throw new Error(`Codex nie wygenerował obrazu: ${parsed.answer}`);
-      if (turn.images.length) {
-        parsed.images = await Promise.all(turn.images.map(item => storeGeneratedImage(this.cwd, item, this.connection.storage?.dataDirectory)));
-        this.rememberActivity(parsed);
-        if (signal?.aborted || turn.cancelled) throw new Error('Cancelled');
-        this.lastImageTurnId = turn.id;
+      if (!this.session.matchesOperation(operation)) throw new Error('Conversation changed');
+      this.rememberActivity();
+      if (signal?.aborted) throw new Error('Cancelled');
+      let resolve!: () => void, reject!: (error: Error) => void;
+      const completion = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
+      void completion.catch(() => {});
+      let finish!: () => void;
+      const finished = new Promise<void>(res => { finish = res; });
+      const turn: ActiveTurn = { threadId: this.currentCodexThreadId!, text: '', images: [], cancelled: false, state: 'running', finished, finish, completion, resolve, reject };
+      this.turn = turn;
+      const abort = () => {
+        turn.cancelled = true;
+        if (turn.state === 'running') turn.state = 'cancelling';
+        if (turn.id) void this.request('turn/interrupt', { threadId: turn.threadId, turnId: turn.id }).catch(() => {});
+        turn.reject(new Error('Cancelled'));
+      };
+      signal?.addEventListener('abort', abort, { once: true });
+      const startedAt = performance.now();
+      const timeout = setTimeout(() => { turn.reject(new Error('Codex response timed out')); abort(); }, this.turnTimeoutMs);
+      try {
+        const reply = await this.request('turn/start', {
+          threadId: turn.threadId,
+          input: [{ type: 'text', text: image
+            ? 'Wygeneruj dokładnie jeden obraz zgodny z prośbą, używając wyłącznie wbudowanego narzędzia generowania obrazów. Nie używaj shell, MCP ani innych narzędzi. Nie czytaj ani nie zmieniaj plików projektu. Nie zastępuj obrazu opisem ani kodem SVG. Po wygenerowaniu zwróć JSON z polami prompt (prośba użytkownika) i answer (bardzo krótkie potwierdzenie po polsku). Prośba użytkownika:\n' + raw
+            : this.responseInstructions + (this.ephemeral ? this.session.contextPrompt(raw) : raw) }],
+          ...(image ? { model: this.codexConfig.imageModel } : this.model && { model: this.model }),
+          effort: this.codexConfig.effort,
+          approvalPolicy: 'never',
+          sandboxPolicy: { type: 'readOnly' },
+          outputSchema: schema,
+        });
+        const startupMs = performance.now() - startedAt;
+        turn.id = typeof reply?.turn?.id === 'string' ? turnId(reply.turn.id) : undefined;
+        if (!turn.id) throw new Error('Codex app-server returned no turn ID');
+        if (turn.cancelled) abort();
+        await completion;
+        if (turn.cancelled || signal?.aborted) throw new Error('Cancelled');
+        let parsed: VoiceReply;
+        try { parsed = JSON.parse(turn.text); }
+        catch { throw new Error(`Codex returned invalid JSON: ${turn.text}`); }
+        if (typeof parsed.prompt !== 'string' || typeof parsed.answer !== 'string' || !parsed.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
+        parsed.exchangeId = this.exchangeIdentity(`codex:${turn.threadId}:${turn.id}`);
+        if (image && !turn.images.length) throw new Error(`Codex nie wygenerował obrazu: ${parsed.answer}`);
+        if (turn.images.length) {
+          parsed.images = await Promise.all(turn.images.map(item => storeGeneratedImage(this.cwd, item, this.connection.storage?.dataDirectory)));
+          if (signal?.aborted || turn.cancelled) throw new Error('Cancelled');
+          this.lastImageTurnId = turn.id;
+        }
+        if (!this.session.matchesOperation(operation)) throw new Error('Conversation changed');
+        await this.commitReply(parsed, undefined, () => !turn.cancelled && !signal?.aborted && this.session.matchesOperation(operation));
+        return { ...parsed, startupMs, turnMs: performance.now() - startedAt - startupMs };
+      } finally {
+        clearTimeout(timeout);
+        signal?.removeEventListener('abort', abort);
+        const unfinished = () => turn.state === 'running' || turn.state === 'cancelling';
+        if (unfinished() && !turn.id) this.transport?.stop();
+        else if (unfinished()) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([turn.finished, new Promise<void>(resolve => { timer = setTimeout(resolve, this.interruptTimeoutMs); })]);
+          clearTimeout(timer);
+          // Acknowledging interrupt does not establish that the external turn ended.
+          if (unfinished()) this.transport?.stop();
+        }
+        if (this.turn === turn) this.turn = null;
+        if (this.ephemeral && turn.state === 'finished') await this.request('thread/unsubscribe', { threadId: turn.threadId }).catch(() => {});
       }
-      this.session.answered(parsed);
-      this.rememberActivity(parsed);
-      return { ...parsed, startupMs, turnMs: performance.now() - startedAt - startupMs };
-    } finally {
-      clearTimeout(timeout);
-      signal?.removeEventListener('abort', abort);
-      if (this.turn === turn && !turn.id) { this.turn = null; turn.resolve(); }
-      if (this.ephemeral && this.turn !== turn) await this.request('thread/unsubscribe', { threadId: turn.threadId }).catch(() => {});
-    }
+    } finally { release(); }
   }
 
   cancel(): void {
     const turn = this.turn;
     if (!turn) return;
     turn.cancelled = true;
+    if (turn.state === 'running') turn.state = 'cancelling';
     if (turn.id) void this.request('turn/interrupt', { threadId: turn.threadId, turnId: turn.id }).catch(() => {});
+    turn.reject(new Error('Cancelled'));
   }
 
   reset(): void {
@@ -335,9 +399,9 @@ export class CodexAppServer {
   }
 
   stop(): void {
+    this.lifecycle++;
+    this.startup = null;
     this.cancel();
-    const child = this.child;
-    this.onExit(new Error('Codex app-server stopped'));
-    child?.kill();
+    this.transport?.stop();
   }
 }

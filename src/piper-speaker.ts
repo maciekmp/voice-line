@@ -2,6 +2,7 @@ import { access, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { launch } from './process.ts';
 import { AudioLevels, followPlayback } from './audio/levels.ts';
+import { loadPiperConfig, type PiperConfig } from './app-config.ts';
 
 type Process = ReturnType<typeof launch>;
 
@@ -14,10 +15,12 @@ export class PiperSpeaker {
   private active: { piper: Process; player: Process; cancel: () => void } | null = null;
 
   constructor(
-    binary = process.env.PIPER_BIN ?? 'piper.exe',
-    model = process.env.PIPER_MODEL ?? '',
-    player = process.env.FFPLAY_BIN ?? 'ffplay.exe',
+    binary?: string,
+    model?: string,
+    player?: string,
+    config: PiperConfig = loadPiperConfig(),
   ) {
+    binary ??= config.binary; model ??= config.model; player ??= config.player;
     this.binary = /[\\/]/.test(binary) ? resolve(binary) : binary;
     this.model = model ? resolve(model) : '';
     this.player = /[\\/]/.test(player) ? resolve(player) : player;
