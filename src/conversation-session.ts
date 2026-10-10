@@ -1,9 +1,23 @@
 import { readFileSync, writeFileSync, unlinkSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type { GeneratedImage, ImageTask } from './image-artifacts.ts';
 
 const CONTEXT_TTL_MS = 2 * 60 * 1000;
 export type ConversationExchange = { question: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask };
+export type LocalHistoryResult =
+  | { status: 'loaded'; id: string; exchanges: ConversationExchange[] }
+  | { status: 'missing'; id: string }
+  | { status: 'corrupt'; id: string; error: Error; preservedFile?: string };
+
+function validExchange(item: any): boolean {
+  return !!item && typeof item.question === 'string' && typeof item.answer === 'string'
+    && (item.images === undefined || (Array.isArray(item.images) && item.images.every((image: any) =>
+      image && typeof image.id === 'string' && /^[a-f0-9]{64}$/.test(image.id) && typeof image.alt === 'string')))
+    && (item.imageTask === undefined || (item.imageTask && typeof item.imageTask.threadId === 'string'
+      && /^[a-f\d-]{36}$/i.test(item.imageTask.threadId) && typeof item.imageTask.turnId === 'string'
+      && /^[a-z\d_-]{1,128}$/i.test(item.imageTask.turnId)));
+}
 
 export class ConversationSession {
   threadId: string | null = null;
@@ -43,21 +57,56 @@ export class ConversationSession {
       if (this.threadId) throw error;
       // Missing or corrupt sessions start a new conversation.
     }
-    if (this.localHistory) {
-      for (const id of [this.threadId, this.previousThreadId]) if (id) this.loadHistory(id, this.readLocalHistory(id));
+  }
+
+  readLocalHistoryResult(id: string): LocalHistoryResult {
+    if (!/^[a-f\d-]{36}$/i.test(id)) throw new Error('Invalid conversation ID');
+    let content: string;
+    try { content = readFileSync(join(this.file, '..', `${id}.json`), 'utf8'); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { status: 'missing', id };
+      throw error;
+    }
+    try {
+      const data = JSON.parse(content);
+      if (!Array.isArray(data) || !data.every(validExchange)) throw new Error('Invalid application conversation');
+      return { status: 'loaded', id, exchanges: data };
+    } catch (error) {
+      return { status: 'corrupt', id, error: error as Error };
     }
   }
 
   readLocalHistory(id: string): ConversationExchange[] {
-    if (!/^[a-f\d-]{36}$/i.test(id)) throw new Error('Invalid conversation ID');
-    try {
-      const data = JSON.parse(readFileSync(join(this.file, '..', `${id}.json`), 'utf8'));
-      if (!Array.isArray(data) || data.some(item => typeof item.question !== 'string' || typeof item.answer !== 'string')) throw new Error('Invalid application conversation');
-      return data;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
-      throw error;
+    const result = this.readLocalHistoryResult(id);
+    if (result.status === 'corrupt') throw result.error;
+    return result.status === 'loaded' ? result.exchanges : [];
+  }
+
+  // Construction reads metadata only. The storage owner explicitly hydrates local data.
+  loadLocalHistory(): LocalHistoryResult[] {
+    if (!this.localHistory) return [];
+    const results: LocalHistoryResult[] = [];
+    let changed = false;
+    for (const id of new Set([this.threadId, this.previousThreadId])) {
+      if (!id) continue;
+      const result = this.readLocalHistoryResult(id);
+      if (result.status === 'corrupt') {
+        const file = join(this.file, '..', `${id}.json`);
+        result.preservedFile = `${file}.corrupt-${randomUUID()}`;
+        // Retention deletes only <id>.json; keep the original bytes for recovery.
+        renameSync(file, result.preservedFile);
+      }
+      if (result.status === 'loaded' && result.exchanges.length) this.loadHistory(id, result.exchanges);
+      else {
+        if (this.threadId === id) { this.threadId = null; this.lastAnswerAt = null; this.exchanges = []; }
+        if (this.previousThreadId === id) { this.previousThreadId = null; this.previousLastAnswerAt = null; this.previousExchanges = []; }
+        changed = true;
+      }
+      results.push(result);
     }
+    // Update references only; never rewrite any conversation during recovery.
+    if (changed) this.write(this.threadId, this.lastAnswerAt, this.previousThreadId, this.previousLastAnswerAt);
+    return results;
   }
 
   contextPrompt(raw: string): string {

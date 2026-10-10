@@ -41,6 +41,8 @@ Dowód: w świeżym katalogu tymczasowym utworzono metadane poprzedniej rozmowy 
 
 Zmiana: jawne ładowanie po konstrukcji i wynik `loaded/missing/corrupt`; odizolować uszkodzoną rozmowę i zachować jej plik do odzyskania. Nie zastępować błędnego pliku pustą historią bez śladu. Testy: bieżąca/poprzednia historia, błędny JSON, `[null]`, niepoprawne referencje obrazów i historia starsza niż retencja.
 
+Status F02: wdrożone. `createAppStorage()` jawnie wywołuje `loadLocalHistory()` po konstrukcji sesji i udostępnia `historyLoadResults` (`loaded/missing/corrupt`). Walidacja obejmuje wymiany, referencje obrazów i identyfikatory zadań ImageGen. Uszkodzony plik zostaje przeniesiony do `<id>.json.corrupt-<uuid>` w tym samym katalogu; recovery aktualizuje wyłącznie metadane i odłącza wadliwą rozmowę, zachowując sprawną. Brakująca lub pusta historia również nie pozostawia aktywnej referencji. Retencja nie usuwa zachowanej kopii JSON; PNG nadal podlegają dotychczasowej retencji. Błędy dostępu do filesystemu i zapisu metadanych pozostają błędami storage, nie są klasyfikowane jako uszkodzenie JSON. Weryfikacja: `npm.cmd run check` PASS, typecheck i 138/138 testów, w tym regresje obu trybów lokalnej historii, restartu, nowej odpowiedzi oraz cleanup historii starszej niż retencja.
+
 ### F03 — supervisor procesu powinien obsłużyć również nieudany spawn
 
 Electron zapisuje `engine = child`. Handler `error` pozostawia tę referencję, a sprzątanie następuje tylko na `exit`. Retry wysyła do starego obiektu `shutdown` i oczekuje na jego `exit`. Przy `ENOENT` nie ma uruchomionego procesu, a zdarzenie `exit` może w ogóle nie wystąpić; `close` występuje po błędzie spawn. Potwierdza to [kontrakt ChildProcess w Node.js](https://nodejs.org/api/child_process.html#event-close).

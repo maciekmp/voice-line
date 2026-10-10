@@ -56,6 +56,14 @@ read from its isolated Codex history, including paginated history.
 Empty conversations do not enable undo; failed reads preserve the selected
 conversation. Context still expires two minutes after the last successful answer.
 
+At startup, malformed LOCAL/ImageGen conversation files are moved to
+`<id>.json.corrupt-<uuid>` in the same storage directory, preserving their original
+bytes for manual recovery. Only that conversation's session reference is cleared;
+healthy current/previous history remains available. Missing files clear their
+references too. Recovery files survive automatic history cleanup; referenced PNGs
+remain subject to the normal retention policy. Filesystem access or write errors
+are still reported as storage failures.
+
 Registered application history files (and realtime threads via `thread/delete`) are deleted
 after **24 hours without activity**. Cleanup runs at startup, before requests and
 once a minute while the app is idle. It does not interrupt active requests; failed
