@@ -149,12 +149,11 @@ work is active, services are unavailable, or no previous nonempty thread exists.
 A thread is nonempty after at least one successful answer. Returning
 renews the two-minute context window; a subsequent return can switch back to the
 conversation just left. The session owns thread selection; the Electron main
-process keeps at most two prior display snapshots in memory. The existing local
-session file stores only the thread ID and timestamp. Startup and undo read
-messages through Codex app-server, then publish them with their restored context.
+process keeps at most two prior display snapshots in memory. Each mode's
+session file stores current/previous conversation IDs and timestamps. Startup and undo read
+app-owned LOCAL files or isolated realtime Codex history, then publish restored context.
 Paginated history loads all turn and item pages. Empty history disables undo;
-failed reads or cancelled returns do not switch the selected thread. Older local
-message copies are removed by metadata-only migration.
+failed reads or cancelled returns do not switch the selected thread.
 Focus/blur does not change mode
 or independently schedule hiding. One controller owns visibility and mode;
 voice snapshots do not reactivate windows or replace chat with peek. Starting
@@ -188,17 +187,30 @@ never HTML. Speech reads the prose and inline code, skipping fenced blocks; a
 code-only reply announces that the code is available in the conversation window.
 Hover displays only the latest exchange. Chat displays previous exchanges above
 it and supports document scrolling, with the composer flush to the window bottom.
-Exchanges are kept in main-process memory and stored only in Codex history.
-The ignored local `.chatgpt-button-session.json` holds thread ID and timestamp,
-never message content. Messages survive popup dismissal and load through the
-Codex history API with their thread on restart. New conversation clears the
-display and removes the session file, while leaving Codex history intact; undo
-retains the previous thread during this app run. Updates keep readers
-at their scroll position unless they were already at the bottom.
-Codex conversation persistence and optional SAVE_AUDIO behavior remain as
-documented in README.md. New conversation clears the displayed exchange and
-resets Codex context. Undo can restore the previous thread during this app run.
-No transcript is added to renderer persistent storage.
+Exchanges are kept in main-process memory and in the application's private Codex
+history under `%LOCALAPPDATA%\ChatGPTButton` (override: `CHATGPT_BUTTON_DATA_DIR`).
+LOCAL and realtime ImageGen use ephemeral Codex threads and the existing Codex
+account. Only realtime audio uses a separate Codex home for its API-key login.
+Each home's `session.json` holds current/previous thread IDs and timestamps,
+never message content. LOCAL and ImageGen save messages in app-owned JSON files;
+startup and undo load those files and replay context into ephemeral turns.
+Realtime startup and undo restore messages through its isolated Codex history,
+including after an explicit reset before quitting. Two-minute context expiry is
+independent of 24-hour history retention. Startup, requests and idle maintenance
+delete registered expired threads through Codex, retry failures, and remove unused
+image artifacts; active requests remain protected. Purge clears cached Electron
+display snapshots. Updates preserve readers' scroll position unless already at
+the bottom. No transcript is added to renderer persistent storage.
+
+The native tray/orb menu owns Zapisz rozmowę… beside Nowa rozmowa. It is unavailable
+without a completed reply, while work is active or while another save is pending.
+A native OS save dialog chooses a Markdown file; cancel has no effect. Export
+captures the selected completed conversation and embeds image pixels so it survives
+cleanup. Native localized result dialogs confirm saving or describe recovery.
+No new popup controls, geometry or visual tokens are introduced. Retention applies
+only to app-owned private history; manually saved exports have no expiry.
+Verification: test:storage, test:storage-wire and real Electron test:orb.
+Optional SAVE_AUDIO behavior remains documented in README.md.
 
 Generated PNGs use the shared `electron/image-renderer.js` in the latest exchange
 and history. Previews fit the conversation width, preserve the image aspect ratio,
@@ -210,6 +222,6 @@ It retains existing focus and disabled states; inline Polish status announces sa
 success or recoverable errors. Generuję obraz… is the pending state. Missing files
 show recovery text and disable saving. A native OS save dialog owns the destination.
 Renderer IPC accepts only SHA-256 image IDs, never arbitrary file paths. Artifacts
-remain under the ignored app directory; conversation/task links contain metadata
-only, and message content is restored from Codex history. Reset hides artifacts
+remain under the private app data directory; conversation/task links contain metadata
+only, and ImageGen message content is restored from app-owned files. Reset hides artifacts
 without deleting them. Verification: test:images and the real Electron test:orb.

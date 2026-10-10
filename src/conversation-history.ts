@@ -21,7 +21,7 @@ async function pages(request: Request, method: string, params: object): Promise<
   return data;
 }
 
-export async function readConversationHistory(request: Request, threadId: string, cwd?: string, onlyTurnId?: string): Promise<ConversationExchange[]> {
+export async function readConversationHistory(request: Request, threadId: string, cwd?: string, onlyTurnId?: string, dataDirectory?: string): Promise<ConversationExchange[]> {
   const metadata = await request('thread/read', { threadId, includeTurns: false });
   if (metadata?.thread?.id !== threadId) throw new Error('Codex returned a different conversation');
   let turns: any[];
@@ -42,10 +42,10 @@ export async function readConversationHistory(request: Request, threadId: string
     }
     turns = history.thread.turns;
   }
-  return exchangesFromTurns(turns, cwd, onlyTurnId);
+  return exchangesFromTurns(turns, cwd, onlyTurnId, dataDirectory);
 }
 
-export async function readLatestConversationExchange(request: Request, threadId: string, cwd: string): Promise<ConversationExchange | undefined> {
+export async function readLatestConversationExchange(request: Request, threadId: string, cwd: string, dataDirectory?: string): Promise<ConversationExchange | undefined> {
   const metadata = await request('thread/read', { threadId, includeTurns: false });
   if (metadata?.thread?.id !== threadId) throw new Error('Codex returned a different conversation');
   let turn: any;
@@ -59,15 +59,15 @@ export async function readLatestConversationExchange(request: Request, threadId:
     if (history?.thread?.id !== threadId || !Array.isArray(history.thread.turns)) throw new Error('Codex returned invalid conversation history');
     turn = history.thread.turns.at(-1);
   }
-  return (await exchangesFromTurns(turn ? [turn] : [], cwd))[0];
+  return (await exchangesFromTurns(turn ? [turn] : [], cwd, undefined, dataDirectory))[0];
 }
 
-async function exchangesFromTurns(turns: any[], cwd?: string, onlyTurnId?: string): Promise<ConversationExchange[]> {
+async function exchangesFromTurns(turns: any[], cwd?: string, onlyTurnId?: string, dataDirectory?: string): Promise<ConversationExchange[]> {
   const exchanges: ConversationExchange[] = [];
   for (const turn of turns) {
     if (turn.status !== 'completed' || !Array.isArray(turn.items) || (onlyTurnId && turn.id !== onlyTurnId)) continue;
     const images = cwd ? await Promise.all(turn.items.filter((item: any) => item.type === 'imageGeneration' && item.status === 'completed')
-      .map((item: any) => storeGeneratedImage(cwd, item))) : [];
+      .map((item: any) => storeGeneratedImage(cwd, item, dataDirectory))) : [];
     for (const item of [...turn.items].reverse()) {
       if (item?.type !== 'agentMessage' || item.phase === 'commentary' || typeof item.text !== 'string') continue;
       try {

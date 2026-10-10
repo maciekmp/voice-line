@@ -2,12 +2,18 @@ import { createInterface } from 'node:readline';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { mkdir } from 'node:fs/promises';
+import { unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { launch } from './process.ts';
 import { ConversationSession } from './conversation-session.ts';
 import { readConversationHistory, readLatestConversationExchange } from './conversation-history.ts';
 import type { VoiceReply } from './codex.ts';
 import { LOCAL_INSTRUCTIONS } from './codex.ts';
 import { storeGeneratedImage } from './image-artifacts.ts';
+import type { AppStorage } from './app-storage.ts';
+
+export type CodexConnection = { home?: string; apiKey?: string; storage?: AppStorage };
 
 const schema = JSON.parse(readFileSync(fileURLToPath(new URL('./response.schema.json', import.meta.url)), 'utf8'));
 
@@ -38,9 +44,12 @@ export class CodexAppServer {
   private diagnostics = '';
   lastImageTurnId: string | null = null;
   private readonly historyOnly: boolean;
-  private readonly connection: { home?: string; apiKey?: string };
+  private readonly connection: CodexConnection;
+  private externalTurn = false;
+  private ephemeralThreadId: string | null = null;
+  private get ephemeral(): boolean { return this.connection.storage?.ephemeral ?? false; }
 
-  constructor(cwd: string, session = new ConversationSession(cwd), historyOnly = false, connection: { home?: string; apiKey?: string } = {}) {
+  constructor(cwd: string, session = new ConversationSession(cwd), historyOnly = false, connection: CodexConnection = {}) {
     this.cwd = cwd;
     this.session = session;
     this.historyOnly = historyOnly;
@@ -48,33 +57,38 @@ export class CodexAppServer {
   }
 
   get currentThreadId(): string | null { return this.session.threadId; }
+  get hasRetainedHistory(): boolean { return this.connection.storage?.retention.hasRecords ?? false; }
   get currentExchanges() { return this.session.currentExchanges; }
   get canRestorePrevious(): boolean { return this.session.canRestorePrevious; }
   expireConversation(): void { this.session.expire(); }
   async restorePrevious(signal?: AbortSignal): Promise<boolean> {
     await this.start();
+    await this.cleanHistory();
     const id = this.session.previousConversationId;
     if (!id) return false;
     const exchanges = await this.readHistory(id);
     if (signal?.aborted || this.session.previousConversationId !== id) return false;
     this.session.loadHistory(id, exchanges);
     if (!this.session.canRestorePrevious) return false;
-    if (!this.historyOnly) await this.request('thread/resume', { threadId: id, ...(this.model && { model: this.model }) });
+    if (!this.historyOnly && !this.ephemeral) await this.request('thread/resume', { threadId: id, ...(this.model && { model: this.model }) });
     if (signal?.aborted || this.session.previousConversationId !== id) return false;
     const restored = this.session.restorePrevious();
+    if (restored) this.rememberActivity();
     return restored;
   }
 
   protected readHistory(threadId: string) {
-    return readConversationHistory((method, params) => this.request(method, params), threadId, this.cwd);
+    if (this.ephemeral) return Promise.resolve(this.session.readLocalHistory(threadId));
+    return readConversationHistory((method, params) => this.request(method, params), threadId, this.cwd, undefined, this.connection.storage?.dataDirectory);
   }
   async readImageTurn(threadId: string, turnId: string) {
     await this.start();
-    return readConversationHistory((method, params) => this.request(method, params), threadId, this.cwd, turnId);
+    if (this.ephemeral) return this.session.readLocalHistory(threadId);
+    return readConversationHistory((method, params) => this.request(method, params), threadId, this.cwd, turnId, this.connection.storage?.dataDirectory);
   }
   async readLatestExchange(threadId: string) {
     await this.start();
-    return readLatestConversationExchange((method, params) => this.request(method, params), threadId, this.cwd);
+    return readLatestConversationExchange((method, params) => this.request(method, params), threadId, this.cwd, this.connection.storage?.dataDirectory);
   }
   async requireChatGPTImageAuth(): Promise<void> {
     await this.start();
@@ -95,9 +109,12 @@ export class CodexAppServer {
   }
 
   private async open(): Promise<void> {
-    if (this.connection.home) await mkdir(this.connection.home, { recursive: true });
-    const child = launch('codex.cmd', ['app-server', '--listen', 'stdio://'], { cwd: this.cwd,
-      ...(this.connection.home && { env: { CODEX_HOME: this.connection.home, CODEX_SQLITE_HOME: this.connection.home, CODEX_ACCESS_TOKEN: undefined } }),
+    await this.connection.storage?.prepare();
+    const home = this.ephemeral ? undefined : this.connection.home;
+    if (home) await mkdir(home, { recursive: true });
+    const child = launch('codex.cmd', ['app-server', '--listen', 'stdio://',
+      ...(this.connection.storage && !this.ephemeral ? ['-c', 'cli_auth_credentials_store="file"'] : [])], { cwd: this.cwd,
+      ...(home && { env: { CODEX_HOME: home, CODEX_SQLITE_HOME: home, CODEX_ACCESS_TOKEN: undefined } }),
     });
     this.child = child;
     child.stderr.setEncoding('utf8').on('data', chunk => this.diagnostics = (this.diagnostics + chunk).slice(-4000));
@@ -110,8 +127,13 @@ export class CodexAppServer {
       this.send({ method: 'initialized', params: {} });
       // API credentials belong to the dedicated realtime home, never the user's ChatGPT login.
       if (this.connection.apiKey) await this.request('account/login/start', { type: 'apiKey', apiKey: this.connection.apiKey });
+      else if (this.connection.storage && !this.ephemeral) {
+        const account = await this.request('account/read', {});
+        if (account?.account?.type !== 'chatgpt') throw new Error('Brak logowania ChatGPT w Codex. Uruchom codex login.');
+      }
+      await this.cleanHistory();
       await this.hydrateSavedHistory();
-      if (!this.historyOnly) await this.openThread();
+      if (!this.historyOnly && !this.ephemeral) await this.openThread();
     } catch (error) {
       child.kill();
       throw error;
@@ -121,14 +143,42 @@ export class CodexAppServer {
   protected async openThread(): Promise<void> {
     this.session.expire();
     let reply: any;
-    if (this.session.threadId) {
+    if (this.session.threadId && !this.ephemeral) {
       try { reply = await this.request('thread/resume', { threadId: this.session.threadId, ...(this.model && { model: this.model }) }); }
       catch { this.session.reset(); }
     }
-    if (!reply) reply = await this.request('thread/start', { cwd: this.cwd, approvalPolicy: 'never', sandbox: 'read-only', ...(this.threadHistoryMode && { historyMode: this.threadHistoryMode }), ...(this.model && { model: this.model }) });
+    if (!reply) reply = await this.request('thread/start', { cwd: this.cwd, approvalPolicy: 'never', sandbox: 'read-only', ...(this.ephemeral && { ephemeral: true }), ...(this.threadHistoryMode && { historyMode: this.threadHistoryMode }), ...(this.model && { model: this.model }) });
     const id = reply?.thread?.id;
     if (typeof id !== 'string') throw new Error('Codex app-server returned no thread ID');
-    this.session.threadId = id;
+    if (this.ephemeral) {
+      this.ephemeralThreadId = id;
+      this.session.threadId ??= randomUUID();
+    } else this.session.threadId = id;
+    this.rememberActivity();
+  }
+
+  protected get maintenanceBusy(): boolean { return this.turn !== null || this.externalTurn; }
+  async maintainHistory(): Promise<boolean> { return this.maintenanceBusy ? false : this.cleanHistory(); }
+  async beginExternalTurn(): Promise<() => void> {
+    await this.cleanHistory();
+    this.externalTurn = true;
+    this.rememberActivity();
+    return () => { this.externalTurn = false; };
+  }
+  protected async cleanHistory(): Promise<boolean> {
+    if (!this.connection.storage) return false;
+    const removed = await this.connection.storage.retention.prune(async threadId => {
+      if (this.ephemeral) {
+        try { await unlink(join(this.connection.storage!.home, `${threadId}.json`)); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      } else await this.request('thread/delete', { threadId });
+      this.session.forget([threadId]);
+    });
+    if (removed.length) this.session.forget(removed);
+    return removed.length > 0;
+  }
+  protected rememberActivity(reply?: VoiceReply): void {
+    if (this.session.threadId) this.connection.storage?.retention.touch(this.session.threadId, reply?.images, reply?.imageTask);
   }
 
   private send(message: object): void {
@@ -210,17 +260,19 @@ export class CodexAppServer {
   private async runTurn(raw: string, signal: AbortSignal | undefined, image: boolean): Promise<VoiceReply> {
     await this.start();
     if (this.turn) await this.turn.completion.catch(() => {});
+    await this.cleanHistory();
     if (signal?.aborted) throw new Error('Cancelled');
     this.session.expire();
     // CLI can create/resume this session through another Codex process.
-    if (this.historyOnly && this.session.threadId) await this.request('thread/resume', { threadId: this.session.threadId });
-    if (!this.session.threadId) await this.openThread();
+    if (this.historyOnly && this.session.threadId && !this.ephemeral) await this.request('thread/resume', { threadId: this.session.threadId });
+    if (this.ephemeral || !this.session.threadId) await this.openThread();
     if (!this.session.threadId) throw new Error('Codex thread is unavailable');
+    this.rememberActivity();
     if (signal?.aborted) throw new Error('Cancelled');
     let resolve!: () => void, reject!: (error: Error) => void;
     const completion = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
     void completion.catch(() => {});
-    const turn: ActiveTurn = { threadId: this.session.threadId, text: '', images: [], cancelled: false, completion, resolve, reject };
+    const turn: ActiveTurn = { threadId: this.ephemeral ? this.ephemeralThreadId! : this.session.threadId, text: '', images: [], cancelled: false, completion, resolve, reject };
     this.turn = turn;
     const abort = () => {
       turn.cancelled = true;
@@ -234,7 +286,7 @@ export class CodexAppServer {
         threadId: turn.threadId,
         input: [{ type: 'text', text: image
           ? 'Wygeneruj dokładnie jeden obraz zgodny z prośbą, używając wyłącznie wbudowanego narzędzia generowania obrazów. Nie używaj shell, MCP ani innych narzędzi. Nie czytaj ani nie zmieniaj plików projektu. Nie zastępuj obrazu opisem ani kodem SVG. Po wygenerowaniu zwróć JSON z polami prompt (prośba użytkownika) i answer (bardzo krótkie potwierdzenie po polsku). Prośba użytkownika:\n' + raw
-          : this.responseInstructions + raw }],
+          : this.responseInstructions + (this.ephemeral ? this.session.contextPrompt(raw) : raw) }],
         ...(image ? { model: process.env.CODEX_IMAGE_MODEL?.trim() || 'gpt-6.1-sol' } : this.model && { model: this.model }),
         effort: process.env.CODEX_EFFORT ?? 'low',
         approvalPolicy: 'never',
@@ -253,16 +305,19 @@ export class CodexAppServer {
       if (typeof parsed.prompt !== 'string' || typeof parsed.answer !== 'string' || !parsed.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
       if (image && !turn.images.length) throw new Error(`Codex nie wygenerował obrazu: ${parsed.answer}`);
       if (turn.images.length) {
-        parsed.images = await Promise.all(turn.images.map(item => storeGeneratedImage(this.cwd, item)));
+        parsed.images = await Promise.all(turn.images.map(item => storeGeneratedImage(this.cwd, item, this.connection.storage?.dataDirectory)));
+        this.rememberActivity(parsed);
         if (signal?.aborted || turn.cancelled) throw new Error('Cancelled');
         this.lastImageTurnId = turn.id;
       }
       this.session.answered(parsed);
+      this.rememberActivity(parsed);
       return { ...parsed, startupMs, turnMs: performance.now() - startedAt - startupMs };
     } finally {
       clearTimeout(timeout);
       signal?.removeEventListener('abort', abort);
       if (this.turn === turn && !turn.id) { this.turn = null; turn.resolve(); }
+      if (this.ephemeral && this.turn !== turn) await this.request('thread/unsubscribe', { threadId: turn.threadId }).catch(() => {});
     }
   }
 

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
 import assert from 'node:assert/strict';
 import { CodexRealtime } from '../src/codex-realtime.ts';
+import { createAppStorage } from '../src/app-storage.ts';
 
 const directory = await mkdtemp(join(tmpdir(), 'voice-line-wire-'));
 const sockets = new Set<Duplex>();
@@ -71,7 +72,7 @@ const originalKey = process.env.OPENAI_API_KEY;
 try {
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   const address = server.address() as { port: number };
-  const home = join(directory, '.chatgpt-button', 'realtime-codex');
+  const home = createAppStorage('realtime', directory).home;
   await mkdir(home, { recursive: true });
   // This override is confined to the temporary test home; it never edits user config.
   await writeFile(join(home, 'config.toml'), `experimental_realtime_ws_base_url="ws://127.0.0.1:${address.port}"\n`);
@@ -82,7 +83,7 @@ try {
   wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(3200, 40);
   const path = join(directory, 'speech.wav');
   await writeFile(path, wav);
-  client = new CodexRealtime(directory);
+  client = new CodexRealtime(directory, createAppStorage('realtime', directory), createAppStorage('imagegen', directory));
   const transcripts: { role: string; text: string }[] = [];
   const reply = await client.respondAudio(path, undefined, { onTranscript: (role, text) => {
     assert.deepEqual(client!.currentExchanges, [], 'Text arrives before the answer is saved after playback');
@@ -93,7 +94,7 @@ try {
   assert.ok(transcripts.some(entry => entry.role === 'assistant' && entry.text === reply.answer));
   client.stop();
   await new Promise(resolve => setTimeout(resolve, 250));
-  restored = new CodexRealtime(directory);
+  restored = new CodexRealtime(directory, createAppStorage('realtime', directory), createAppStorage('imagegen', directory));
   await restored.start();
   assert.deepEqual(restored.currentExchanges, [{ question: 'Pytanie testowe.', answer: 'Test.' }]);
   await restored.respondAudio(path);

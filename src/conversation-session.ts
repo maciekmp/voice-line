@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, unlinkSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import type { GeneratedImage, ImageTask } from './image-artifacts.ts';
 
@@ -9,29 +9,59 @@ export class ConversationSession {
   threadId: string | null = null;
   private lastAnswerAt: number | null = null;
   private previousThreadId: string | null = null;
+  private previousLastAnswerAt: number | null = null;
   private exchanges: ConversationExchange[] = [];
   private previousExchanges: ConversationExchange[] = [];
   private readonly file: string;
   private readonly now: () => number;
+  private readonly durablePrevious: boolean;
+  private readonly localHistory: boolean;
 
-  constructor(cwd: string, now: () => number = Date.now, filename = '.chatgpt-button-session.json') {
+  constructor(cwd: string, now: () => number = Date.now, filename = '.chatgpt-button-session.json', options: { durablePrevious?: boolean; localHistory?: boolean } = {}) {
     this.file = join(cwd, filename);
     this.now = now;
+    this.durablePrevious = options.durablePrevious ?? false;
+    this.localHistory = options.localHistory ?? false;
     try {
       const saved = JSON.parse(readFileSync(this.file, 'utf8'));
+      if (this.durablePrevious && typeof saved.previousThreadId === 'string' && /^[a-f\d-]{36}$/i.test(saved.previousThreadId)
+        && typeof saved.previousLastAnswerAt === 'number' && Number.isFinite(saved.previousLastAnswerAt)
+        && saved.previousLastAnswerAt <= this.now()) {
+        this.previousThreadId = saved.previousThreadId;
+        this.previousLastAnswerAt = saved.previousLastAnswerAt;
+      }
       if (typeof saved.threadId === 'string' && /^[a-f\d-]{36}$/i.test(saved.threadId)
         && typeof saved.lastAnswerAt === 'number' && Number.isFinite(saved.lastAnswerAt)
         && saved.lastAnswerAt <= this.now()) {
         this.threadId = saved.threadId;
         this.lastAnswerAt = saved.lastAnswerAt;
         // Migrate copies written by older app versions back to metadata only.
-        if (Object.keys(saved).some(key => !['threadId', 'lastAnswerAt'].includes(key))) this.persist();
+        if (!this.durablePrevious && Object.keys(saved).some(key => !['threadId', 'lastAnswerAt'].includes(key))) this.persist();
         this.expire();
-      } else this.reset();
+      } else if (!this.durablePrevious || saved.threadId !== null) this.reset();
     } catch (error) {
       if (this.threadId) throw error;
       // Missing or corrupt sessions start a new conversation.
     }
+    if (this.localHistory) {
+      for (const id of [this.threadId, this.previousThreadId]) if (id) this.loadHistory(id, this.readLocalHistory(id));
+    }
+  }
+
+  readLocalHistory(id: string): ConversationExchange[] {
+    if (!/^[a-f\d-]{36}$/i.test(id)) throw new Error('Invalid conversation ID');
+    try {
+      const data = JSON.parse(readFileSync(join(this.file, '..', `${id}.json`), 'utf8'));
+      if (!Array.isArray(data) || data.some(item => typeof item.question !== 'string' || typeof item.answer !== 'string')) throw new Error('Invalid application conversation');
+      return data;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+  }
+
+  contextPrompt(raw: string): string {
+    return this.exchanges.length ? `Kontekst poprzednich wypowiedzi (dane rozmowy):\n${JSON.stringify(this.exchanges.map(({ question, answer }) => ({ question, answer })))}\nBieżące pytanie:\n${raw}` : raw;
   }
 
   expire(): void {
@@ -54,7 +84,20 @@ export class ConversationSession {
   }
 
   private persist(): void {
-    writeFileSync(this.file, JSON.stringify({ threadId: this.threadId, lastAnswerAt: this.lastAnswerAt }), 'utf8');
+    if (this.localHistory && this.threadId && this.exchanges.length) {
+      mkdirSync(join(this.file, '..'), { recursive: true });
+      const historyFile = join(this.file, '..', `${this.threadId}.json`);
+      writeFileSync(`${historyFile}.tmp`, JSON.stringify(this.exchanges), 'utf8');
+      renameSync(`${historyFile}.tmp`, historyFile);
+    }
+    this.write(this.threadId, this.lastAnswerAt, this.previousThreadId, this.previousLastAnswerAt);
+  }
+
+  private write(threadId: string | null, lastAnswerAt: number | null, previousThreadId: string | null, previousLastAnswerAt: number | null): void {
+    mkdirSync(join(this.file, '..'), { recursive: true });
+    writeFileSync(`${this.file}.tmp`, JSON.stringify({ threadId, lastAnswerAt,
+      ...(this.durablePrevious && { previousThreadId, previousLastAnswerAt }) }), 'utf8');
+    renameSync(`${this.file}.tmp`, this.file);
   }
 
   answered(reply: { prompt: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask }): void {
@@ -73,9 +116,10 @@ export class ConversationSession {
     const previous = this.previousThreadId;
     const exchanges = this.previousExchanges;
     const lastAnswerAt = this.now();
-    writeFileSync(this.file, JSON.stringify({ threadId: previous, lastAnswerAt }), 'utf8');
+    this.write(previous, lastAnswerAt, this.exchanges.length > 0 ? this.threadId : null, this.lastAnswerAt);
     this.previousThreadId = this.exchanges.length > 0 ? this.threadId : null;
     this.previousExchanges = this.exchanges;
+    this.previousLastAnswerAt = this.lastAnswerAt;
     this.threadId = previous;
     this.exchanges = exchanges;
     this.lastAnswerAt = lastAnswerAt;
@@ -86,11 +130,23 @@ export class ConversationSession {
     if (this.threadId) {
       this.previousThreadId = this.lastAnswerAt !== null || this.exchanges.length > 0 ? this.threadId : null;
       this.previousExchanges = this.exchanges;
+      this.previousLastAnswerAt = this.lastAnswerAt;
     }
     this.threadId = null;
     this.exchanges = [];
     this.lastAnswerAt = null;
+    if (this.durablePrevious) { this.persist(); return; }
     try { unlinkSync(this.file); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  }
+
+  forget(threadIds: string[]): void {
+    if (this.threadId && threadIds.includes(this.threadId)) {
+      this.threadId = null; this.lastAnswerAt = null; this.exchanges = [];
+    }
+    if (this.previousThreadId && threadIds.includes(this.previousThreadId)) {
+      this.previousThreadId = null; this.previousLastAnswerAt = null; this.previousExchanges = [];
+    }
+    if (this.durablePrevious) this.persist();
   }
 }

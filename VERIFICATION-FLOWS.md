@@ -181,6 +181,15 @@ którą należy wykonać z uruchomioną aplikacją; nie oznacza, że została wy
 | A05 | Długa odpowiedź i wiele wymian, mała dostępna wysokość ekranu. | Dostępne przewijanie; composer osiągalny; brak poziomego overflow. | orb; ręcznie mały ekran |
 | A06 | Zmień monitor, DPI i obszar roboczy. | Kulka i popup w obszarze ekranu; przechodzenie kursorem nadal działa. | ręcznie Windows |
 
+## Osobna historia i zapis rozmowy
+
+| ID | Kroki | Oczekiwany wynik | Pokrycie / kontrola ręczna |
+| --- | --- | --- | --- |
+| H01 | Uruchom LOCAL i realtime z różnych katalogów projektu. | Dane w katalogu aplikacji; LOCAL używa obecnego logowania i ephemeral, realtime osobnego domu API. | storage, storage-wire |
+| H02 | Nowa rozmowa, zamknij aplikację, uruchom ponownie, Wróć do poprzedniej rozmowy. | LOCAL przywraca plik aplikacji i kontekst; realtime swoją historię Codex. | storage, conversation, orb |
+| H03 | Przesuń zegar testowy o 24 godziny. | Wygasłe zarejestrowane wątki naprawdę usunięte; świeże i powiązane obrazy zachowane. | storage, storage-wire |
+| H04 | Zapisz rozmowę… w menu; anuluj, zapisz tekst z obrazem, zasymuluj błąd pliku. | Anulowanie bez zmian, samodzielny plik Markdown, komunikat odzyskania po błędzie; zapis niedostępny w trakcie odpowiedzi. | storage, orb |
+
 ## Minimalna regresja po zmianach
 
 Uruchom `npm run test:overlay`, `npm run test:orb`, `npm run typecheck`.

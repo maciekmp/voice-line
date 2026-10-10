@@ -1,14 +1,17 @@
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 import { launch } from './process.ts';
 import { ConversationSession } from './conversation-session.ts';
 import type { GeneratedImage, ImageTask } from './image-artifacts.ts';
+import { imageRequest, storeGeneratedImage } from './image-artifacts.ts';
+import type { AppStorage } from './app-storage.ts';
 
 export const INSTRUCTIONS = 'Jesteś asystentem głosowym z oknem rozmowy. Nie uruchamiaj narzędzi, nie czytaj ani nie zmieniaj plików. Dostajesz pytanie tekstowe lub surową transkrypcję po polsku. Najpierw popraw je do zwięzłego pytania: usuń wypełniacze, powtórzenia i wycofane fragmenty, uwzględnij ostatnią samokorektę. Następnie odpowiedz po polsku, krótko i naturalnie, korzystając z kontekstu rozmowy. Zwróć JSON z polami prompt (poprawione pytanie) i answer (pełna odpowiedź do wyświetlenia). Jeśli pytanie wymaga kodu, umieść kompletny kod w blokach Markdown otoczonych potrójnymi backtickami z nazwą języka, zachowując wcięcia i nowe linie. Krótkie fragmenty kodu w zdaniu otaczaj pojedynczymi backtickami. Poza kodem używaj zwykłego tekstu. Opisz krótko rozwiązanie poza blokami kodu; bloki kodu nie będą odczytywane głosowo. Jeśli transkrypcja jest niezrozumiała, poproś o powtórzenie zamiast zgadywać. Pytanie:\n';
 const schemaPath = fileURLToPath(new URL('./response.schema.json', import.meta.url));
 export const LOCAL_INSTRUCTIONS = INSTRUCTIONS.replace('Nie uruchamiaj narzędzi, nie czytaj ani nie zmieniaj plików.',
   'Możesz używać wyłącznie wbudowanego narzędzia ImageGen, gdy użytkownik prosi o stworzenie obrazu. Sam rozpoznaj tę intencję niezależnie od sformułowania. Nie generuj obrazu przy pytaniach o obrazy lub o sposób ich tworzenia. Generuj jeden obraz, bez zastępowania go opisem lub SVG; po wygenerowaniu podaj krótkie potwierdzenie w answer. Jeśli narzędzie jest niedostępne lub zawiedzie, powiedz to wprost i nie twierdź, że obraz powstał. Prośba do ImageGen ma zawierać tylko bieżącą prośbę użytkownika, bez historii rozmowy. Nie używaj shell, MCP ani innych narzędzi, nie czytaj ani nie zmieniaj plików.');
-type Turn = { text: string; threadId?: string; startupMs?: number; turnMs?: number };
+type Turn = { text: string; threadId?: string; images?: GeneratedImage[]; startupMs?: number; turnMs?: number };
 export type VoiceReply = { prompt: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask; startupMs?: number; turnMs?: number };
 
 export class CodexClient {
@@ -18,9 +21,11 @@ export class CodexClient {
   private readonly executable: string;
   private historyServer: import('./codex-app-server.ts').CodexAppServer | null = null;
   private startup: Promise<void> | null = null;
-  constructor(cwd: string, executable = 'codex.cmd') {
+  private readonly storage?: AppStorage;
+  constructor(cwd: string, executable = 'codex.cmd', storage?: AppStorage) {
     this.cwd = cwd; this.executable = executable;
-    this.session = new ConversationSession(cwd);
+    this.storage = storage;
+    this.session = storage?.session ?? new ConversationSession(cwd);
   }
   start(): Promise<void> {
     if (!this.startup) this.startup = this.openHistory().catch(error => { this.startup = null; throw error; });
@@ -28,7 +33,7 @@ export class CodexClient {
   }
   private async openHistory(): Promise<void> {
     const { CodexAppServer } = await import('./codex-app-server.ts');
-    this.historyServer = new CodexAppServer(this.cwd, this.session, true);
+    this.historyServer = new CodexAppServer(this.cwd, this.session, true, { home: this.storage?.home, storage: this.storage });
     await this.historyServer.start();
   }
   stop(): void { this.cancel(); this.historyServer?.stop(); }
@@ -38,6 +43,7 @@ export class CodexClient {
   get currentExchanges() { return this.session.currentExchanges; }
   get canRestorePrevious(): boolean { return this.session.canRestorePrevious; }
   expireConversation(): void { this.session.expire(); }
+  async maintainHistory(): Promise<boolean> { return await this.historyServer?.maintainHistory() ?? false; }
   async restorePrevious(signal?: AbortSignal): Promise<boolean> {
     await this.start();
     return this.historyServer!.restorePrevious(signal);
@@ -48,45 +54,69 @@ export class CodexClient {
   }
   async respond(raw: string, signal?: AbortSignal): Promise<VoiceReply> {
     await this.start();
-    this.session.expire();
-    const model = process.env.CODEX_MODEL?.trim();
-    const modelArgs = model ? ['-m', model] : [];
-    const args = this.session.threadId
-      ? ['exec', 'resume', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', this.session.threadId, '-']
-      : ['exec', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', '-s', 'read-only', '-'];
-    const result = await this.run(args, LOCAL_INSTRUCTIONS + raw, signal);
-    if (signal?.aborted) throw new Error('Cancelled');
-    let reply: VoiceReply;
-    try { reply = JSON.parse(result.text); }
-    catch { throw new Error(`Codex returned invalid JSON: ${result.text}`); }
-    if (typeof reply.prompt !== 'string' || typeof reply.answer !== 'string' || !reply.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
-    if (result.threadId) {
-      this.session.threadId = result.threadId;
-    }
-    // CLI JSON does not reliably carry image bytes; use the authoritative turn items.
-    if (this.session.threadId) {
-      const latest = await this.historyServer!.readLatestExchange(this.session.threadId);
-      if (!latest || latest.question !== reply.prompt || latest.answer !== reply.answer) throw new Error('Codex returned mismatched latest reply history');
-      if (latest.images?.length) reply.images = latest.images;
-    }
-    if (signal?.aborted) throw new Error('Cancelled');
-    this.session.answered(reply);
-    return { ...reply, startupMs: result.startupMs, turnMs: result.turnMs };
+    // Ephemeral exec cannot be read by a separate process after it exits.
+    // Route recognizable image requests to the live server, which supplies pixels.
+    const image = this.storage?.ephemeral ? imageRequest(raw) : null;
+    if (image) return this.historyServer!.generateImage(image, signal);
+    const release = this.storage ? await this.historyServer!.beginExternalTurn() : undefined;
+    try {
+      this.session.expire();
+      const model = process.env.CODEX_MODEL?.trim();
+      const modelArgs = model ? ['-m', model] : [];
+      const ephemeral = this.storage?.ephemeral;
+      if (ephemeral) {
+        this.session.threadId ??= randomUUID();
+        this.storage!.retention.touch(this.session.threadId);
+      }
+      const args = ephemeral
+        ? ['exec', ...modelArgs, '--ephemeral', '--json', '--output-schema', schemaPath, '--skip-git-repo-check', '-s', 'read-only', '-']
+        : this.session.threadId
+        ? ['exec', 'resume', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', this.session.threadId, '-']
+        : ['exec', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', '-s', 'read-only', '-'];
+      const result = await this.run(args, LOCAL_INSTRUCTIONS + (ephemeral ? this.session.contextPrompt(raw) : raw), signal);
+      if (signal?.aborted) throw new Error('Cancelled');
+      let reply: VoiceReply;
+      try { reply = JSON.parse(result.text); }
+      catch { throw new Error(`Codex returned invalid JSON: ${result.text}`); }
+      if (typeof reply.prompt !== 'string' || typeof reply.answer !== 'string' || !reply.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
+      if (result.images?.length) reply.images = result.images;
+      if (ephemeral) this.session.threadId ??= randomUUID();
+      else if (result.threadId) {
+        this.session.threadId = result.threadId;
+      }
+      // CLI JSON does not reliably carry image bytes; use the authoritative turn items.
+      if (this.session.threadId && !ephemeral) {
+        const latest = await this.historyServer!.readLatestExchange(this.session.threadId);
+        if (!latest || latest.question !== reply.prompt || latest.answer !== reply.answer) throw new Error('Codex returned mismatched latest reply history');
+        if (latest.images?.length) reply.images = latest.images;
+      }
+      if (signal?.aborted) throw new Error('Cancelled');
+      this.session.answered(reply);
+      if (this.session.threadId) this.storage?.retention.touch(this.session.threadId, reply.images);
+      return { ...reply, startupMs: result.startupMs, turnMs: result.turnMs };
+    } finally { release?.(); }
   }
   private run(args: string[], prompt: string, signal?: AbortSignal): Promise<Turn> {
     return new Promise((resolve, reject) => {
-      const child = launch(this.executable, args, { cwd: this.cwd });
+      const privateStorage = this.storage && !this.storage.ephemeral ? this.storage : undefined;
+      const child = launch(this.executable, [...(privateStorage ? ['-c', 'cli_auth_credentials_store="file"'] : []), ...args],
+        { cwd: this.cwd, ...(privateStorage && { env: { CODEX_HOME: privateStorage.home, CODEX_SQLITE_HOME: privateStorage.home, CODEX_ACCESS_TOKEN: undefined } }) });
       this.active = child;
       const startedAt = performance.now();
       let turnStartedAt: number | undefined;
       let text = '', threadId: string | undefined, errors = '';
+      const images: any[] = [];
       child.stderr.setEncoding('utf8').on('data', chunk => errors += chunk);
       createInterface({ input: child.stdout }).on('line', line => {
         try {
           const event = JSON.parse(line);
-          if (event.type === 'thread.started') threadId = event.thread_id;
+          if (event.type === 'thread.started') {
+            threadId = event.thread_id;
+            if (threadId && !this.storage?.ephemeral) this.storage?.retention.touch(threadId);
+          }
           if (event.type === 'turn.started' && turnStartedAt === undefined) turnStartedAt = performance.now();
           if (event.type === 'item.completed' && event.item?.type === 'agent_message') text = event.item.text;
+          if (event.type === 'item.completed' && ['image_generation', 'imageGeneration'].includes(event.item?.type)) images.push(event.item);
           if (event.type === 'error') errors += `\n${event.message}`;
         } catch { /* Non-JSON diagnostics are ignored. */ }
       });
@@ -95,12 +125,18 @@ export class CodexClient {
       if (signal?.aborted) abort();
       signal?.addEventListener('abort', abort, { once: true });
       child.once('error', error => { signal?.removeEventListener('abort', abort); reject(error); });
-      child.once('close', code => {
+      child.once('close', async code => {
         signal?.removeEventListener('abort', abort);
         if (this.active === child) this.active = null;
         if (signal?.aborted) reject(new Error('Cancelled'));
         else if (code !== 0 || !text.trim()) reject(new Error(`Codex failed (${code}): ${errors.trim()}`));
-        else resolve({ text, threadId, startupMs: turnStartedAt === undefined ? undefined : turnStartedAt - startedAt, turnMs: turnStartedAt === undefined ? undefined : performance.now() - turnStartedAt });
+        else {
+          try {
+            const artifacts = await Promise.all(images.map(item => storeGeneratedImage(this.cwd, item, this.storage?.dataDirectory)));
+            if (this.storage?.ephemeral && this.session.threadId) this.storage.retention.touch(this.session.threadId, artifacts);
+            resolve({ text, threadId, images: artifacts, startupMs: turnStartedAt === undefined ? undefined : turnStartedAt - startedAt, turnMs: turnStartedAt === undefined ? undefined : performance.now() - turnStartedAt });
+          } catch (error) { reject(error); }
+        }
       });
     });
   }

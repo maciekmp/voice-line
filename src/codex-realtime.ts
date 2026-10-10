@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { CodexAppServer } from './codex-app-server.ts';
 import { ConversationSession, type ConversationExchange } from './conversation-session.ts';
+import type { AppStorage } from './app-storage.ts';
 import { realtimePcm, type RealtimeAudioChunk } from './audio/realtime-pcm.ts';
 import { PcmPlayer } from './audio/pcm-player.ts';
 import type { VoiceReply } from './codex.ts';
@@ -34,15 +35,31 @@ export class CodexRealtime extends CodexAppServer {
   private readonly artifactsCwd: string;
   private readonly imageWorker: CodexAppServer;
 
-  constructor(cwd: string) {
+  private readonly dataDirectory?: string;
+  private generatingImage = false;
+  constructor(cwd: string, storage?: AppStorage, imageStorage?: AppStorage) {
     const apiKey = process.env.OPENAI_API_KEY?.trim() ?? '';
-    super(cwd, new ConversationSession(cwd, Date.now, '.chatgpt-button-realtime-session.json'), false,
-      { home: resolve(cwd, '.chatgpt-button', 'realtime-codex'), apiKey });
+    super(cwd, storage?.session ?? new ConversationSession(cwd, Date.now, '.chatgpt-button-realtime-session.json'), false,
+      { home: storage?.home ?? resolve(cwd, '.chatgpt-button', 'realtime-codex'), apiKey, storage });
+    this.dataDirectory = storage?.dataDirectory;
     this.apiKey = apiKey;
     this.artifactsCwd = cwd;
-    this.imageWorker = new CodexAppServer(cwd, new ConversationSession(cwd, Date.now, '.chatgpt-button-imagegen-session.json'), true);
+    this.imageWorker = new CodexAppServer(cwd, imageStorage?.session ?? new ConversationSession(cwd, Date.now, '.chatgpt-button-imagegen-session.json'), true,
+      { home: imageStorage?.home, storage: imageStorage });
     this.voice = process.env.CODEX_REALTIME_VOICE?.trim() || undefined;
     this.realtimeModel = process.env.CODEX_REALTIME_MODEL?.trim() || undefined;
+  }
+
+  protected override get maintenanceBusy(): boolean { return super.maintenanceBusy || this.audioTask !== null || this.generatingImage; }
+  override async maintainHistory(): Promise<boolean> {
+    if (this.maintenanceBusy) return false;
+    const changed = await super.maintainHistory();
+    let imagesChanged = false;
+    if (this.imageWorker.hasRetainedHistory) {
+      await this.imageWorker.start();
+      imagesChanged = await this.imageWorker.maintainHistory();
+    }
+    return changed || imagesChanged;
   }
 
   override start(): Promise<void> {
@@ -80,11 +97,11 @@ export class CodexRealtime extends CodexAppServer {
     } while (true);
     for (const entry of entries) {
       if (entry.type === 'item' && entry.item?.type === 'imageGeneration' && entry.item.status === 'completed') {
-        entry.item.generatedImage = await storeGeneratedImage(this.artifactsCwd, entry.item);
+        entry.item.generatedImage = await storeGeneratedImage(this.artifactsCwd, entry.item, this.dataDirectory);
       }
     }
     const history = legacy ?? realtimeHistory(entries);
-    const links = await readImageLinks(this.artifactsCwd, threadId);
+    const links = await readImageLinks(this.artifactsCwd, threadId, this.dataDirectory);
     let inserted = 0;
     for (const link of links) {
       const exchanges = await this.imageWorker.readImageTurn(link.threadId, link.turnId);
@@ -113,10 +130,12 @@ export class CodexRealtime extends CodexAppServer {
   private async runAudio(wav: string, signal: AbortSignal | undefined, callbacks: RealtimeCallbacks): Promise<VoiceReply> {
     const pcm = realtimePcm(await readFile(wav));
     await this.start();
+    await this.cleanHistory();
     this.session.expire();
     if (!this.session.threadId) await this.openThread();
     if (signal?.aborted) throw new Error('Cancelled');
     const threadId = this.session.threadId!;
+    this.rememberActivity();
     let ready!: () => void, complete!: () => void, rejectReady!: (error: Error) => void, rejectDone!: (error: Error) => void;
     const startup = new Promise<void>((res, rej) => { ready = res; rejectReady = rej; });
     const done = new Promise<void>((res, rej) => { complete = res; rejectDone = rej; });
@@ -154,6 +173,7 @@ export class CodexRealtime extends CodexAppServer {
       const reply = { prompt: state.question.trim() || 'Wiadomość głosowa (transkrypcja niedostępna)',
         answer: state.answer.trim() || 'Odpowiedź głosowa (transkrypcja niedostępna)' };
       this.session.answered(reply);
+      this.rememberActivity(reply);
       return reply;
     } finally {
       clearTimeout(timer);
@@ -229,28 +249,34 @@ export class CodexRealtime extends CodexAppServer {
   override async generateImage(raw: string, signal?: AbortSignal): Promise<VoiceReply> {
     await this.audioTask?.catch(() => {});
     await this.start();
+    await this.cleanHistory();
     this.session.expire();
     if (!this.session.threadId) await this.openThread();
     const threadId = this.session.threadId!;
-    const anchor = this.session.currentExchanges.filter(exchange => !exchange.imageTask).length;
-    if (signal?.aborted) throw new Error('Cancelled');
-    await this.imageWorker.requireChatGPTImageAuth();
-    // Each image task gets a separate thread and a durable link to the voice conversation.
-    this.imageWorker.reset();
-    const reply = await this.imageWorker.generateImage(raw, signal);
-    if (signal?.aborted || this.session.threadId !== threadId) throw new Error('Cancelled');
-    const imageTask = { threadId: this.imageWorker.currentThreadId!, turnId: this.imageWorker.lastImageTurnId! };
-    if (!imageTask.threadId || !imageTask.turnId) throw new Error('Brak identyfikatora zadania ImageGen.');
-    // Persist the otherwise empty voice thread and provide model-visible text context.
-    // Injected messages do not appear in Codex's canonical timeline, so links own display ordering.
-    await this.request('thread/inject_items', { threadId, items: [{ type: 'message', role: 'assistant',
-      content: [{ type: 'output_text', text: JSON.stringify({ prompt: reply.prompt, answer: reply.answer }) }] }] });
-    if (signal?.aborted || this.session.threadId !== threadId) throw new Error('Cancelled');
-    await appendImageLink(this.artifactsCwd, threadId, { ...imageTask, anchor });
-    if (signal?.aborted || this.session.threadId !== threadId) throw new Error('Cancelled');
-    const result = { ...reply, imageTask };
-    this.session.answered(result);
-    return result;
+    this.rememberActivity();
+    this.generatingImage = true;
+    try {
+      const anchor = this.session.currentExchanges.filter(exchange => !exchange.imageTask).length;
+      if (signal?.aborted) throw new Error('Cancelled');
+      await this.imageWorker.requireChatGPTImageAuth();
+      // Each image task gets a separate thread and a durable link to the voice conversation.
+      this.imageWorker.reset();
+      const reply = await this.imageWorker.generateImage(raw, signal);
+      if (signal?.aborted || this.session.threadId !== threadId) throw new Error('Cancelled');
+      const imageTask = { threadId: this.imageWorker.currentThreadId!, turnId: this.imageWorker.lastImageTurnId! };
+      if (!imageTask.threadId || !imageTask.turnId) throw new Error('Brak identyfikatora zadania ImageGen.');
+      // Persist the otherwise empty voice thread and provide model-visible text context.
+      // Injected messages do not appear in Codex's canonical timeline, so links own display ordering.
+      await this.request('thread/inject_items', { threadId, items: [{ type: 'message', role: 'assistant',
+        content: [{ type: 'output_text', text: JSON.stringify({ prompt: reply.prompt, answer: reply.answer }) }] }] });
+      if (signal?.aborted || this.session.threadId !== threadId) throw new Error('Cancelled');
+      await appendImageLink(this.artifactsCwd, threadId, { ...imageTask, anchor }, this.dataDirectory);
+      if (signal?.aborted || this.session.threadId !== threadId) throw new Error('Cancelled');
+      const result = { ...reply, imageTask };
+      this.session.answered(result);
+      this.rememberActivity(result);
+      return result;
+    } finally { this.generatingImage = false; }
   }
 }
 

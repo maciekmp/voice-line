@@ -1,5 +1,7 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
+try { process.loadEnvFile(path.join(__dirname, '..', '.env')); }
+catch (error) { if (error.code !== 'ENOENT') throw error; }
 
 // Some Electron-based terminals export this flag; the orb needs GUI mode.
 const { ELECTRON_RUN_AS_NODE: _runAsNode, ...env } = process.env;

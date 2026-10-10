@@ -17,6 +17,8 @@
     "test:copilot": "node --experimental-strip-types --test scripts/test-copilot.ts",
     "test:codex-errors": "node --experimental-strip-types --test scripts/test-codex-errors.ts",
     "test:conversation": "node --experimental-strip-types --test scripts/test-conversation-session.ts",
+    "test:storage": "node --experimental-strip-types --test scripts/test-app-storage.ts",
+    "test:storage-wire": "node --experimental-strip-types scripts/test-storage-wire.ts",
     "test:keyboard": "node --experimental-strip-types --test scripts/test-keyboard.ts",
     "preview:orb": "node --experimental-strip-types scripts/preview-orb.ts",
     "typecheck": "tsc --noEmit",

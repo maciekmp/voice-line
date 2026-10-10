@@ -217,7 +217,20 @@ else {
     console.log(`Ready. Hold Copilot (vk=${key}); Ctrl+Shift+N resets; Ctrl+C exits.`);
   }).catch(error => { console.error(error); publish('error', { message: codexErrorMessage(error, 'Nie udało się uruchomić usług. Sprawdź mikrofon, Whisper, Codex i ustawienia .env, a następnie uruchom usługi ponownie.'), ready: false }); });
 }
-function shutdown() { desktopCopilot.cancel(); interrupt(); recorder.shutdown(); engine.stop(); keyboard.stop(); process.exit(0); }
+let maintaining = false;
+const historyTimer = setInterval(() => {
+  if (!servicesReady || held || current || maintaining) return;
+  maintaining = true;
+  const token = generation;
+  void engine.maintainHistory?.().then(changed => {
+    if (changed && token === generation && !current && !held) publish('idle', { exchanges: engine.currentExchanges, purgeHistory: true });
+  }).catch(error => {
+    console.error('Application history cleanup failed:', error);
+    if (token === generation && !current && !held) publish('error', { message: 'Nie udało się usunąć starej historii. Aplikacja spróbuje ponownie za minutę.' });
+  }).finally(() => { maintaining = false; });
+}, 60_000);
+historyTimer.unref();
+function shutdown() { clearInterval(historyTimer); desktopCopilot.cancel(); interrupt(); recorder.shutdown(); engine.stop(); keyboard.stop(); process.exit(0); }
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 if (desktop) {

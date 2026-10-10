@@ -7,13 +7,18 @@ const { spawn } = require('node:child_process');
 const { createOverlayController } = require('./overlay-controller.cjs');
 const { createPointerTracker } = require('./overlay-pointer.cjs');
 const { readImage } = require('./image-files.cjs');
-const imageDirectory = path.join(__dirname, '..', '.chatgpt-button', 'images');
+const { appDataDirectory } = require('./app-data.cjs');
+const { conversationMarkdown } = require('./conversation-export.cjs');
 
 const smokeTest = process.argv.includes('--smoke-test');
+const imageDirectory = smokeTest || process.argv.includes('--preview')
+  ? path.join(__dirname, '..', '.chatgpt-button', 'images') : path.join(appDataDirectory(), 'images');
+let savingConversation = false;
 // Set these before Chromium initializes. Keep the orb away from other Electron
 // profiles, and keep smoke tests away from an already-running desktop instance.
-const profileDirectory = path.join(__dirname, '..', '.chatgpt-button', 'electron',
-  smokeTest ? `smoke-${process.pid}` : 'desktop');
+const profileDirectory = smokeTest || process.argv.includes('--preview')
+  ? path.join(__dirname, '..', '.chatgpt-button', 'electron', smokeTest ? `smoke-${process.pid}` : 'preview')
+  : path.join(appDataDirectory(), 'electron', 'desktop');
 const sessionDirectory = path.join(profileDirectory, 'session');
 mkdirSync(sessionDirectory, { recursive: true });
 app.setName('Voice Line Orb');
@@ -38,6 +43,7 @@ let testNativePointer = false;
 let pointerPoll;
 
 function sendVoice(update = {}) {
+  if (update.purgeHistory) previousConversations.clear();
   const switchedThread = 'threadId' in update && update.threadId !== voice.threadId;
   if (switchedThread && voice.threadId) {
     const exchanges = [...conversationHistory];
@@ -67,6 +73,27 @@ function sendVoice(update = {}) {
   }
   tray?.setToolTip(`Voice Line: ${voice.state}`);
   sendSettings();
+}
+
+async function saveCurrentConversation() {
+  if (savingConversation || !voice.ready || !['idle', 'error'].includes(voice.state) || !voice.answer) return 'unavailable';
+  const exchanges = structuredClone([...conversationHistory, { question: voice.question, answer: voice.answer, images: voice.images || [] }]);
+  savingConversation = true;
+  tray?.setContextMenu(menu());
+  try {
+    const markdown = await conversationMarkdown(exchanges, imageDirectory);
+    const choice = await dialog.showSaveDialog(panelWindow, { title: 'Zapisz rozmowę', defaultPath: 'rozmowa.md',
+      filters: [{ name: 'Rozmowa Markdown', extensions: ['md'] }] });
+    if (choice.canceled || !choice.filePath) return 'cancelled';
+    await fs.writeFile(choice.filePath, markdown, 'utf8');
+    await dialog.showMessageBox(panelWindow, { type: 'info', message: 'Zapisano rozmowę.',
+      detail: 'Plik zawiera treść i obrazy. Automatyczne czyszczenie historii go nie usunie.', buttons: ['Zamknij'] });
+    return 'saved';
+  } catch {
+    await dialog.showMessageBox(panelWindow, { type: 'error', message: 'Nie udało się zapisać rozmowy.',
+      detail: 'Sprawdź dostępność obrazów i wybierz folder, w którym możesz zapisywać pliki. Następnie spróbuj ponownie.', buttons: ['Zamknij'] });
+    return 'error';
+  } finally { savingConversation = false; tray?.setContextMenu(menu()); }
 }
 
 function onEngineMessage(message) {
@@ -350,6 +377,8 @@ function menu() {
     ...(!preview ? [
       { label: 'Przerwij', enabled: voice.ready, click: () => engine?.connected && engine.send({ command: 'cancel' }) },
       { label: 'Nowa rozmowa', enabled: voice.ready, click: () => engine?.connected && engine.send({ command: 'reset' }) },
+      { label: 'Zapisz rozmowę…', enabled: voice.ready && Boolean(voice.answer) && ['idle', 'error'].includes(voice.state) && !savingConversation,
+        click: () => { void saveCurrentConversation(); } },
     ] : [['idle', 'Spoczynek'], ['listening', 'Słuchanie (test)'], ['speaking', 'Mówienie (test)']].map(([value, label]) => ({
       label, type: 'radio', checked: state === value,
       click: () => { state = value; sendSettings(); },
@@ -640,6 +669,25 @@ async function verify() {
     dialog.showSaveDialog = async () => ({ canceled: false, filePath: savedImage });
     assert.equal(await clickSaveImage(), 'Zapisano obraz.');
     assert.deepEqual(await fs.readFile(savedImage), imageBytes);
+    const savedConversation = path.join(profileDirectory, 'conversation-save-test.md');
+    const originalMessageBox = dialog.showMessageBox;
+    const messages = [];
+    dialog.showMessageBox = async (_window, options) => { messages.push(options.message); return { response: 0 }; };
+    try {
+      dialog.showSaveDialog = async () => ({ canceled: true });
+      assert.equal(await saveCurrentConversation(), 'cancelled');
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath: savedConversation });
+      assert.equal(await saveCurrentConversation(), 'saved');
+      assert.match(await fs.readFile(savedConversation, 'utf8'), /data:image\/png;base64,/);
+      assert.equal(messages.at(-1), 'Zapisano rozmowę.');
+      sendVoice({ state: 'thinking' });
+      assert.equal(await saveCurrentConversation(), 'unavailable');
+      assert.equal(menu().items.find(item => item.label === 'Zapisz rozmowę…').enabled, false);
+      sendVoice({ state: 'idle' });
+      dialog.showSaveDialog = async () => { throw new Error('Simulated save failure'); };
+      assert.equal(await saveCurrentConversation(), 'error');
+      assert.equal(messages.at(-1), 'Nie udało się zapisać rozmowy.');
+    } finally { dialog.showMessageBox = originalMessageBox; }
     await fs.writeFile(path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation-image.png'), (await panelWindow.webContents.capturePage()).toPNG());
   } finally { dialog.showSaveDialog = originalSaveDialog; }
   sendVoice({ images: [], answer: 'Odpowiedź testowa.' });

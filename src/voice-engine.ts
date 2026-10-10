@@ -4,7 +4,7 @@ import { imageRequest, explicitImageRequest } from './image-artifacts.ts';
 
 export type ConversationClient = Pick<CodexClient, 'start' | 'stop' | 'cancel' | 'reset' | 'respond'
   | 'currentThreadId' | 'currentExchanges' | 'canRestorePrevious' | 'expireConversation' | 'restorePrevious'>
-  & { generateImage?: (text: string, signal?: AbortSignal) => Promise<VoiceReply> };
+  & { generateImage?: (text: string, signal?: AbortSignal) => Promise<VoiceReply>; maintainHistory?: () => Promise<boolean> };
 export type VoiceCallbacks = {
   onUpdate?: (state: string, text?: { question?: string; answer?: string; exchanges?: ConversationExchange[] }) => void;
   onPlaybackStart?: () => void;
@@ -31,6 +31,7 @@ export abstract class BaseVoiceEngine implements VoiceEngine {
   cancel() { this.client.cancel(); }
   reset() { this.cancel(); this.client.reset(); }
   expireConversation() { this.client.expireConversation(); }
+  async maintainHistory() { return await this.client.maintainHistory?.() ?? false; }
   restorePrevious(signal?: AbortSignal) { return this.client.restorePrevious(signal); }
   respond(text: string, signal?: AbortSignal) {
     const image = this.mode === 'local' ? explicitImageRequest(text) : imageRequest(text);

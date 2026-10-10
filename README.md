@@ -13,7 +13,7 @@ Voice orchestration lives in `src/voice/local-engine.ts` and `src/voice/realtime
 - Windows 11, Node.js 22.18+, PowerShell 5.1, FFmpeg with DirectShow input.
 - A working microphone visible to FFmpeg.
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp) `whisper-server.exe` for the default mode, plus a multilingual GGML model such as `ggml-small.bin`. Keep `whisper-server.exe` beside the executable specified by `WHISPER_BIN`, put it on `PATH` when using the default binary name, or set `WHISPER_SERVER_BIN` explicitly. `whisper-cli.exe` is needed for `STT_MODE=cli` and the STT benchmark. English-only `.en` models cannot transcribe Polish.
-- [Codex CLI](https://learn.chatgpt.com/docs/app-server), available as `codex.cmd` on `PATH` and signed in with `codex.cmd login`. The default backend keeps `codex app-server --listen stdio://` running and uses it for answers and conversation history. `CODEX_MODE=cli` switches answer generation to `codex exec` / `codex exec resume`; that fallback still requires app-server for history.
+- [Codex CLI](https://learn.chatgpt.com/docs/app-server), available as `codex.cmd` on `PATH`, with your existing ChatGPT login (`codex login` if needed). The default backend uses ephemeral app-server threads. `CODEX_MODE=cli` uses `codex exec --ephemeral`; the application supplies prior messages as context.
 - A Polish Windows SAPI voice for the default TTS mode, or Piper and FFplay for local neural speech. The app selects an installed Polish SAPI voice automatically. To choose a specific installed voice, set `CHATGPT_BUTTON_VOICE` in `.env` to part of its name, for example `CHATGPT_BUTTON_VOICE=Paulina`. List SAPI voices with `powershell -NoProfile -Command "$v=New-Object -ComObject SAPI.SpVoice; $v.GetVoices() | ForEach-Object { $_.GetDescription() }"`.
 
 ## Configure and run
@@ -26,20 +26,49 @@ npm.cmd install
 
 The first Electron launch may download its official runtime binary.
 
-The local, Git-ignored `.chatgpt-button-session.json` stores only the current
-thread ID and last-answer timestamp. Message content remains in Codex's history.
-On restart and undo, the app reads messages through Codex app-server before
-restoring the conversation, including paginated history. The CLI fallback uses
-an app-server connection only to read history; answers still use `codex exec`.
-The popup's **Wróć do poprzedniej rozmowy** control restores the previous conversation
-after a reset or expiry and is unavailable while a request is running. The previous
-conversation reference is kept only in memory, so a conversation explicitly reset
-before quitting cannot be restored after restart. An expired saved conversation
-can still be loaded as the previous conversation during startup. Empty
-conversations do not enable undo. Failed reads preserve the selected
-conversation and report an error. Older session files containing message copies
-are migrated to metadata only. New conversation removes the session file but
-does not delete Codex history.
+### Osobna historia aplikacji
+
+Conversation data lives under `%LOCALAPPDATA%\ChatGPTButton`, independent of the
+project directory. `CHATGPT_BUTTON_DATA_DIR` in `.env` can override that root.
+The Electron host and voice worker use the same path. LOCAL, realtime and
+realtime's ImageGen worker have separate `local-codex`, `realtime-codex` and
+`imagegen-codex` storage directories. Only realtime audio uses its directory as
+`CODEX_HOME` and `CODEX_SQLITE_HOME`, isolating API-key authentication.
+LOCAL and ImageGen use your existing Codex account and configuration, with
+ephemeral threads that stay outside the standard Codex/VS Code history.
+Existing shared history and the old project-local realtime data are left intact;
+they are not imported into the new homes or automatically deleted.
+
+LOCAL and ImageGen need no additional login if Codex is already signed in:
+
+```powershell
+codex login # only if not already signed in
+```
+
+Realtime audio still uses `OPENAI_API_KEY`. Choose the model with `CODEX_MODEL` or your normal
+Codex configuration. Old private Codex histories are left intact.
+
+Each home's `session.json` stores only current/previous thread IDs and timestamps.
+The popup's **Wróć do poprzedniej rozmowy** control works after reset, expiry and
+restart. LOCAL and ImageGen messages are stored in application-owned `<id>.json`
+files and supplied as context to fresh ephemeral turns. Realtime messages are
+read from its isolated Codex history, including paginated history.
+Empty conversations do not enable undo; failed reads preserve the selected
+conversation. Context still expires two minutes after the last successful answer.
+
+Registered application history files (and realtime threads via `thread/delete`) are deleted
+after **24 hours without activity**. Cleanup runs at startup, before requests and
+once a minute while the app is idle. It does not interrupt active requests; failed
+deletions are retried. When the app is closed, cleanup runs at its next start.
+Linked image tasks remain available while a retained conversation references them.
+Expired image links and PNGs without another retained reference are also removed.
+Deletion is limited to IDs in the private home's `history-index.json`; it never
+lists or deletes standard Codex/VS Code history.
+
+Use **Zapisz rozmowę…** in the tray/orb context menu to keep the selected conversation
+as a Markdown file. The export embeds generated PNGs and survives automatic cleanup;
+some Markdown viewers do not render embedded data-URL images. It is a readable export,
+not an importable Codex session. Saving is unavailable while a response is running.
 
 ```powershell
 npm.cmd run keys
@@ -65,7 +94,7 @@ npm.cmd start
 
 In Git Bash, use `cp .env.example .env` to create the configuration and run `npm start`. Use `npm` instead of `npm.cmd` for the other commands.
 
-To inspect recognition and speech output, run `npm.cmd run debug` instead of `npm.cmd start` (in Git Bash, `npm run debug`). Both modes print the cleaned question and the full AI answer; TTS skips fenced code blocks. Debug mode additionally prints the raw transcription, audio levels, timing measurements, and Codex thread ID. `Ctrl+Shift+N` starts a new conversation; `Ctrl+C` exits. Conversation context expires 2 minutes after the last successful answer; the next voice or text question then starts a new conversation. The Codex thread ID and last-answer timestamp are stored in `.chatgpt-button-session.json`, so a restart resumes the conversation only within that window. Older session files without a timestamp start a new conversation.
+To inspect recognition and speech output, run `npm.cmd run debug` instead of `npm.cmd start` (in Git Bash, `npm run debug`). Both modes print the cleaned question and the full AI answer; TTS skips fenced code blocks. Debug mode additionally prints the raw transcription, audio levels, timing measurements, and Codex thread ID. `Ctrl+Shift+N` starts a new conversation; `Ctrl+C` exits. Context expires 2 minutes after the last successful answer; the next voice or text question starts a new conversation. Restart resumes within that window; after expiry, use the previous-conversation control while its history is still retained.
 
 Only debug mode prints `[time]` measurements. Its main total is `Recording end to playback start`, measured from Copilot key release until the selected player reports active playback. The contiguous components are recording finalization, STT, Codex, and TTS startup to playback; they add up to that total apart from display rounding. Codex request acceptance and turn generation are nested details within the Codex component. Debug also reports playback duration and the full cycle. SAPI's audio queue status and FFplay's audio clock are approximate playback markers, not speaker-loopback measurements of the first audible sample. Console status messages and labels are in English; the assistant currently returns Polish questions and answers.
 
@@ -74,7 +103,7 @@ Only debug mode prints `[time]` measurements. Its main total is `Recording end t
 | Setting | Default | Effect |
 | --- | --- | --- |
 | `CODEX_MODE` | app-server (unset) | Set `cli` to generate answers with a separate `codex exec` process per question. History still uses app-server. |
-| `CODEX_MODEL` | Codex configuration | Override the model for new and resumed conversations in both backends; for example, `gpt-6-luna` if available to your account. |
+| `CODEX_MODEL` | Private Codex home configuration/default | Override the model for new and resumed conversations in both backends; for example, `gpt-6-luna` if available to your account. |
 | `CODEX_EFFORT` | `low` | Reasoning effort for app-server turns; for example, `medium`. The CLI fallback does not pass this setting to Codex. |
 | `STT_MODE` | server (unset) | Keep the Whisper model loaded between questions. Set `cli` to launch `whisper-cli.exe` for each transcription. |
 | `WHISPER_SERVER_BIN` | Beside an absolute `WHISPER_BIN`, otherwise on `PATH` | Override the location of `whisper-server.exe`. |
@@ -103,7 +132,7 @@ Hold Copilot to record and release it to upload the utterance. The app converts 
 
 Each voice request creates a new realtime session and includes all saved exchanges from the selected conversation in its prompt, including voice transcripts and typed replies. History is loaded from Codex after an application restart and when restoring a previous conversation. Resetting the conversation or the existing two-minute inactivity expiry starts an empty context; restoring the previous conversation brings its context back. Generic realtime startup context forwarding is disabled. Longer histories increase API input usage and remain subject to the audio model's context limit. Typed questions retain the normal Codex thread behavior.
 
-Realtime uses `.chatgpt-button/realtime-codex/` as a dedicated Codex home, including its API credentials and server-side history, and `.chatgpt-button-realtime-session.json` for thread ID and timestamp only. Both are Git-ignored. The account login RPC stores the API key in that dedicated home's credential store; it does not replace the normal Codex ChatGPT login. History is restored from Codex's paginated timeline, including voice transcripts and typed answers. The existing two-minute expiry and previous-conversation control also apply to this separate session.
+Realtime uses `%LOCALAPPDATA%\ChatGPTButton\realtime-codex` as its dedicated Codex home, including API credentials, history, retention index and `session.json` metadata. The account login RPC stores the API key in that dedicated home's credential store. History is restored from Codex's paginated timeline, including voice transcripts and typed answers. The two-minute expiry, durable previous-conversation control and 24-hour retention also apply to this separate session.
 
 Available `CODEX_REALTIME_VOICE` values in 0.161.0: `alloy`, `arbor`, `ash`, `ballad`, `breeze`, `cedar`, `coral`, `cove`, `echo`, `ember`, `juniper`, `maple`, `marin`, `sage`, `shimmer`, `sol`, `spruce`, `vale`, `verse`.
 
@@ -187,7 +216,7 @@ The desktop orb fades/slides in over 380 ms. Its scale follows measured micropho
 
 `npm run test:orb` checks positioning, transparency, WebGL, state/pause IPC, audio-reactive scale, conversation snapshots and restoration, safe text rendering, code copying, pinning, error recovery labels, reset, keyboard focus, narrow layout, and orb visibility through a simulated voice cycle. It runs without microphone or Codex calls and saves captures under the ignored `.chatgpt-button/` directory.
 
-The desktop orb has its own profile and Chromium cache in `.chatgpt-button/electron/desktop/` (cache under `session/`). These paths are configured before Electron starts Chromium, avoiding the shared default Electron cache. Smoke tests use a separate profile per process so they can run while the desktop orb is open. After changing profile configuration, exit the orb via **Zakończ** and run `npm run orb` again.
+The desktop orb has its own profile and Chromium cache in `%LOCALAPPDATA%\ChatGPTButton\electron\desktop` (cache under `session/`). Preview and smoke-test profiles remain under the ignored project-local `.chatgpt-button/electron/` directory. Paths are configured before Electron starts Chromium. Smoke tests use a separate profile per process so they can run while the desktop orb is open.
 
 ## Image generation
 
@@ -204,7 +233,7 @@ it in the conversation with a **Zapisz obraz** button and a native save dialog.
 
 Generation uses Codex's built-in ImageGen. Explicit generation uses
 `CODEX_IMAGE_MODEL=gpt-6.1-sol` by default; automatic LOCAL generation uses the
-normal conversation model. It requires a ChatGPT account signed in through `codex login`.
+normal conversation model. It uses the existing Codex ChatGPT login.
 In the tested Codex 0.161.0, API-key sessions do not expose the built-in tool
 even though provider capabilities advertise image generation. API mode therefore
 keeps API audio and generates images in a separate ChatGPT-authenticated Codex
@@ -215,19 +244,27 @@ image task starts. API mode shows the resulting confirmation as text; it does
 not synthesize another audio response for this task. Image generation is not
 streamed as voice. Editing existing images is not implemented.
 
-PNGs are kept in `.chatgpt-button/images/`. Codex retains questions and answers;
-API conversations retain only task IDs and positions in
-`.chatgpt-button/image-links/`, so images can be restored with their conversation.
-The separate `.chatgpt-button-imagegen-session.json` contains only session metadata.
-New conversation clears the displayed images, leaving stored artifacts and Codex
-history intact. Follow-up voice/text requests receive the textual context of image
-tasks, without image pixels. Restart the app after updating the desktop files.
+PNGs are kept in the app data root's `images/` directory. App-owned JSON retains
+ImageGen questions and answers; API conversations retain task IDs and positions in `image-links/`,
+so images can be restored with their conversation. The ImageGen worker has its
+own storage directory and `session.json`, with ephemeral Codex threads. New conversation clears the displayed images;
+the 24-hour retention policy cleans up old threads and unused artifacts. Follow-up
+voice/text requests receive image tasks' textual context without image pixels.
+Restart the app after updating the desktop files.
 
 `npm run test:images` checks routing, wire results, artifact validation,
 metadata-only links, history restoration and voice cancellation.
 `npm run test:orb` exercises actual previews, unavailable images and native saving.
 
 ## Tests and type checking
+
+`npm run test:storage` verifies private paths, untouched shared login, durable undo,
+24-hour deletion, retry, image references, CLI busy protection and portable exports.
+`npm run test:storage-wire` exercises the installed Codex against a local simulated
+Responses backend and confirms ephemeral app-server/CLI history, context replay
+after restart and app-file deletion, using a simulated global home.
+It uses a dummy key and does not make paid inference requests. `test:orb` also checks
+the export menu, native save cancellation, successful save and failure recovery.
 
 `npm run test:conversation` verifies session expiry, metadata persistence, history
 loading and previous-conversation restoration. `npm run test:codex-errors` checks
