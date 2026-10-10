@@ -20,7 +20,7 @@ const key = Number(process.env.COPILOT_VK ?? '134'); // F23; verify with --debug
 const device = process.env.MIC_DEVICE ?? '';
 const cwd = resolve('.');
 if (!debugKeys && !device) {
-  console.error('Set MIC_DEVICE. Run npm run devices and npm run keys first.');
+  console.error('Set MIC_DEVICE. Run npm run diagnose:devices and npm run diagnose:keys first.');
   process.exit(1);
 }
 const engine = (() => {

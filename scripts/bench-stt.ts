@@ -4,7 +4,7 @@ import { WhisperTranscriber } from '../src/stt/transcriber.ts';
 
 const wav = process.argv[2] ? resolve(process.argv[2]) : '';
 if (!wav || !existsSync(wav)) {
-  console.error('Usage: npm run bench-stt -- "C:\\path\\to\\recording.wav"');
+  console.error('Usage: npm run bench:stt -- "C:\\path\\to\\recording.wav"');
   process.exit(1);
 }
 

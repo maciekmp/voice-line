@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
 import assert from 'node:assert/strict';
-import { CodexRealtime } from '../src/codex-realtime.ts';
-import { createAppStorage } from '../src/app-storage.ts';
+import { CodexRealtime } from '../../src/codex-realtime.ts';
+import { createAppStorage } from '../../src/app-storage.ts';
 
 const directory = await mkdtemp(join(tmpdir(), 'voice-line-wire-'));
 const sockets = new Set<Duplex>();

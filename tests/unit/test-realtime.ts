@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, existsSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { CodexRealtime, realtimeHistory } from '../src/codex-realtime.ts';
-import { realtimePcm, decodeRealtimeAudio, type RealtimeAudioChunk } from '../src/audio/realtime-pcm.ts';
-import { codexErrorMessage } from '../src/codex-error.ts';
+import { CodexRealtime, realtimeHistory } from '../../src/codex-realtime.ts';
+import { realtimePcm, decodeRealtimeAudio, type RealtimeAudioChunk } from '../../src/audio/realtime-pcm.ts';
+import { codexErrorMessage } from '../../src/codex-error.ts';
 
 const threadId = '11111111-1111-1111-1111-111111111111';
 function wav(samples = [100, 200, -100, -200]): Buffer {

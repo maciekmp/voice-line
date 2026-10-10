@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { LocalVoiceEngine } from '../src/voice/local-engine.ts';
-import { RealtimeVoiceEngine } from '../src/voice/realtime-engine.ts';
-import type { ConversationClient, VoiceCallbacks } from '../src/voice-engine.ts';
-import { createVoiceEngine } from '../src/voice/create-engine.ts';
+import { LocalVoiceEngine } from '../../src/voice/local-engine.ts';
+import { RealtimeVoiceEngine } from '../../src/voice/realtime-engine.ts';
+import type { ConversationClient, VoiceCallbacks } from '../../src/voice-engine.ts';
+import { createVoiceEngine } from '../../src/voice/create-engine.ts';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';

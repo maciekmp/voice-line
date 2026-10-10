@@ -1,4 +1,4 @@
-import { startKeyboard } from '../src/keyboard/copilot-key.ts';
+import { startKeyboard } from '../../src/keyboard/copilot-key.ts';
 
 // Test an abrupt owner exit without invoking application services or Copilot.
 const keyboard = startKeyboard(() => {}, message => {

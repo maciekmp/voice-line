@@ -11,13 +11,17 @@ const { appDataDirectory } = require('./app-data.cjs');
 const { conversationMarkdown } = require('./conversation-export.cjs');
 
 const smokeTest = process.argv.includes('--smoke-test');
-const imageDirectory = smokeTest || process.argv.includes('--preview')
-  ? path.join(__dirname, '..', '.chatgpt-button', 'images') : path.join(appDataDirectory(), 'images');
+const dataDirectory = process.argv.includes('--preview')
+  ? path.join(__dirname, '..', '.chatgpt-button') : appDataDirectory();
+const imageDirectory = path.join(dataDirectory, 'images');
+const outputDirectory = smokeTest ? process.env.VOICE_LINE_TEST_OUTPUT_DIR || path.join(dataDirectory, 'captures')
+  : path.join(__dirname, '..', '.chatgpt-button');
+if (smokeTest) mkdirSync(outputDirectory, { recursive: true });
 let savingConversation = false;
 // Set these before Chromium initializes. Keep the orb away from other Electron
 // profiles, and keep smoke tests away from an already-running desktop instance.
 const profileDirectory = smokeTest || process.argv.includes('--preview')
-  ? path.join(__dirname, '..', '.chatgpt-button', 'electron', smokeTest ? `smoke-${process.pid}` : 'preview')
+  ? path.join(dataDirectory, 'electron', smokeTest ? `smoke-${process.pid}` : 'preview')
   : path.join(appDataDirectory(), 'electron', 'desktop');
 const sessionDirectory = path.join(profileDirectory, 'session');
 mkdirSync(sessionDirectory, { recursive: true });
@@ -551,7 +555,7 @@ async function verify() {
     await orbWindow.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
     orbWindow.webContents.debugger.detach();
   }
-  const waitingOutput = path.join(__dirname, '..', '.chatgpt-button', 'electron-orb-waiting.png');
+  const waitingOutput = path.join(outputDirectory, 'electron-orb-waiting.png');
   console.log('Voice state checks: passed');
   await fs.writeFile(waitingOutput, (await orbWindow.webContents.capturePage()).toPNG());
   sendVoice({ state: 'speaking', answer: 'Odpowiedź testowa.' }); updateVisibility(true);
@@ -568,7 +572,7 @@ async function verify() {
   assert.equal(panel.answer, 'Odpowiedź testowa.');
   assert.equal(panel.cancelAbsent, true);
   console.log('Conversation snapshot checks: passed');
-  const panelOutput = path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation.png');
+  const panelOutput = path.join(outputDirectory, 'electron-conversation.png');
   openPanel(false);
   await fs.writeFile(panelOutput, (await panelWindow.webContents.capturePage()).toPNG());
   const codeSample = 'if (ready) {\n  console.log("<script>unsafe</script>");\n}\n' + '// ' + 'long-line-'.repeat(80) + '\n';
@@ -631,7 +635,7 @@ async function verify() {
     assert.equal(failed.copied, false);
     assert.equal(failed.enabled, true);
   } finally { clipboard.writeText = originalClipboardWrite; }
-  await fs.writeFile(path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation-code.png'), (await panelWindow.webContents.capturePage()).toPNG());
+  await fs.writeFile(path.join(outputDirectory, 'electron-conversation-code.png'), (await panelWindow.webContents.capturePage()).toPNG());
   sendVoice({ answer: 'Odpowiedź testowa.' });
   console.log('Code answer checks: passed');
   const imageBytes = nativeImage.createFromBitmap(Buffer.alloc(256 * 256 * 4, 255), { width: 256, height: 256 }).toPNG();
@@ -688,7 +692,7 @@ async function verify() {
       assert.equal(await saveCurrentConversation(), 'error');
       assert.equal(messages.at(-1), 'Nie udało się zapisać rozmowy.');
     } finally { dialog.showMessageBox = originalMessageBox; }
-    await fs.writeFile(path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation-image.png'), (await panelWindow.webContents.capturePage()).toPNG());
+    await fs.writeFile(path.join(outputDirectory, 'electron-conversation-image.png'), (await panelWindow.webContents.capturePage()).toPNG());
   } finally { dialog.showSaveDialog = originalSaveDialog; }
   sendVoice({ images: [], answer: 'Odpowiedź testowa.' });
   sendVoice({ images: [{ id: 'f'.repeat(64), alt: 'Brak obrazu' }] });
@@ -860,7 +864,7 @@ async function verify() {
   assert.equal(await panelWindow.webContents.executeJavaScript("document.activeElement.id"), 'message');
   assert.ok(panelWindow.getBounds().height <= 72, 'Input-only popup stays compact; pin occupies no layout space');
   assert.equal(await panelWindow.webContents.executeJavaScript('document.documentElement.scrollHeight <= innerHeight'), true);
-  await fs.writeFile(path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation-compose.png'), (await panelWindow.webContents.capturePage()).toPNG());
+  await fs.writeFile(path.join(outputDirectory, 'electron-conversation-compose.png'), (await panelWindow.webContents.capturePage()).toPNG());
   testLiveVisibility = false;
   console.log('Copilot input-only mode checks: passed');
   await panelWindow.webContents.executeJavaScript("document.querySelector('#pin').click()");
@@ -922,7 +926,7 @@ async function verify() {
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').getBoundingClientRect().bottom <= innerHeight + 1"), true);
   assert.ok(panelWindow.getBounds().height <= PANEL_MAX_HEIGHT, 'Long answers cap the popup at 500 px');
   console.log('Text composer checks: passed');
-  const chatOutput = path.join(__dirname, '..', '.chatgpt-button', 'electron-conversation-chat.png');
+  const chatOutput = path.join(outputDirectory, 'electron-conversation-chat.png');
   sendVoice({ state: 'idle', ready: true, question: 'Jak mogę lepiej zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania. Zacznij od jednego i zostaw trochę miejsca na przerwy.' });
   positionPanel();
   await panelWindow.webContents.executeJavaScript('scrollTo(0, 0)');
@@ -960,7 +964,7 @@ async function verify() {
   orbWindow.showInactive();
   orbWindow.webContents.send('orb:presence', 'visible');
   await new Promise(resolve => setTimeout(resolve, 150));
-  const output = path.join(__dirname, '..', '.chatgpt-button', 'electron-orb.png');
+  const output = path.join(outputDirectory, 'electron-orb.png');
   await fs.mkdir(path.dirname(output), { recursive: true });
   await fs.writeFile(output, (await orbWindow.webContents.capturePage()).toPNG());
   console.log(JSON.stringify({ result: 'passed', ...initial, profile: profileDirectory,

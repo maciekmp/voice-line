@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { AudioLevels } from '../src/audio/levels.ts';
+import { AudioLevels } from '../../src/audio/levels.ts';
 
 test('PCM metering preserves sample alignment across arbitrary pipe chunks', () => {
   const pcm = Buffer.alloc(2560);

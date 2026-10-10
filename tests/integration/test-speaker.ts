@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Speaker } from '../src/speaker.ts';
+import { Speaker } from '../../src/speaker.ts';
 
 const directory = mkdtempSync(join(tmpdir(), 'chatgpt-button-speaker-test-'));
 const script = join(directory, 'mock-speak.ps1');

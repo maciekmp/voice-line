@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 function setup() {
-  const source = readFileSync(path.join(__dirname, '../electron/orb-main.cjs'), 'utf8');
+  const source = readFileSync(path.join(__dirname, '../../electron/orb-main.cjs'), 'utf8');
   const registration = source.match(/ipcMain\.handle\('voice:copy-code',[\s\S]*?\n}\);/)[0];
   let handler;
   const writes = [];
@@ -49,7 +49,7 @@ test('native clipboard failure is reported to the renderer', () => {
 test('preload exposes only the copy command and returns its result', async () => {
   let bridge;
   const calls = [];
-  vm.runInNewContext(readFileSync(path.join(__dirname, '../electron/preload.cjs'), 'utf8'), {
+  vm.runInNewContext(readFileSync(path.join(__dirname, '../../electron/preload.cjs'), 'utf8'), {
     require(name) {
       assert.equal(name, 'electron');
       return {

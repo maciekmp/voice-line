@@ -1,12 +1,17 @@
 const { spawn } = require('node:child_process');
 const path = require('node:path');
-try { process.loadEnvFile(path.join(__dirname, '..', '.env')); }
-catch (error) { if (error.code !== 'ENOENT') throw error; }
+const { loadProjectEnv, projectRoot } = require('./lib/project.cjs');
+if (process.argv.includes('--smoke-test')) {
+  console.error('Use npm run test:desktop to run the smoke test with isolated data.');
+  process.exit(1);
+}
+// Only a real application launch needs production configuration.
+if (!process.argv.includes('--preview')) loadProjectEnv();
 
 // Some Electron-based terminals export this flag; the orb needs GUI mode.
 const { ELECTRON_RUN_AS_NODE: _runAsNode, ...env } = process.env;
-const child = spawn(require('electron'), [path.join(__dirname, '..', 'electron', 'orb-main.cjs'), ...process.argv.slice(2)], {
-  stdio: 'inherit', windowsHide: true, env: { ...env, VOICE_LINE_NODE: process.execPath },
+const child = spawn(require('electron'), [path.join(projectRoot, 'electron', 'orb-main.cjs'), ...process.argv.slice(2)], {
+  cwd: projectRoot, stdio: 'inherit', windowsHide: true, env: { ...env, VOICE_LINE_NODE: process.execPath },
 });
 child.on('error', error => { console.error(error); process.exitCode = 1; });
-child.on('exit', code => { process.exitCode = code ?? 1; });
+child.on('close', code => { process.exitCode = code ?? 1; });

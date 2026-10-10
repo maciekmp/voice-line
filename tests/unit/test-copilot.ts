@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createCopilotGesture } from '../src/keyboard/copilot-gesture.ts';
+import { createCopilotGesture } from '../../src/keyboard/copilot-gesture.ts';
 
 function setup() {
   let time = 0, id = 0;

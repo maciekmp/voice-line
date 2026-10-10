@@ -4,16 +4,16 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, access } from 'node:fs/promise
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
-import { ConversationSession } from '../src/conversation-session.ts';
-import { ConversationRetention, HISTORY_TTL_MS } from '../src/conversation-retention.ts';
-import { appDataDirectory, createAppStorage } from '../src/app-storage.ts';
-import { CodexAppServer } from '../src/codex-app-server.ts';
+import { ConversationSession } from '../../src/conversation-session.ts';
+import { ConversationRetention, HISTORY_TTL_MS } from '../../src/conversation-retention.ts';
+import { appDataDirectory, createAppStorage } from '../../src/app-storage.ts';
+import { CodexAppServer } from '../../src/codex-app-server.ts';
 
 const first = '11111111-1111-1111-1111-111111111111';
 const second = '22222222-2222-2222-2222-222222222222';
 const image = { id: 'a'.repeat(64), alt: 'Obraz' };
 const reply = { prompt: 'Pytanie', answer: 'Odpowiedź' };
-const { saveConversation } = createRequire(import.meta.url)('../electron/conversation-export.cjs');
+const { saveConversation } = createRequire(import.meta.url)('../../electron/conversation-export.cjs');
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1sAAAAASUVORK5CYII=', 'base64');
 async function directory(t: any) {
   const data = await mkdtemp(join(tmpdir(), 'voice-storage-'));

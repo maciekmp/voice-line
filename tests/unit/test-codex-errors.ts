@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { codexErrorMessage } from '../src/codex-error.ts';
+import { codexErrorMessage } from '../../src/codex-error.ts';
 
 const fallback = 'Nie udało się przygotować odpowiedzi.';
 

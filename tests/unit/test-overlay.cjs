@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createOverlayController } = require('../electron/overlay-controller.cjs');
-const { createPointerTracker } = require('../electron/overlay-pointer.cjs');
+const { createOverlayController } = require('../../electron/overlay-controller.cjs');
+const { createPointerTracker } = require('../../electron/overlay-pointer.cjs');
 
 function setup() {
   let time = 0, id = 0;

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { fork } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { startKeyboard, type KeyEvent } from '../src/keyboard/copilot-key.ts';
-import { launch, collect } from '../src/process.ts';
+import { startKeyboard, type KeyEvent } from '../../src/keyboard/copilot-key.ts';
+import { launch, collect } from '../../src/process.ts';
 
 async function until(check: () => boolean, timeout = 5000) {
   const deadline = Date.now() + timeout;
@@ -25,7 +25,7 @@ function bridge(suppressVk: number) {
   } };
 }
 async function inject() {
-  const script = fileURLToPath(new URL('./inject-test-keys.ps1', import.meta.url));
+  const script = fileURLToPath(new URL('../helpers/inject-test-keys.ps1', import.meta.url));
   const result = await collect(launch('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script]));
   assert.equal(result.code, 0, result.stderr);
 }
@@ -61,7 +61,7 @@ test('native hook consumes only the configured key, still reports it, and restor
 
 test('keyboard bridge exits and removes suppression when its Node owner dies',
   { skip: process.platform !== 'win32', timeout: 30000 }, async t => {
-    const owner = fork(fileURLToPath(new URL('./keyboard-test-owner.ts', import.meta.url)), [], {
+    const owner = fork(fileURLToPath(new URL('../helpers/keyboard-test-owner.ts', import.meta.url)), [], {
       execArgv: ['--experimental-strip-types'], stdio: ['ignore', 'ignore', 'pipe', 'ipc'], windowsHide: true,
     });
     t.after(() => { owner.kill(); });

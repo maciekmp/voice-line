@@ -89,15 +89,15 @@ the sole state indicator: transcript text and the tray identify the current oper
 | Capability | Canonical owner | Source | Verification |
 | --- | --- | --- | --- |
 | Voice lifecycle | src/main.ts | Existing Copilot loop | typecheck; Electron snapshots |
-| State fan-out and visibility | electron/orb-main.cjs | User request: hide until listening, hide after speech | test:orb |
-| Overlay behavior | electron/overlay-controller.cjs | hidden/peek/chat/compose; one exit timer; new recording cancels stale hides | test:overlay; test:orb |
-| Copilot gestures | src/keyboard/copilot-gesture.ts | tap opens input; hold records; repeat and cancellation handling | test:copilot; typecheck |
-| Keyboard delivery | src/keyboard/bridge.ps1; src/keyboard/copilot-key.ts | configured key consumed while voice app runs; other keys pass; parent-exit cleanup | test:keyboard |
-| Hover detection | electron/overlay-pointer.cjs | Native cursor and current window bounds, sampled every 50 ms | test:overlay; test:orb |
-| Feedback | electron/conversation.js | Lifecycle IPC snapshots | test:orb |
-| Code answers | electron/answer-format.js; electron/answer-renderer.js | Shared parsing for latest reply, history and speech | test:answers; test:orb |
+| State fan-out and visibility | electron/orb-main.cjs | User request: hide until listening, hide after speech | `npm run test:desktop` |
+| Overlay behavior | electron/overlay-controller.cjs | hidden/peek/chat/compose; one exit timer; new recording cancels stale hides | `npm test -- test-overlay.cjs`; `npm run test:desktop` |
+| Copilot gestures | src/keyboard/copilot-gesture.ts | tap opens input; hold records; repeat and cancellation handling | `npm test -- test-copilot.ts`; typecheck |
+| Keyboard delivery | src/keyboard/bridge.ps1; src/keyboard/copilot-key.ts | configured key consumed while voice app runs; other keys pass; parent-exit cleanup | `npm run test:keyboard` |
+| Hover detection | electron/overlay-pointer.cjs | Native cursor and current window bounds, sampled every 50 ms | `npm test -- test-overlay.cjs`; `npm run test:desktop` |
+| Feedback | electron/conversation.js | Lifecycle IPC snapshots | `npm run test:desktop` |
+| Code answers | electron/answer-format.js; electron/answer-renderer.js | Shared parsing for latest reply, history and speech | `npm test -- test-answers.js`; `npm run test:desktop` |
 | Scrollbar | electron/conversation.css | Global semantic tokens | static audit; runtime inspection |
-| Voice visual | preview/voice-orb.js | Existing browser preview | test:orb |
+| Voice visual | preview/voice-orb.js | Existing browser preview | `npm run test:desktop` |
 
 ## Motion and platform
 
@@ -178,7 +178,7 @@ space beside the code. Scrollbars are thin, rounded and use transparent tracks;
 the same minimal treatment applies to the document and code scrollers.
 Copy uses the preload's copyCode command and main-process Electron clipboard,
 so hover-only popups can copy without document focus. Only the conversation
-window may invoke this text-only command. Verification: test:clipboard; test:orb.
+window may invoke this text-only command. Verification: `npm test -- test-clipboard.cjs`; `npm run test:desktop`.
 Successful copy swaps the icon for a checkmark for 1.5 seconds, with a screen-reader
 announcement and no visible message below code. Repeated clicks restart the timer;
 copy failures restore the copy icon and show recovery text below the code.
@@ -209,7 +209,8 @@ captures the selected completed conversation and embeds image pixels so it survi
 cleanup. Native localized result dialogs confirm saving or describe recovery.
 No new popup controls, geometry or visual tokens are introduced. Retention applies
 only to app-owned private history; manually saved exports have no expiry.
-Verification: test:storage, test:storage-wire and real Electron test:orb.
+Verification: `npm test -- test-app-storage.ts`, `npm run test:integration -- test-storage-wire.ts`
+and real Electron `npm run test:desktop`.
 Optional SAVE_AUDIO behavior remains documented in README.md.
 
 Generated PNGs use the shared `electron/image-renderer.js` in the latest exchange
@@ -224,4 +225,4 @@ show recovery text and disable saving. A native OS save dialog owns the destinat
 Renderer IPC accepts only SHA-256 image IDs, never arbitrary file paths. Artifacts
 remain under the private app data directory; conversation/task links contain metadata
 only, and ImageGen message content is restored from app-owned files. Reset hides artifacts
-without deleting them. Verification: test:images and the real Electron test:orb.
+without deleting them. Verification: `npm test -- test-images.ts` and the real Electron `npm run test:desktop`.

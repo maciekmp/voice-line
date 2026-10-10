@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitAnswer, splitInline, speechText } from '../electron/answer-format.js';
+import { splitAnswer, splitInline, speechText } from '../../electron/answer-format.js';
 
 test('mixed answers preserve code, indentation, HTML and surrounding prose', () => {
   const code = 'if (ready) {\n\tconsole.log("<script>hello</script>");\n}\n';

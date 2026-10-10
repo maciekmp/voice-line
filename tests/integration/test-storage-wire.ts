@@ -4,10 +4,10 @@ import { mkdtemp, mkdir, rm, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
-import { createAppStorage } from '../src/app-storage.ts';
-import { CodexAppServer } from '../src/codex-app-server.ts';
-import { CodexClient } from '../src/codex.ts';
-import { ConversationRetention, HISTORY_TTL_MS } from '../src/conversation-retention.ts';
+import { createAppStorage } from '../../src/app-storage.ts';
+import { CodexAppServer } from '../../src/codex-app-server.ts';
+import { CodexClient } from '../../src/codex.ts';
+import { ConversationRetention, HISTORY_TTL_MS } from '../../src/conversation-retention.ts';
 
 const data = await mkdtemp(join(tmpdir(), 'voice-storage-wire-'));
 const storage = createAppStorage('local', data);

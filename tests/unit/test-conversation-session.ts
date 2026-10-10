@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, unlinkSync, rmdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ConversationSession } from '../src/conversation-session.ts';
-import { CodexClient } from '../src/codex.ts';
-import { CodexAppServer } from '../src/codex-app-server.ts';
-import { readConversationHistory } from '../src/conversation-history.ts';
+import { ConversationSession } from '../../src/conversation-session.ts';
+import { CodexClient } from '../../src/codex.ts';
+import { CodexAppServer } from '../../src/codex-app-server.ts';
+import { readConversationHistory } from '../../src/conversation-history.ts';
 
 const firstId = '11111111-1111-1111-1111-111111111111';
 const secondId = '22222222-2222-2222-2222-222222222222';

@@ -8,7 +8,7 @@ The default `VOICE_MODE=local` uses the ChatGPT subscription. An optional experi
 
 The orb displays **LOCAL** for local Whisper/TTS or **API** for Codex realtime. The engine is selected once at startup from `.env`; restart the application after changing `VOICE_MODE`. LOCAL refers to speech processing, while Codex still generates the answer. Each mode retains its own conversation history and authentication configuration.
 
-Voice orchestration lives in `src/voice/local-engine.ts` and `src/voice/realtime-engine.ts`, behind the contract in `src/voice-engine.ts`. `src/voice/create-engine.ts` constructs and validates the selected services. `src/main.ts` handles the microphone, gestures, conversation controls and UI events through that shared contract. `npm run test:voice-engine` checks stage ordering, cancellation, partial transcripts, lifecycle and startup selection without inference requests.
+Voice orchestration lives in `src/voice/local-engine.ts` and `src/voice/realtime-engine.ts`, behind the contract in `src/voice-engine.ts`. `src/voice/create-engine.ts` constructs and validates the selected services. `src/main.ts` handles the microphone, gestures, conversation controls and UI events through that shared contract. `npm test -- test-voice-engine.ts` checks stage ordering, cancellation, partial transcripts, lifecycle and startup selection without inference requests.
 
 - Windows 11, Node.js 22.18+, PowerShell 5.1, FFmpeg with DirectShow input.
 - A working microphone visible to FFmpeg.
@@ -71,22 +71,22 @@ some Markdown viewers do not render embedded data-URL images. It is a readable e
 not an importable Codex session. Saving is unavailable while a response is running.
 
 ```powershell
-npm.cmd run keys
+npm.cmd run diagnose:keys
 ```
 
 Hold and release Copilot. Read the `vk` of its DOWN and UP events. F23 is `134`, but use what your machine actually reports. If the key emits several events, choose the virtual key that stays down for the entire hold.
 
 ```powershell
-npm.cmd run devices
+npm.cmd run diagnose:devices
 ```
 
-Set the exact DirectShow audio device name from the output. FFmpeg returns a nonzero code after listing devices; that is normal. Copy `.env.example` to `.env`, then set `MIC_DEVICE`, `WHISPER_BIN`, `WHISPER_MODEL`, and `COPILOT_VK`:
+Set the exact DirectShow audio device name from the output. The diagnostic uses `FFMPEG_BIN` from `.env` when configured and treats FFmpeg's expected nonzero exit after successful device listing as success. Copy `.env.example` to `.env`, then set `MIC_DEVICE`, `WHISPER_BIN`, `WHISPER_MODEL`, and `COPILOT_VK`:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Node loads `.env` automatically when you run `npm start`, `npm run debug`, or `npm run start:cli`; no shell exports are needed. `.env` is ignored by Git. Missing or invalid setup is reported in the panel with a restart action; detailed service diagnostics remain in the terminal.
+Node loads `.env` when present for `npm start`, `npm run start:debug`, and `npm run start:cli`; no shell exports are needed. `.env` is ignored by Git. Missing or invalid setup is reported in the panel with a restart action; detailed service diagnostics remain in the terminal.
 
 ```powershell
 npm.cmd start
@@ -94,7 +94,7 @@ npm.cmd start
 
 In Git Bash, use `cp .env.example .env` to create the configuration and run `npm start`. Use `npm` instead of `npm.cmd` for the other commands.
 
-To inspect recognition and speech output, run `npm.cmd run debug` instead of `npm.cmd start` (in Git Bash, `npm run debug`). Both modes print the cleaned question and the full AI answer; TTS skips fenced code blocks. Debug mode additionally prints the raw transcription, audio levels, timing measurements, and Codex thread ID. `Ctrl+Shift+N` starts a new conversation; `Ctrl+C` exits. Context expires 2 minutes after the last successful answer; the next voice or text question starts a new conversation. Restart resumes within that window; after expiry, use the previous-conversation control while its history is still retained.
+To inspect recognition and speech output, run `npm.cmd run start:debug` instead of `npm.cmd start` (in Git Bash, `npm run start:debug`). Both modes print the cleaned question and the full AI answer; TTS skips fenced code blocks. Debug mode additionally prints the raw transcription, audio levels, timing measurements, and Codex thread ID. `Ctrl+Shift+N` starts a new conversation; `Ctrl+C` exits. Context expires 2 minutes after the last successful answer; the next voice or text question starts a new conversation. Restart resumes within that window; after expiry, use the previous-conversation control while its history is still retained.
 
 Only debug mode prints `[time]` measurements. Its main total is `Recording end to playback start`, measured from Copilot key release until the selected player reports active playback. The contiguous components are recording finalization, STT, Codex, and TTS startup to playback; they add up to that total apart from display rounding. Codex request acceptance and turn generation are nested details within the Codex component. Debug also reports playback duration and the full cycle. SAPI's audio queue status and FFplay's audio clock are approximate playback markers, not speaker-loopback measurements of the first audible sample. Console status messages and labels are in English; the assistant currently returns Polish questions and answers.
 
@@ -136,7 +136,7 @@ Realtime uses `%LOCALAPPDATA%\ChatGPTButton\realtime-codex` as its dedicated Cod
 
 Available `CODEX_REALTIME_VOICE` values in 0.161.0: `alloy`, `arbor`, `ash`, `ballad`, `breeze`, `cedar`, `coral`, `cove`, `echo`, `ember`, `juniper`, `maple`, `marin`, `sage`, `shimmer`, `sol`, `spruce`, `vale`, `verse`.
 
-`npm run test:realtime` checks PCM conversion, malformed audio, asynchronous startup failures, playback completion, cancellation, serialized teardown, timeline history and conversation context without an API key. `npm run test:realtime-wire` additionally checks the installed app-server, FFplay and follow-up context after restart and reset against a local simulated WebSocket backend using an isolated temporary home and a dummy key; it requires Codex and FFplay on PATH. This smoke test does not make paid inference requests. A complete conversation against the real audio service still requires a valid API key.
+`npm test -- test-realtime.ts` checks PCM conversion, malformed audio, asynchronous startup failures, playback completion, cancellation, serialized teardown, timeline history and conversation context without an API key. `npm run test:integration -- test-realtime-wire.ts` additionally checks the installed app-server, FFplay and follow-up context after restart and reset against a local simulated WebSocket backend using an isolated temporary home and a dummy key; it requires Codex and FFplay on PATH. This smoke test does not make paid inference requests. A complete conversation against the real audio service still requires a valid API key.
 
 Switch back with `VOICE_MODE=local` or remove `VOICE_MODE`.
 
@@ -152,11 +152,11 @@ PIPER_MODEL=C:\path\to\pl_PL-gosia-medium.onnx
 
 FFplay must be available on `PATH`, or set `FFPLAY_BIN` to its executable. The app pipes Piper's 16-bit mono PCM into FFplay as it is synthesized and reads the sample rate from the voice JSON. Piper runs locally without an API key. Switch back with `TTS_MODE=sapi`. On this machine, the trial files are under `.chatgpt-button/piper/` and are ignored by Git.
 
-To compare Whisper CPU thread counts on exactly the same speech, add `SAVE_AUDIO=1` to `.env`, record one question, and use the printed WAV path with `npm run bench-stt -- "C:\path\to\recording.wav"`. The script loads the configured model with 4 and 8 threads and transcribes the WAV twice per setting. Compare the second run and its text; model loading is shown separately. Set `WHISPER_THREADS` in `.env` to the faster value, then remove `SAVE_AUDIO=1` when finished. Results vary with the machine, audio length, and system load; `.env.example` leaves the thread count unset.
+To compare Whisper CPU thread counts on exactly the same speech, add `SAVE_AUDIO=1` to `.env`, record one question, and use the printed WAV path with `npm run bench:stt -- "C:\path\to\recording.wav"`. The script loads the configured model with 4 and 8 threads and transcribes the WAV twice per setting. Compare the second run and its text; model loading is shown separately. Set `WHISPER_THREADS` in `.env` to the faster value, then remove `SAVE_AUDIO=1` when finished. Results vary with the machine, audio length, and system load; `.env.example` leaves the thread count unset.
 
 ## Blue orb visual prototype
 
-Run `npm run preview:orb` and open http://127.0.0.1:4173 to preview a ChatGPT-inspired blue orb. The Polish demo switches between idle, listening, and speaking animations and includes a pause control. It is a standalone visual simulation with no microphone or voice-loop connection, no new dependencies, and reduced-motion support.
+Run `npm run preview:web` and open http://127.0.0.1:4173 to preview a ChatGPT-inspired blue orb. The Polish demo switches between idle, listening, and speaking animations and includes a pause control. It is a standalone visual simulation with no microphone or voice-loop connection, no new dependencies, and reduced-motion support.
 
 Import `preview/voice-orb.js` as a browser module (keep `orb-renderer.js` beside it) and use `<voice-orb state="idle"></voice-orb>`. Set `state` to `idle`, `listening`, or `speaking`, add `paused` to freeze the animation, and customize size with `--orb-size`. WebGL renders flowing blue and white clouds using domain-warped noise, with simulated speech activity and smooth state changes. Reduced motion renders a still frame; unsupported WebGL or context loss displays a static CSS fallback. Animation stops while hidden or offscreen and GPU resources are released when the component is removed.
 
@@ -193,11 +193,11 @@ Replies can include Markdown code blocks and inline code in both the latest
 answer and conversation history. Blocks preserve indentation, omit language headers,
 scroll horizontally for long lines and offer **Kopiuj**. Voice playback reads the
 explanation and skips code blocks; code-only replies direct you to the popup.
-`npm run test:answers` verifies parsing and speech filtering.
+`npm test -- test-answers.js` verifies parsing and speech filtering.
 While the voice application runs, its keyboard hook consumes the configured
 `COPILOT_VK` press and release, preventing the corresponding Windows action.
 Other keys pass through. Exiting releases the hook, including after an unexpected
-Node process exit. `npm run keys` only observes keys and does not suppress them;
+Node process exit. `npm run diagnose:keys` starts only a passive keyboard observer and does not suppress keys;
 the isolated orb preview does not install a keyboard hook.
 Closing the panel hides it without stopping services; **Zakończ** in the tray
 menu quits and shuts down the microphone, keyboard hook and voice workers.
@@ -206,17 +206,17 @@ question recording retains samples. Conversation text is held in memory in the
 main process and renderers for display; the session file contains only metadata,
 while Codex retains its own history.
 
-The following `npm run orb` mode remains an isolated animation preview:
+The following `npm run preview:desktop` mode remains an isolated animation preview:
 
-Run `npm run orb` to show the 45 px orb in a transparent, frameless, always-on-top window, 20 px from the bottom-right corner of the primary display's work area (above the taskbar). Its position updates when monitor/work-area settings change. The window does not take keyboard focus or appear in the taskbar.
+Run `npm run preview:desktop` to show the 45 px orb in a transparent, frameless, always-on-top window, 20 px from the bottom-right corner of the primary display's work area (above the taskbar). Its position updates when monitor/work-area settings change. The window does not take keyboard focus or appear in the taskbar.
 
 Right-click the orb or its system-tray icon to choose a test state, pause animation, or select **Zakończ** to exit. This remains a separate visual prototype; it is not connected to the Copilot recording/TTS loop. It loads local files and shares the same `voice-orb` component with the browser preview. The renderer is sandboxed with Node integration disabled and a narrow IPC bridge for visual settings.
 
 The desktop orb fades/slides in over 380 ms. Its scale follows measured microphone levels while listening and measured synthesized audio levels during playback. Color mixing remains a visual animation; the browser preview uses simulated breathing pulses. **Zakończ** fades/slides the orb out over 240 ms before quitting; a timeout still allows quitting if the renderer stops responding. Reduced-motion settings disable these animations, and the pause control freezes the color animation. Restart the desktop app or preview after changing the desktop files.
 
-`npm run test:orb` checks positioning, transparency, WebGL, state/pause IPC, audio-reactive scale, conversation snapshots and restoration, safe text rendering, code copying, pinning, error recovery labels, reset, keyboard focus, narrow layout, and orb visibility through a simulated voice cycle. It runs without microphone or Codex calls and saves captures under the ignored `.chatgpt-button/` directory.
+`npm run test:desktop` checks positioning, transparency, WebGL, state/pause IPC, audio-reactive scale, conversation snapshots and restoration, safe text rendering, code copying, pinning, error recovery labels, reset, keyboard focus, narrow layout, and orb visibility through a simulated voice cycle. It runs without microphone or Codex calls. It opens native windows and tests clipboard IPC with a mocked write sink; it does not change the system clipboard. Run it explicitly when the desktop is available.
 
-The desktop orb has its own profile and Chromium cache in `%LOCALAPPDATA%\ChatGPTButton\electron\desktop` (cache under `session/`). Preview and smoke-test profiles remain under the ignored project-local `.chatgpt-button/electron/` directory. Paths are configured before Electron starts Chromium. Smoke tests use a separate profile per process so they can run while the desktop orb is open.
+The desktop orb has its own profile and Chromium cache in `%LOCALAPPDATA%\ChatGPTButton\electron\desktop` (cache under `session/`). The desktop preview uses the ignored project-local `.chatgpt-button/electron/preview` directory. Desktop tests use temporary app data and a separate Chromium profile, so they can run while the desktop orb is open. Paths are configured before Electron starts Chromium. Test captures are retained under `.chatgpt-button/test-results/desktop-<id>/`; temporary profiles and data are removed after the run.
 
 ## Image generation
 
@@ -252,45 +252,107 @@ the 24-hour retention policy cleans up old threads and unused artifacts. Follow-
 voice/text requests receive image tasks' textual context without image pixels.
 Restart the app after updating the desktop files.
 
-`npm run test:images` checks routing, wire results, artifact validation,
+`npm test -- test-images.ts` checks routing, wire results, artifact validation,
 metadata-only links, history restoration and voice cancellation.
-`npm run test:orb` exercises actual previews, unavailable images and native saving.
+`npm run test:desktop` exercises actual previews, unavailable images and native saving.
 
 ## Tests and type checking
 
-`npm run test:storage` verifies private paths, untouched shared login, durable undo,
+Run the default development check after installing dependencies:
+
+```powershell
+npm.cmd run check
+```
+
+`check` runs strict TypeScript checking followed by `npm test`. `npm test`
+runs 12 unit test files, including tooling checks, without starting voice services,
+native UI, keyboard hooks or inference. Each test run gets temporary
+`CHATGPT_BUTTON_DATA_DIR`, `CODEX_HOME` and `CODEX_SQLITE_HOME` directories.
+The runner does not load `.env`, removes inherited API credentials and cleans up
+its temporary data. Tests needing simulated authentication create their own dummy key.
+
+| Command | Scope and requirements |
+| --- | --- |
+| `check` | Typecheck plus unit tests; the default development and CI check. |
+| `test` | Twelve unit test files using mocks and temporary fixtures; no external executables or inference. |
+| `test:integration` | Mock PowerShell speaker worker, installed Codex storage protocol, and simulated realtime provider with FFplay. Requires Windows PowerShell, Codex and FFplay; no paid inference. |
+| `test:desktop` | Real Electron windows, rendering and IPC with mocked clipboard writes and save dialogs; requires an interactive desktop. |
+| `test:keyboard` | Real Windows keyboard hooks and injected F24/F22 events; run explicitly on an interactive desktop. |
+| `typecheck` | Strict checking of TypeScript in `src/`, `scripts/` and `tests/`; emits no JavaScript. |
+
+Unit and integration files live in `tests/unit/` and `tests/integration/`;
+the keyboard test is in `tests/native/`, with support code in `tests/helpers/`.
+The Electron smoke remains in `electron/orb-main.cjs`, which the runner starts
+with `--smoke-test`. `scripts/` contains launchers, the test runner,
+diagnostics, benchmarks and explicit probes. Select a file within its group for
+focused work:
+
+```powershell
+npm.cmd test -- test-app-storage.ts
+npm.cmd test -- test-overlay.cjs --test-name-pattern "departure"
+npm.cmd run test:integration -- test-storage-wire.ts
+```
+
+`test-app-storage.ts` verifies private paths, untouched shared login, durable undo,
 24-hour deletion, retry, image references, CLI busy protection and portable exports.
-`npm run test:storage-wire` exercises the installed Codex against a local simulated
+`test-storage-wire.ts` exercises the installed Codex against a local simulated
 Responses backend and confirms ephemeral app-server/CLI history, context replay
 after restart and app-file deletion, using a simulated global home.
-It uses a dummy key and does not make paid inference requests. `test:orb` also checks
+It uses a dummy key and does not make paid inference requests. `test:desktop` also checks
 the export menu, native save cancellation, successful save and failure recovery.
 
-`npm run test:conversation` verifies session expiry, metadata persistence, history
-loading and previous-conversation restoration. `npm run test:codex-errors` checks
-user-facing Codex error messages. `npm run test:audio-levels` checks PCM levels
-and playback tracking; `npm run test:clipboard` checks native code copying and
-clipboard failure handling.
+`test-conversation-session.ts` verifies session expiry, metadata persistence, history
+loading and previous-conversation restoration. `test-codex-errors.ts` checks
+user-facing Codex error messages. `test-audio-levels.ts` checks PCM levels
+and playback tracking; `test-clipboard.cjs` checks the clipboard IPC handler
+with a mocked clipboard, including failure handling. It does not change the system clipboard.
 
-`npm run test:overlay` exercises the overlay controller and native cursor tracker
+`test-overlay.cjs` exercises the overlay controller and native cursor tracker
 with deterministic timers: next-question cycles, stale hide cancellation, surface
-crossing and rapid reopening. `npm run test:orb` also sends mouse down/up through
+crossing and rapid reopening. `npm run test:desktop` also sends mouse down/up through
 Chromium and checks the normal visibility path and input-only popup.
-`npm run test:copilot` verifies taps, holds, repeats, cancellation and delayed timers
-without microphone or Codex calls. On Windows, `npm run test:keyboard` uses native
+`test-copilot.ts` verifies taps, holds, repeats, cancellation and delayed timers
+without microphone or Codex calls. `test-speaker.ts` launches a mock PowerShell
+worker to verify process reuse, interruption and audio markers; it does not synthesize
+speech or test physical playback. `test-realtime-wire.ts` uses the installed
+Codex and FFplay with a local simulated provider and dummy credentials. FFplay
+opens its audio output, but the test sends silent PCM rather than a real API response.
+On Windows, `npm run test:keyboard` uses native
 hooks and synthetic F24/F22 events to verify selective suppression, event delivery,
 restoration after stop, and cleanup after the owning Node process dies.
 It does not press the physical Copilot key or start voice services.
-`npm run debug` prints `[overlay]`
+`npm run start:debug` prints `[overlay]`
 mode/visibility changes and open requests without logging input text in those entries.
 
-Check all TypeScript files in `src/` and `scripts/` after installing dependencies:
+Run only the TypeScript check when needed:
 
 ```powershell
 npm.cmd run typecheck
 ```
 
-The check runs TypeScript in strict mode without generating JavaScript. Node's type stripping only removes types when running the app; it does not check them. Run `npm run typecheck` before committing and as a check in CI.
+Node's type stripping only removes types when running the app; it does not check
+them. Electron and preview JavaScript are not yet included in TypeScript checking.
+
+### Application and development commands
+
+| Command | Purpose |
+| --- | --- |
+| `start` | Desktop voice application. |
+| `start:cli` | Terminal voice application. |
+| `start:debug` | Desktop application with service and overlay diagnostics. |
+| `preview:desktop` | Electron visual preview with sample conversation; no voice services. |
+| `preview:web` | Browser visual preview at localhost:4173. |
+| `diagnose:keys` | Passive keyboard-only observer; no microphone, STT or Codex startup. |
+| `diagnose:devices` | List DirectShow devices using configured FFmpeg. |
+| `bench:stt` | Compare local Whisper timings for a supplied WAV. |
+
+`npm run probe:imagegen` and `npm run probe:image-history` are explicit experiments,
+excluded from `check`, unit and integration groups. They use real Codex connections
+and keep artifacts under `.chatgpt-button/`. The ImageGen probe inspects account and
+provider capabilities by default; `--generate`, `--integrated` and `--automatic`
+request real image generation and may consume account/API quota. The history probe
+requires an existing generated-image source and realtime API credentials; it creates
+test history and session metadata without inference. Neither probe is a default test.
 
 ## Components
 
@@ -315,6 +377,6 @@ Debug mode also prints captured WAV duration and sound levels (RMS and peak in d
 
 ## Known limitations
 
-- The keyboard hook suppresses only the configured `COPILOT_VK` while the voice application runs. Some keyboards may emit a different shortcut or may not expose a held F23 event; check `npm.cmd run keys` first and configure the virtual key your keyboard reports.
+- The keyboard hook suppresses only the configured `COPILOT_VK` while the voice application runs. Some keyboards may emit a different shortcut or may not expose a held F23 event; check `npm.cmd run diagnose:keys` first and configure the virtual key your keyboard reports.
 - Windows SAPI voice quality depends on installed voices. Piper requires a separate executable and voice download; neither is bundled in Git.
 - Microphone, local model, and signed-in Codex CLI are required for the full voice loop. This repository does not bundle an STT model or download one automatically.
