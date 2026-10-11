@@ -1,7 +1,7 @@
 const path = require('node:path');
 const { createPointerTracker } = require('./overlay-pointer.cjs');
 
-// Native surfaces, measurements, animation timers and display listeners.
+// Native surfaces, measurements, hide timers and display listeners.
 // OverlayController decides visibility/mode; this adapter only applies it.
 /** @param {{screen: Electron.Screen, BrowserWindow: typeof import('electron').BrowserWindow,
  * root: string, PANEL_MAX_HEIGHT: number, panelWindow?: Electron.BrowserWindow,
@@ -15,7 +15,9 @@ function createWindowAdapter(host) {
   function samplePointer(cursor = screen.getCursorScreenPoint()) {
     const { panelWindow } = host;
     if (!panelWindow || panelWindow.isDestroyed()) return;
-    trackPointer(cursor, { panel: panelWindow.isVisible() ? panelWindow.getBounds() : null });
+    const bounds = panelWindow.getBounds();
+    const height = Math.min(panelHeight, bounds.height);
+    trackPointer(cursor, { panel: panelWindow.isVisible() ? { ...bounds, y: bounds.y + bounds.height - height, height } : null });
   }
 
 
@@ -25,9 +27,7 @@ function createWindowAdapter(host) {
   let panelMode = 'peek';
   let panelHeight = 80;
   const panelHeights = { peek: 80, chat: 140, compose: 66, compact: 122 };
-  /** @type {ReturnType<typeof setInterval> | undefined} */
-  let panelResizeTimer;
-  function positionPanel(animate = false) {
+  function positionPanel() {
     const { panelWindow } = host;
     if (!panelWindow || panelWindow.isDestroyed()) return;
     const area = screen.getPrimaryDisplay().workArea;
@@ -35,31 +35,21 @@ function createWindowAdapter(host) {
     const marginY = Math.min(20, Math.max(0, (area.height - 1) / 2));
     const width = Math.max(1, Math.min(380, area.width - marginX * 2));
     const availableHeight = Math.max(1, area.height - marginY * 2);
-    const height = Math.max(1, Math.min(panelHeight, PANEL_MAX_HEIGHT, availableHeight));
+    const height = Math.max(1, Math.min(PANEL_MAX_HEIGHT, availableHeight));
     const bottom = area.y + area.height - marginY;
     const target = { x: Math.round(area.x + area.width - marginX - width),
       y: Math.round(bottom - height), width: Math.round(width), height: Math.round(height) };
-    clearInterval(panelResizeTimer);
-    const initial = panelWindow.getBounds();
-    const done = () => {
-      panelWindow.setBounds(target);
-      panelWindow.webContents.send('voice:resizing', false);
-    };
-    if (!animate || Math.abs(initial.height - height) <= 2) { done(); return; }
-    panelWindow.webContents.send('voice:resizing', true);
-    const startedAt = Date.now();
-    panelResizeTimer = setInterval(() => {
-      if (panelWindow.isDestroyed()) { clearInterval(panelResizeTimer); return; }
-      const progress = Math.min(1, (Date.now() - startedAt) / 220);
-      const eased = 1 - (1 - progress) ** 3;
-      const currentHeight = Math.min(availableHeight, Math.max(1, Math.round(initial.height + (height - initial.height) * eased)));
-      panelWindow.setBounds({ ...target, y: Math.round(bottom - currentHeight), height: currentHeight });
-      if (progress === 1) { clearInterval(panelResizeTimer); done(); }
-    }, 16);
+    // Keep Chromium's viewport fixed across mode and content changes. The panel
+    // sizes itself before paint; only the native drawing/hit region follows it.
+    const current = panelWindow.getBounds();
+    if (Object.entries(target).some(([key, value]) => Math.abs(current[/** @type {keyof Electron.Rectangle} */ (key)] - value) > 2)) panelWindow.setBounds(target);
+    const viewport = panelWindow.getContentBounds();
+    const visibleHeight = Math.max(1, Math.min(panelHeight, viewport.height));
+    panelWindow.setShape([{ x: 0, y: Math.max(0, viewport.height - visibleHeight), width: viewport.width, height: visibleHeight }]);
+    panelWindow.webContents.send('voice:resizing', false);
   }
   function renderHidePanel() {
     const { panelWindow } = host;
-    clearInterval(panelResizeTimer);
     clearTimeout(panelResetTimer);
     panelWindow?.hide();
     // Let Windows finish hiding the native surface before changing its contents.
@@ -83,11 +73,7 @@ function createWindowAdapter(host) {
     if (!changed || !panelWindow.isVisible()) positionPanel();
     if (focus) { panelWindow.show(); panelWindow.focus(); }
     else if (!panelWindow.isVisible()) panelWindow.showInactive();
-    // Start native resizing immediately; renderer measurement refines the target.
-    if (changed) {
-      panelHeight = mode === 'chat' ? Math.max(panelHeights.chat, panelHeights.peek + 42) : panelHeights[mode];
-      positionPanel(true);
-    }
+    // Mode changes only touch renderer layout and the measured native region.
     panelWindow.webContents.send('voice:mode', panelMode);
   }
 
@@ -95,10 +81,10 @@ function createWindowAdapter(host) {
     create: async () => {
       if (disposed) return;
       host.panelWindow = new BrowserWindow({
-        width: 380, height: 80, frame: false, skipTaskbar: true,
+        width: 380, height: PANEL_MAX_HEIGHT, frame: false, skipTaskbar: true,
         resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
         alwaysOnTop: true,
-        title: 'Voice Line — rozmowa', show: false, backgroundColor: '#242220',
+        title: 'Voice Line — rozmowa', show: false, transparent: true, backgroundColor: '#00000000', hasShadow: false,
         webPreferences: { preload: path.join(root, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false },
       });
       const panelWindow = host.panelWindow;
@@ -134,7 +120,6 @@ function createWindowAdapter(host) {
     dispose() {
       disposed = true;
       clearTimeout(panelResetTimer);
-      clearInterval(panelResizeTimer);
       removeDisplayListeners();
     },
   };

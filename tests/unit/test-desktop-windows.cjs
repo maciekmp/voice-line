@@ -18,6 +18,8 @@ function fixture(options = {}) {
     }
     setMenu() {} setAlwaysOnTop() {}
     getBounds() { const { x, y, width, height } = this.bounds; return { x, y, width, height }; }
+    getContentBounds() { return this.getBounds(); }
+    setShape(rects) { this.shape = rects; }
     setBounds(value) { this.bounds = value; }
     setPosition(x, y) { Object.assign(this.bounds, { x, y }); }
     isDestroyed() { return this.destroyed; }
@@ -46,6 +48,7 @@ test('native adapter preserves window isolation, blocks navigation and removes d
     assert.equal(window.settings.webPreferences.sandbox, true);
     assert.equal(window.settings.webPreferences.nodeIntegration, false);
     assert.equal(window.settings.webPreferences.contextIsolation, true);
+    assert.equal(window.settings.transparent, true);
     assert.deepEqual(window.openHandler(), { action: 'deny' });
     let prevented = false;
     window.webContents.emit('will-navigate', { preventDefault() { prevented = true; } });
@@ -67,7 +70,10 @@ test('native hover samples the current surface geometry after resize and display
   f.host.panelWindow.showInactive();
   f.adapter.height = 200;
   f.adapter.positionPanel();
-  assert.deepEqual(f.host.panelWindow.getBounds(), { x: 800, y: 580, width: 380, height: 200 });
+  assert.deepEqual(f.host.panelWindow.getBounds(), { x: 800, y: 280, width: 380, height: 500 });
+  assert.deepEqual(f.host.panelWindow.shape, [{ x: 0, y: 300, width: 380, height: 200 }]);
+  f.adapter.samplePointer({ x: 900, y: 400 });
+  assert.equal(f.hover.length, 0, 'Transparent space is outside the hover region');
   f.adapter.samplePointer({ x: 900, y: 600 });
   assert.deepEqual(f.hover, [['panel', true]]);
   f.adapter.height = 80; f.adapter.positionPanel();
@@ -83,7 +89,28 @@ test('native hover samples the current surface geometry after resize and display
   assert.deepEqual(f.hover.at(-1), ['panel', false]);
 });
 
-test('native adapter cancels hide and resize timers on disposal', async t => {
+test('mode switches keep the native viewport fixed and reshape only the visible interaction region', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
+  const f = fixture(); t.after(() => f.adapter.dispose()); await f.adapter.create();
+  f.adapter.openPanel('compact', true);
+  f.adapter.height = 180; f.adapter.positionPanel();
+  const initial = f.host.panelWindow.getBounds();
+  const sizes = [];
+  const setBounds = f.host.panelWindow.setBounds.bind(f.host.panelWindow);
+  f.host.panelWindow.setBounds = value => { sizes.push(value); setBounds(value); };
+  for (const [mode, height] of [['chat', 480], ['compact', 180]]) {
+    sizes.length = 0;
+    f.adapter.openPanel(mode, true);
+    assert.equal(sizes.length, 0, 'Opening a mode must not apply a guessed size');
+    f.adapter.height = height; f.adapter.positionPanel();
+    t.mock.timers.tick(1000);
+    assert.equal(sizes.length, 0, 'No native resizing during content or mode changes');
+    assert.deepEqual(f.host.panelWindow.getBounds(), initial);
+    assert.deepEqual(f.host.panelWindow.shape, [{ x: 0, y: initial.height - height, width: initial.width, height }]);
+  }
+});
+
+test('native adapter cancels hide timers on disposal', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'] });
   const f = fixture(); await f.adapter.create();
   f.adapter.openPanel('chat', true);

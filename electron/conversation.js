@@ -20,6 +20,10 @@ const main = (() => {
   return element;
 })();
 const header = document.getElementById('panel-header');
+const panel = document.getElementById('panel');
+if (!panel) throw new Error('Missing conversation panel');
+const content = document.getElementById('conversation-content');
+if (!content) throw new Error('Missing conversation content');
 const audioSlot = document.getElementById('audio-indicator');
 const modeLabel = document.getElementById('voice-mode');
 const audioGlow = document.getElementById('audio-glow');
@@ -34,9 +38,9 @@ let snapshot = { state: 'starting', ready: false };
 let pending = false;
 let draftRevision = 0;
 let composing = false;
-/** @type {ReturnType<typeof setTimeout> | undefined} */
-let resizeFrame;
-let scrollToLatest = false;
+let reportedSize = '';
+let followLatest = true;
+let resizing = false;
 const historyRenderer = createHistoryRenderer(get('history'));
 const statusText = decorateNotice(get('status'), 'info');
 const errorText = decorateNotice(get('error'), 'error');
@@ -53,17 +57,40 @@ window.addEventListener('blur', () => window.voiceDesktop.composerFocus(false));
 let renderedAnswer;
 let renderedImages = '';
 function reportSize() {
-  clearTimeout(resizeFrame);
-  resizeFrame = setTimeout(() => window.voiceDesktop.resize({
-    height: (document.getElementById('panel-header')?.offsetHeight || 32) + Math.ceil(main.getBoundingClientRect().height + (get('composer').hidden ? 0 : get('composer').offsetHeight)),
-    mode: panelMode(),
-    reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
-  }), 0);
+  // Layout and content change in the same renderer task, before the next paint.
+  // The native viewport stays fixed; IPC only updates its interaction region.
+  const style = getComputedStyle(main);
+  const contentHeight = main.checkVisibility()
+    ? (content?.offsetHeight || 0) + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) : 0;
+  const naturalHeight = (header?.offsetHeight || 32) + Math.ceil(contentHeight + (get('composer').hidden ? 0 : get('composer').offsetHeight));
+  const mode = panelMode();
+  const retainHeight = mode === 'chat' && ['listening', 'transcribing', 'thinking'].includes(snapshot.state || '');
+  const height = Math.min(innerHeight, Math.max(64, naturalHeight + 2, retainHeight ? panel?.offsetHeight || 0 : 0));
+  panel?.style.setProperty('--panel-height', `${height}px`);
+  anchorLatest();
+  const key = `${mode}:${height}`;
+  if (key !== reportedSize) {
+    reportedSize = key;
+    // The host adds the existing two-pixel breathing room to reported content.
+    window.voiceDesktop.resize({ height: height - 2, mode, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches });
+  }
+  resizing = false;
 }
 const sizeObserver = new ResizeObserver(reportSize);
-sizeObserver.observe(main);
+sizeObserver.observe(content);
 sizeObserver.observe(header);
 sizeObserver.observe(get('composer'));
+function anchorLatest() {
+  if (followLatest) main.scrollTop = main.scrollHeight;
+}
+// Keep the latest message anchored before painting a resized viewport.
+const viewportObserver = new ResizeObserver(anchorLatest);
+viewportObserver.observe(main);
+viewportObserver.observe(content);
+window.addEventListener('resize', reportSize);
+main.addEventListener('scroll', () => {
+  if (!resizing) followLatest = main.scrollHeight - main.clientHeight - main.scrollTop <= 32;
+});
 get('pin').addEventListener('click', () => window.voiceDesktop.command('pin'));
 get('previous').addEventListener('click', () => {
   if (!get('previous').disabled) window.voiceDesktop.command('previous');
@@ -73,12 +100,10 @@ window.voiceDesktop.onPinned(pinned => {
   get('pin').setAttribute('aria-label', pinned ? 'Odepnij popup' : 'Przypnij popup');
   get('pin').title = pinned ? 'Odepnij popup' : 'Przypnij popup';
 });
-window.voiceDesktop.onResizing(resizing => {
-  document.documentElement.dataset.resizing = String(resizing);
-  if (!resizing && scrollToLatest && document.body.dataset.mode === 'chat') {
-    scrollToLatest = false;
-    scrollTo(0, document.documentElement.scrollHeight);
-  }
+window.voiceDesktop.onResizing(value => {
+  document.documentElement.dataset.resizing = String(value);
+  resizing = value;
+  anchorLatest();
 });
 function panelMode() {
   const mode = document.body.dataset.mode;
@@ -98,8 +123,8 @@ function resizeMessage() {
   get('message').style.height = `${minimum}px`;
   get('message').style.height = `${Math.min(140, Math.max(minimum, get('message').scrollHeight))}px`;
 }
-document.documentElement.addEventListener('pointerenter', () => window.voiceDesktop.hover(true));
-document.documentElement.addEventListener('pointerleave', () => window.voiceDesktop.hover(false));
+panel.addEventListener('pointerenter', () => window.voiceDesktop.hover(true));
+panel.addEventListener('pointerleave', () => window.voiceDesktop.hover(false));
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !event.isComposing) window.voiceDesktop.command('hide');
 });
@@ -108,19 +133,22 @@ window.voiceDesktop.onClearDraft(() => {
 });
 window.voiceDesktop.onMode(mode => {
   const changed = document.body.dataset.mode !== mode;
-  if (changed) document.documentElement.dataset.resizing = 'true';
+  if (changed) {
+    document.documentElement.dataset.resizing = 'true';
+    resizing = true;
+    followLatest = true;
+  }
   document.body.dataset.mode = mode;
   const editable = mode === 'chat' || mode === 'compose' || mode === 'compact';
   get('composer').hidden = !editable;
   get('history').hidden = mode !== 'chat' || !(snapshot.history?.length);
   refreshImageVisibility();
-  if (mode === 'chat' && changed) scrollToLatest = true;
   if (!editable) get('message').blur();
   if (editable) {
     resizeMessage();
     get('message').focus({ preventScroll: true });
   }
-  if (mode === 'compose') scrollTo(0, 0);
+  anchorLatest();
   reportSize();
 });
 const labels = {
@@ -129,14 +157,12 @@ const labels = {
   'preparing-speech': 'Przygotowuję głos…', speaking: 'Odczytuję odpowiedź…', error: '',
 };
 window.voiceDesktop.onVoice(value => {
-  const nearBottom = innerHeight + scrollY >= document.documentElement.scrollHeight - 32;
   snapshot = value;
   audioIndicator.voice(value);
   const history = value.history || [];
   historyRenderer.update(history, { conversationId: value.conversation?.id, revision: value.conversation?.revision });
   get('history').hidden = document.body.dataset.mode !== 'chat' || !history.length;
   refreshImageVisibility();
-  if (nearBottom) scrollToLatest = true;
   statusText.textContent = value.interrupted ? 'Odpowiedź przerwana' : value.state === 'thinking' && value.generatingImage ? 'Generuję obraz…' : labels[value.state] || '';
   get('status').hidden = (!value.interrupted && Boolean(value.answer) && !['thinking', 'starting'].includes(value.state)) || !get('status').textContent;
   get('error').hidden = !value.message;
@@ -154,12 +180,14 @@ window.voiceDesktop.onVoice(value => {
   const imagesKey = JSON.stringify(value.images || []);
   if (imagesKey !== renderedImages) { renderedImages = imagesKey; renderImages(get('images'), value.images); }
   updateComposer();
+  anchorLatest();
   reportSize();
 });
 get('message').addEventListener('input', () => {
   draftRevision++;
   resizeMessage();
   updateComposer();
+  reportSize();
 });
 get('message').addEventListener('compositionstart', () => { composing = true; });
 get('message').addEventListener('compositionend', () => { composing = false; });

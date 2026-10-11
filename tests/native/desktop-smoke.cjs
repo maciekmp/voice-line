@@ -303,20 +303,20 @@ async function verifyDesktop(host) {
   openPanel(false);
   await new Promise(resolve => setTimeout(resolve, 350));
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), true);
-  const peekHeight = panelWindow.getBounds().height;
-  const peekContent = await panelWindow.webContents.executeJavaScript('document.body.getBoundingClientRect().height');
+  const peekHeight = host.panelHeight;
+  const peekContent = await panelWindow.webContents.executeJavaScript('document.querySelector("#panel").getBoundingClientRect().height');
   assert.ok(Math.abs(peekHeight - peekContent) <= 4, `Hover popup fits its content: ${peekHeight}, content ${peekContent}, requested ${host.panelHeight}`);
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('h2') === null"), true);
   sendVoice({ answer: 'Dłuższa odpowiedź.\n'.repeat(12) });
   await new Promise(resolve => setTimeout(resolve, 350));
-  const previousAnswerHeight = panelWindow.getBounds().height;
+  const previousAnswerHeight = host.panelHeight;
   for (const state of ['listening', 'transcribing', 'thinking']) {
     sendVoice({ state, question: '', answer: '' });
     await new Promise(resolve => setTimeout(resolve, 350));
     const measured = await panelWindow.webContents.executeJavaScript('Math.ceil(document.querySelector("main").getBoundingClientRect().height + document.querySelector("#panel-header").getBoundingClientRect().height)');
-    assert.ok(Math.abs(panelWindow.getBounds().height - Math.max(64, measured + 2)) <= 2,
+    assert.ok(Math.abs(host.panelHeight - Math.max(64, measured + 2)) <= 2,
       `${state}: compact popup follows current content`);
-    assert.ok(panelWindow.getBounds().height < previousAnswerHeight, `${state}: old answer leaves no empty space`);
+    assert.ok(host.panelHeight < previousAnswerHeight, `${state}: old answer leaves no empty space`);
     assert.equal(panelWindow.isVisible(), true, `${state}: compact popup stays visible`);
   }
   sendVoice({ state: 'idle', question: 'Jak zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania i zacznij od jednego.' });
@@ -399,7 +399,7 @@ async function verifyDesktop(host) {
   assert.equal(await panelWindow.webContents.executeJavaScript("getComputedStyle(document.querySelector('main')).display"), 'none', 'Input-only mode hides the old conversation');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), false);
   assert.equal(await panelWindow.webContents.executeJavaScript("document.activeElement.id"), 'message');
-  assert.ok(panelWindow.getBounds().height <= 106, 'Input-only popup includes its compact header');
+  assert.ok(await evaluate('document.querySelector("#panel").offsetHeight') <= 106, 'Input-only popup includes its compact header');
   assert.equal(await panelWindow.webContents.executeJavaScript('document.documentElement.scrollHeight <= innerHeight'), true);
   await fs.writeFile(path.join(outputDirectory, 'electron-conversation-compose.png'), (await panelWindow.webContents.capturePage()).toPNG());
   overlay.hover('panel', true);
@@ -421,7 +421,8 @@ async function verifyDesktop(host) {
   assert.equal(overlay.snapshot().pinned, true);
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#pin').getAttribute('aria-pressed')"), 'true');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#pin').getAttribute('aria-label')"), 'Odepnij popup');
-  assert.equal(await panelWindow.webContents.executeJavaScript("getComputedStyle(document.querySelector('#pin')).position"), 'fixed');
+  assert.equal(await evaluate("document.querySelector('#pin').getBoundingClientRect().top - document.querySelector('#panel').getBoundingClientRect().top"), 4,
+    'Pin stays at the visible panel header');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#pin svg') !== null"), true);
   overlay.hover('panel', true);
   overlay.hover('panel', false);
@@ -496,16 +497,17 @@ async function verifyDesktop(host) {
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#error').hidden"), false);
   panelWindow.setSize(340, 420);
   sendVoice({ answer: 'Długa odpowiedź. '.repeat(300) });
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.documentElement.scrollWidth <= innerWidth && document.documentElement.scrollHeight > innerHeight"), true);
-  await panelWindow.webContents.executeJavaScript("scrollTo(0, document.documentElement.scrollHeight)");
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.documentElement.scrollWidth <= innerWidth && document.querySelector('main').scrollHeight > document.querySelector('main').clientHeight"), true);
+  await panelWindow.webContents.executeJavaScript("document.querySelector('main').scrollTop = document.querySelector('main').scrollHeight");
   await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').getBoundingClientRect().bottom <= innerHeight + 1"), true);
-  assert.ok(panelWindow.getBounds().height <= PANEL_MAX_HEIGHT, 'Long answers cap the popup at 500 px');
+  // Windows DPI conversion can round native bounds by one or two DIP.
+  assert.ok(panelWindow.getBounds().height <= PANEL_MAX_HEIGHT + 2, 'Long answers respect the popup height cap within native DPI rounding');
   console.log('Text composer checks: passed');
   const chatOutput = path.join(outputDirectory, 'electron-conversation-chat.png');
   sendVoice({ state: 'idle', ready: true, question: 'Jak mogę lepiej zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania. Zacznij od jednego i zostaw trochę miejsca na przerwy.' });
   positionPanel();
-  await panelWindow.webContents.executeJavaScript('scrollTo(0, 0)');
+  await panelWindow.webContents.executeJavaScript('document.querySelector("main").scrollTop = 0');
   openPanel();
   await new Promise(resolve => setTimeout(resolve, 350));
   await fs.writeFile(chatOutput, (await panelWindow.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
@@ -534,7 +536,7 @@ async function verifyDesktop(host) {
   assert.deepEqual(iconState, { current: 'keyboard', label: 'Twoje pytanie pisane', history: ['mic', 'keyboard', 'question'],
     answers: 3, interruption: 'info', status: 'info', error: 'error', width: '14px', height: '14px', opacity: '0.65', gap: '8px',
     decorative: 'true', focusable: 'false', noOverflow: true });
-  await panelWindow.webContents.executeJavaScript('scrollTo(0, 0)');
+  await panelWindow.webContents.executeJavaScript('document.querySelector("main").scrollTop = 0');
   await fs.writeFile(path.join(outputDirectory, 'electron-message-icons.png'), (await panelWindow.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
   host.sendVoice({ conversation: { id: 'icon-preview', revision: 2, completed: [{ ...iconCompleted[0], questionSource: 'text' }], pending: null } });
   await new Promise(resolve => setTimeout(resolve, 50));
@@ -547,11 +549,12 @@ async function verifyDesktop(host) {
   }
   await new Promise(resolve => setTimeout(resolve, 400));
   assert.ok(await panelWindow.webContents.executeJavaScript("document.querySelectorAll('#history .exchange').length") >= 10);
-  assert.equal(await panelWindow.webContents.executeJavaScript('document.documentElement.scrollHeight > innerHeight'), true, 'Expanded thread can scroll to earlier exchanges');
-  await panelWindow.webContents.executeJavaScript('scrollTo(0, 0)');
+  assert.equal(await panelWindow.webContents.executeJavaScript('document.querySelector("main").scrollHeight > document.querySelector("main").clientHeight'), true, 'Expanded thread can scroll to earlier exchanges');
+  await panelWindow.webContents.executeJavaScript('document.querySelector("main").scrollTop = 0');
+  await new Promise(resolve => setTimeout(resolve, 50));
   sendVoice({ state: 'speaking' });
   await new Promise(resolve => setTimeout(resolve, 300));
-  assert.equal(await panelWindow.webContents.executeJavaScript('scrollY'), 0, 'Status updates preserve reading position');
+  assert.equal(await panelWindow.webContents.executeJavaScript('document.querySelector("main").scrollTop'), 0, 'Status updates preserve reading position');
   assert.equal(await panelWindow.webContents.executeJavaScript("Math.abs(document.querySelector('#composer').getBoundingClientRect().bottom - innerHeight) <= 1"), true, 'Composer is flush with the bottom edge');
   hidePanel();
   await new Promise(resolve => setTimeout(resolve, 50));
@@ -582,9 +585,60 @@ async function verifyDesktop(host) {
   assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'compact');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#message').value"), '');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), false);
-  await fs.writeFile(path.join(outputDirectory, 'electron-conversation-compact.png'), (await panelWindow.webContents.capturePage()).toPNG());
-  onEngineMessage({ type: 'ui', action: 'compose' });
-  await new Promise(resolve => setTimeout(resolve, 250));
+  const compactCapture = await panelWindow.webContents.capturePage();
+  assert.equal(compactCapture.toBitmap()[3], 0, 'Unused viewport is transparent');
+  await fs.writeFile(path.join(outputDirectory, 'electron-conversation-compact.png'), compactCapture.toPNG());
+  await fill('Szkic\nz drugą linią');
+  for (const expectedMode of ['chat', 'compact', 'chat']) {
+    const nativeSizes = [];
+    const initialBounds = panelWindow.getBounds();
+    const originalSetBounds = panelWindow.setBounds;
+    panelWindow.setBounds = function(bounds, ...args) {
+      nativeSizes.push({ ...bounds });
+      return originalSetBounds.call(this, bounds, ...args);
+    };
+    await evaluate(`(() => {
+      const composer = document.querySelector('#composer');
+      const transcript = document.querySelector('#transcript');
+      const message = document.querySelector('#message');
+      message.setSelectionRange(2, 5);
+      window.transitionNodes = { composer, transcript, message };
+      window.transitionFrames = [];
+      const started = performance.now();
+      function sample() {
+        window.transitionFrames.push({
+          composerBottom: innerHeight - composer.getBoundingClientRect().bottom,
+          transcriptBottom: innerHeight - transcript.getBoundingClientRect().bottom,
+          animation: getComputedStyle(composer).animationName,
+        });
+        if (performance.now() - started < 450) requestAnimationFrame(sample);
+      }
+      sample();
+    })()`);
+    overlay.toggle();
+    await wait(500);
+    panelWindow.setBounds = originalSetBounds;
+    assert.equal(nativeSizes.length, 0, 'Mode switching never resizes the native viewport');
+    assert.deepEqual(panelWindow.getBounds(), initialBounds, 'Native screen position stays fixed');
+    const transition = await evaluate(`({ frames: window.transitionFrames,
+      sameNodes: Object.entries(window.transitionNodes).every(([id, node]) => document.getElementById(id) === node),
+      draft: document.querySelector('#message').value,
+      selection: [document.querySelector('#message').selectionStart, document.querySelector('#message').selectionEnd],
+      mode: document.body.dataset.mode })`);
+    assert.equal(transition.mode, expectedMode);
+    assert.equal(transition.sameNodes, true, 'Switching preserves message and composer nodes');
+    assert.equal(transition.draft, 'Szkic\nz drugą linią');
+    assert.deepEqual(transition.selection, [2, 5]);
+    assert.ok(transition.frames.length > 2, 'Sample frames before and after resizing');
+    const initial = transition.frames[0];
+    for (const frame of transition.frames) {
+      assert.ok(Math.abs(frame.composerBottom) <= 1, 'Composer stays at the native bottom throughout resizing');
+      assert.ok(Math.abs(frame.transcriptBottom - initial.transcriptBottom) <= 2,
+        `Latest message stays anchored during ${expectedMode}: ${frame.transcriptBottom} vs ${initial.transcriptBottom}`);
+      assert.equal(frame.animation, 'none', 'Mode switches do not replay composer entry');
+    }
+  }
+  console.log('Compact/chat transition anchoring checks: passed');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'chat');
   await fill('Szkic poprawki');
   onEngineMessage({ type: 'ui', action: 'correct' });

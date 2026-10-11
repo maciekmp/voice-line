@@ -124,7 +124,7 @@ const windows = createWindowAdapter({
   hover: (surface, entered) => overlay.hover(surface, entered),
   exiting: () => exitStarted, dismiss: hidePanel,
 });
-const positionPanel = animate => windows.positionPanel(animate);
+const positionPanel = () => windows.positionPanel();
 const samplePointer = cursor => windows.samplePointer(cursor);
 let indicator = loadVisualPreferences(visualPreferencesFile).indicator;
 let paused = false;

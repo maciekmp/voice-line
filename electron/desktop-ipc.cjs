@@ -40,7 +40,7 @@ function registerDesktopIpc(ipcMain, host) {
       ? Math.max(host.panelHeight, measuredHeight) : measuredHeight;
     panelHeights[size.mode] = host.panelHeight;
     if (host.panelResetTimer && !host.panelWindow.isVisible()) return;
-    positionPanel(host.panelWindow.isVisible() && !size.reducedMotion);
+    positionPanel();
   });
   handle('voice:copy-code', (event, text) => {
     if (!host.panelWindow || host.panelWindow.isDestroyed() || event.sender !== host.panelWindow.webContents

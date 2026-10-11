@@ -9,6 +9,7 @@
 <script type="module" src="conversation.js"></script>
 </head>
 <body data-mode="peek">
+<div id="panel">
 <div id="audio-glow" aria-hidden="true"></div>
 <div id="audio-waves" aria-hidden="true"></div>
 <header id="panel-header">
@@ -21,6 +22,7 @@
 </button>
 </header>
 <main>
+<div id="conversation-content">
 <section id="history" aria-label="Poprzednie wiadomości" hidden></section>
 <section id="transcript" aria-label="Ostatnie pytanie i odpowiedź" tabindex="0">
 <p id="empty">Przytrzymaj Copilot, aby zapytać.</p>
@@ -31,11 +33,13 @@
 <p id="status" role="status" hidden></p>
 <p id="error" role="alert" hidden></p>
 <button id="retry" type="button" hidden>Spróbuj ponownie</button>
+</div>
 </main>
 <form id="composer" novalidate hidden>
 <label class="sr-only" for="message">Kontynuuj rozmowę</label>
 <textarea id="message" rows="1" maxlength="12000" placeholder="Napisz wiadomość…" enterkeyhint="send" aria-describedby="message-help status error"></textarea>
 <span id="message-help" class="sr-only">Enter wysyła wiadomość. Shift+Enter dodaje nową linię.</span>
 </form>
+</div>
 </body>
 </html>
