@@ -188,7 +188,7 @@ code-only reply announces that the code is available in the conversation window.
 Hover displays only the latest exchange. Chat displays previous exchanges above
 it and supports document scrolling, with the composer flush to the window bottom.
 Exchanges are kept in main-process memory and in the application's private Codex
-history under `%LOCALAPPDATA%\ChatGPTButton` (override: `CHATGPT_BUTTON_DATA_DIR`).
+history under `%LOCALAPPDATA%\VoiceLine` (override: `APP_DATA_DIR`).
 LOCAL and realtime ImageGen use the existing Codex account. Only realtime audio
 uses a separate Codex home for its API-key login. Versioned session metadata
 holds current/previous application IDs, provider mappings, revisions and receipts.

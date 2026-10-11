@@ -23,8 +23,8 @@ async function directory(t: any) {
 
 test('one data root is independent of the project, with explicit override and isolated modes', async t => {
   const data = await directory(t);
-  assert.equal(appDataDirectory({ LOCALAPPDATA: data }), join(data, 'ChatGPTButton'));
-  assert.equal(appDataDirectory({ CHATGPT_BUTTON_DATA_DIR: data }), data);
+  assert.equal(appDataDirectory({ LOCALAPPDATA: data }), join(data, 'VoiceLine'));
+  assert.equal(appDataDirectory({ APP_DATA_DIR: data }), data);
   const local = createAppStorage('local', data), realtime = createAppStorage('realtime', data);
   assert.notEqual(local.home, realtime.home);
   assert.equal(local.ephemeral, true);

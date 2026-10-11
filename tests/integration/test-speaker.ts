@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Speaker } from '../../src/speaker.ts';
 
-const directory = mkdtempSync(join(tmpdir(), 'chatgpt-button-speaker-test-'));
+const directory = mkdtempSync(join(tmpdir(), 'speaker-test-'));
 const script = join(directory, 'mock-speak.ps1');
 const starts = join(directory, 'starts.txt');
 writeFileSync(script, `

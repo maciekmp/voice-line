@@ -36,7 +36,7 @@ test('PNG artifacts survive reload and renderer IPC accepts IDs only', async t =
   const image = await storeGeneratedImage(cwd, item);
   assert.match(image.id, /^[a-f0-9]{64}$/);
   assert.equal(image.alt, 'Kwadrat');
-  assert.deepEqual(await readImage(join(cwd, '.chatgpt-button', 'images'), image.id), Buffer.from(png, 'base64'));
+  assert.deepEqual(await readImage(join(cwd, '.app-data', 'images'), image.id), Buffer.from(png, 'base64'));
   assert.deepEqual(await storeGeneratedImage(cwd, item), image);
   for (const id of ['../../.env', 'file.png', '', image.id.toUpperCase()]) assert.throws(() => imagePath(cwd, id), /Invalid/);
   for (const change of [{ status: 'failed' }, { result: '????' }, { result: Buffer.from('not PNG').toString('base64') }]) {
@@ -65,7 +65,7 @@ test('protocol mapping is pure and filesystem hydration is an explicit second op
   assert.equal(realtime.history[0].images![0].id, mapped[0].exchange.images![0].id);
   assert.deepEqual(await readdir(cwd), []);
   await hydrateConversationExchanges(mapped, cwd);
-  assert.deepEqual(await readFile(join(cwd, '.chatgpt-button', 'images', `${mapped[0].exchange.images![0].id}.png`)), Buffer.from(png, 'base64'));
+  assert.deepEqual(await readFile(join(cwd, '.app-data', 'images', `${mapped[0].exchange.images![0].id}.png`)), Buffer.from(png, 'base64'));
 });
 
 class FakeImageServer extends CodexAppServer {
@@ -179,7 +179,7 @@ test('API image task history restores at its position from metadata-only links',
   };
   await voice.generateImage('Kwadrat');
   assert.deepEqual(await readImageLinks(cwd, threadId), [{ threadId, turnId, anchor: 0 }]);
-  const linkFile = await readFile(join(cwd, '.chatgpt-button', 'image-links', `${threadId}.json`), 'utf8');
+  const linkFile = await readFile(join(cwd, '.app-data', 'image-links', `${threadId}.json`), 'utf8');
   assert.ok(!linkFile.includes('Kwadrat') && !linkFile.includes(png));
   const restored = await voice.history();
   assert.deepEqual(restored.map(value => value.question), ['Kwadrat', 'Pytanie']);
@@ -194,7 +194,7 @@ test('API image task history restores at its position from metadata-only links',
   assert.equal(voice.currentExchanges.length, 1);
   voice.cancel(); voice.stop(); assert.ok(cancelled && stopped);
   await assert.rejects(readImageLinks(cwd, '../../.env'), /Invalid/);
-  await writeFile(join(cwd, '.chatgpt-button', 'image-links', `${threadId}.json`), '[{"anchor":-1}]');
+  await writeFile(join(cwd, '.app-data', 'image-links', `${threadId}.json`), '[{"anchor":-1}]');
   await assert.rejects(readImageLinks(cwd, threadId), /Invalid/);
 });
 

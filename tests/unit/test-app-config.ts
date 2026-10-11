@@ -10,13 +10,16 @@ import { ConversationSession } from '../../src/conversation-session.ts';
 
 test('configuration captures an immutable snapshot instead of retaining environment references', () => {
   const env = { WHISPER_MODEL: 'model', CODEX_MODEL: 'before', WHISPER_THREADS: '8', COPILOT_VK: '134',
-    FFMPEG_BIN: 'capture-before', FFPLAY_BIN: 'play-before', OPENAI_API_KEY: 'test-placeholder' };
+    FFMPEG_BIN: 'capture-before', FFPLAY_BIN: 'play-before', OPENAI_API_KEY: 'test-placeholder',
+    VOICE: 'Paulina', TTS_RATE: '3' };
   const config = loadAppConfig(env);
   env.CODEX_MODEL = 'after'; env.FFMPEG_BIN = 'capture-after'; env.WHISPER_THREADS = '2';
   assert.equal(config.codex.model, 'before');
   assert.equal(config.ffmpeg, 'capture-before');
   assert.equal(config.whisper.threads, 8);
   assert.equal(config.realtime.player, 'play-before');
+  assert.equal(config.sapi.voice, 'Paulina');
+  assert.equal(config.sapi.rate, 3);
   assert.ok(Object.isFrozen(config));
   for (const key of ['codex', 'whisper', 'piper', 'sapi', 'realtime'] as const) assert.ok(Object.isFrozen(config[key]));
   assert.throws(() => Object.assign(config.codex, { model: 'mutated' }), TypeError);
@@ -31,12 +34,12 @@ test('invalid backend names never silently select a default, including resource-
 
 test('selected mode validates its own services and configuration errors identify the setting', () => {
   const config = loadAppConfig({ VOICE_MODE: 'realtime', STT_MODE: 'bad', WHISPER_THREADS: 'bad',
-    TTS_MODE: 'bad', CHATGPT_BUTTON_TTS_RATE: 'bad' });
+    TTS_MODE: 'bad', TTS_RATE: 'bad' });
   assert.equal(config.voiceMode, 'realtime');
   assert.throws(() => loadAppConfig({ VOICE_MODE: 'realtime', CODEX_MODE: 'cli' }), /requires the app-server/);
   assert.throws(() => loadAppConfig({}), /WHISPER_MODEL/);
   for (const [key, value] of [['WHISPER_THREADS', '0'], ['WHISPER_THREADS', '1.5'], ['COPILOT_VK', 'NaN'],
-    ['COPILOT_VK', '256'], ['COPILOT_VK', ''], ['CHATGPT_BUTTON_TTS_RATE', '11']] as const) {
+    ['COPILOT_VK', '256'], ['COPILOT_VK', ''], ['TTS_RATE', '11']] as const) {
     assert.throws(() => loadAppConfig({ WHISPER_MODEL: 'model', [key]: value }), new RegExp(key));
   }
 });

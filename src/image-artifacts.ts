@@ -7,7 +7,7 @@ import type { ImageLink } from './artifact-store.ts';
 
 // Compatibility functions delegate to the shared store used by providers and history hydration.
 function store(cwd: string, dataDirectory?: string): ArtifactStore {
-  return new ArtifactStore(dataDirectory ?? resolve(cwd, '.chatgpt-button'));
+  return new ArtifactStore(dataDirectory ?? resolve(cwd, '.app-data'));
 }
 export function readImageLinks(cwd: string, threadId: string, dataDirectory?: string): Promise<ImageLink[]> {
   return store(cwd, dataDirectory).readLinks(threadId);

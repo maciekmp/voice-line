@@ -140,9 +140,9 @@ runner uruchamia produkcyjny host `electron/orb-main.cjs` z `--smoke-test`,
 który przekazuje harnessowi rzeczywiste okna i adaptery.
 
 Runner nie ładuje `.env`, usuwa odziedziczone klucze API oraz ustawia tymczasowe
-`CHATGPT_BUTTON_DATA_DIR`, `CODEX_HOME` i `CODEX_SQLITE_HOME`. Testy tworzące mock
+`APP_DATA_DIR`, `CODEX_HOME` i `CODEX_SQLITE_HOME`. Testy tworzące mock
 logowania ustawiają własny fikcyjny klucz. Dane i profile testowe są usuwane po
-zakończeniu; zrzuty desktop zostają w `.chatgpt-button/test-results/desktop-<id>/`.
+zakończeniu; zrzuty desktop zostają w `.app-data/test-results/desktop-<id>/`.
 `preview:desktop` i `preview:web` służą do podglądu, a `probe:imagegen` oraz
 `probe:image-history` są jawnymi eksperymentami poza automatycznymi zestawami.
 

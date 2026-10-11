@@ -5,7 +5,7 @@ import { CodexAppServer } from '../src/codex-app-server.ts';
 import { ConversationSession } from '../src/conversation-session.ts';
 import { CodexClient, type VoiceReply } from '../src/codex.ts';
 
-const directory = resolve('.chatgpt-button', 'imagegen-probe', process.argv.includes('--api') ? 'api' : process.argv.includes('--cli') ? 'cli' : 'chatgpt');
+const directory = resolve('.app-data', 'imagegen-probe', process.argv.includes('--api') ? 'api' : process.argv.includes('--cli') ? 'cli' : 'chatgpt');
 await mkdir(directory, { recursive: true });
 class Probe extends CodexAppServer {
   onEvent?: (method: string, params: any) => void;

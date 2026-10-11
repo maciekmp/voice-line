@@ -11,7 +11,7 @@ if (!process.argv.includes('--preview')) loadProjectEnv();
 // Some Electron-based terminals export this flag; the orb needs GUI mode.
 const { ELECTRON_RUN_AS_NODE: _runAsNode, ...env } = process.env;
 const child = spawn(require('electron'), [path.join(projectRoot, 'electron', 'orb-main.cjs'), ...process.argv.slice(2)], {
-  cwd: projectRoot, stdio: 'inherit', windowsHide: true, env: { ...env, VOICE_LINE_NODE: process.execPath },
+  cwd: projectRoot, stdio: 'inherit', windowsHide: true, env: { ...env, NODE_BIN: process.execPath },
 });
 child.on('error', error => { console.error(error); process.exitCode = 1; });
 child.on('close', code => { process.exitCode = code ?? 1; });

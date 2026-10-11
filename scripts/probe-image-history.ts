@@ -6,11 +6,11 @@ import { CodexRealtime } from '../src/codex-realtime.ts';
 import { ConversationSession, type ConversationExchange } from '../src/conversation-session.ts';
 import { appendImageLink, type ImageTask } from '../src/image-artifacts.ts';
 
-const cwd = resolve('.chatgpt-button', 'image-history-probe');
+const cwd = resolve('.app-data', 'image-history-probe');
 await mkdir(cwd, { recursive: true });
 // The probe owns this isolated session; each run checks a fresh voice thread.
-await unlink(resolve(cwd, '.chatgpt-button-realtime-session.json')).catch(error => { if (error.code !== 'ENOENT') throw error; });
-const source = JSON.parse(await readFile(resolve('.chatgpt-button/imagegen-probe/chatgpt/.chatgpt-button-session.json'), 'utf8'));
+await unlink(resolve(cwd, '.realtime-session.json')).catch(error => { if (error.code !== 'ENOENT') throw error; });
+const source = JSON.parse(await readFile(resolve('.app-data/imagegen-probe/chatgpt/.session.json'), 'utf8'));
 class Source extends CodexAppServer {
   rpc(method: string, params: object) { return this.request(method, params); }
 }

@@ -44,7 +44,7 @@ export function loadPiperConfig(env: NodeJS.ProcessEnv = process.env): PiperConf
   return Object.freeze({ binary: env.PIPER_BIN ?? 'piper.exe', model: env.PIPER_MODEL ?? '', player: loadPlaybackConfig(env).ffplay });
 }
 export function loadSapiConfig(env: NodeJS.ProcessEnv = process.env): SapiConfig {
-  return Object.freeze({ voice: optional(env.CHATGPT_BUTTON_VOICE), rate: integer(env, 'CHATGPT_BUTTON_TTS_RATE', 2, -10, 10) });
+  return Object.freeze({ voice: optional(env.VOICE), rate: integer(env, 'TTS_RATE', 2, -10, 10) });
 }
 export function loadRealtimeConfig(env: NodeJS.ProcessEnv = process.env): RealtimeConfig {
   return Object.freeze({ apiKey: optional(env.OPENAI_API_KEY) ?? '', voice: optional(env.CODEX_REALTIME_VOICE),

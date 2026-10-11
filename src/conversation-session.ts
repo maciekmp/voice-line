@@ -20,7 +20,7 @@ export class ConversationSession {
   private readonly repository: ConversationRepository;
   private readonly allowMissingHistory: boolean;
 
-  constructor(cwd: string, now: () => number = Date.now, filename = '.chatgpt-button-session.json', options: { durablePrevious?: boolean; localHistory?: boolean; repository?: ConversationRepository; allowMissingHistory?: boolean } = {}) {
+  constructor(cwd: string, now: () => number = Date.now, filename = '.session.json', options: { durablePrevious?: boolean; localHistory?: boolean; repository?: ConversationRepository; allowMissingHistory?: boolean } = {}) {
     this.now = now;
     this.durablePrevious = options.durablePrevious ?? false;
     this.localHistory = options.localHistory ?? false;

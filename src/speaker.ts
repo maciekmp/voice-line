@@ -31,7 +31,7 @@ export class Speaker {
     if (this.ready) return this.ready;
     if (this.closing) return Promise.reject(new Error('TTS has shut down'));
     const worker = launch('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', this.script], {
-      env: { CHATGPT_BUTTON_VOICE: this.config.voice, CHATGPT_BUTTON_TTS_RATE: String(this.config.rate) },
+      env: { VOICE: this.config.voice, TTS_RATE: String(this.config.rate) },
     });
     this.worker = worker;
     let diagnostics = '';

@@ -9,7 +9,8 @@ const { deviceListingSucceeded } = require('../../scripts/diagnose-devices.cjs')
 test('test environments isolate homes and remove production settings regardless of case', () => {
   const inherited = { Path: 'test-path', SystemRoot: 'test-system', FFPLAY_BIN: 'custom-player.exe',
     openai_api_key: 'secret', CODEX_ACCESS_TOKEN: 'token', CODEX_HOME: 'production',
-    ChatGPT_Button_Data_Dir: 'production-data', whisper_threads: 'invalid',
+    App_Data_Dir: 'production-data', whisper_threads: 'invalid',
+    voice: 'production-voice', tts_rate: 'invalid', node_bin: 'production-node', test_output_dir: 'production-captures',
     NODE_OPTIONS: '--env-file=.env', https_proxy: 'production-proxy' };
   const first = createTestEnvironment('unit', inherited);
   const second = createTestEnvironment('unit', inherited);
@@ -18,9 +19,10 @@ test('test environments isolate homes and remove production settings regardless 
     assert.equal(first.env.Path, inherited.Path);
     assert.equal(first.env.SystemRoot, inherited.SystemRoot);
     assert.equal(first.env.FFPLAY_BIN, inherited.FFPLAY_BIN);
-    for (const key of ['openai_api_key', 'CODEX_ACCESS_TOKEN', 'ChatGPT_Button_Data_Dir',
+    for (const key of ['openai_api_key', 'CODEX_ACCESS_TOKEN', 'App_Data_Dir',
+      'voice', 'tts_rate', 'node_bin', 'test_output_dir',
       'whisper_threads', 'NODE_OPTIONS', 'https_proxy']) assert.equal(first.env[key], undefined);
-    assert.equal(path.dirname(first.env.CHATGPT_BUTTON_DATA_DIR), first.directory);
+    assert.equal(path.dirname(first.env.APP_DATA_DIR), first.directory);
     assert.equal(path.dirname(first.env.CODEX_HOME), first.directory);
     assert.equal(first.env.CODEX_SQLITE_HOME, first.env.CODEX_HOME);
     assert.equal(first.env.NO_PROXY, '127.0.0.1,localhost,::1');
@@ -51,10 +53,10 @@ test('suite selection separates unit, external integrations and native tests', (
 test('desktop environments keep captures separate from disposable application data', () => {
   const environment = createTestEnvironment('desktop', {});
   try {
-    assert.equal(environment.env.VOICE_LINE_TEST_OUTPUT_DIR, environment.outputDirectory);
+    assert.equal(environment.env.TEST_OUTPUT_DIR, environment.outputDirectory);
     assert.match(path.basename(environment.outputDirectory), /^desktop-/);
     assert.equal(path.basename(path.dirname(environment.outputDirectory)), 'test-results');
-    assert.notEqual(environment.outputDirectory, environment.env.CHATGPT_BUTTON_DATA_DIR);
+    assert.notEqual(environment.outputDirectory, environment.env.APP_DATA_DIR);
   } finally { environment.cleanup(); }
 });
 

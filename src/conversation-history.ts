@@ -88,7 +88,7 @@ export function mapConversationTurns(turns: any[], onlyTurnId?: string, includeI
 }
 export async function hydrateConversationExchanges(mapped: MappedConversationExchange[], cwd?: string, dataDirectory?: string): Promise<ConversationExchange[]> {
   if (cwd) {
-    const store = new ArtifactStore(dataDirectory ?? resolve(cwd, '.chatgpt-button'));
+    const store = new ArtifactStore(dataDirectory ?? resolve(cwd, '.app-data'));
     await Promise.all(mapped.flatMap(entry => entry.blobs).map(blob => store.ensure(blob.image, blob.bytes)));
   }
   return mapped.map(entry => entry.exchange);

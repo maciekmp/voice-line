@@ -80,7 +80,7 @@ test('validates base64 PCM alignment, declared length and format before playback
 
 test('sends 24 kHz speech with a VAD silence tail, drains playback, saves separate metadata', async t => {
   const { cwd, path, client } = fixture(t);
-  writeFileSync(join(cwd, '.chatgpt-button-session.json'), 'original-local-session');
+  writeFileSync(join(cwd, '.session.json'), 'original-local-session');
   const reply = await client.respondAudio(path);
   assert.deepEqual(reply, { prompt: 'Co słychać?', answer: 'Wszystko dobrze.' });
   const audio = client.calls.find(c => c.method === 'thread/realtime/appendAudio')!.params.audio;
@@ -89,9 +89,9 @@ test('sends 24 kHz speech with a VAD silence tail, drains playback, saves separa
   assert.ok(client.player.finished); assert.equal(client.player.chunks.length, 1);
   assert.equal(client.calls.at(-1)!.method, 'thread/realtime/stop');
   assert.deepEqual(client.currentExchanges, [{ question: reply.prompt, answer: reply.answer }]);
-  const metadata = JSON.parse(readFileSync(join(cwd, '.chatgpt-button-realtime-session.json'), 'utf8'));
+  const metadata = JSON.parse(readFileSync(join(cwd, '.realtime-session.json'), 'utf8'));
   assert.deepEqual(Object.keys(metadata).sort(), ['lastAnswerAt', 'threadId']);
-  assert.equal(readFileSync(join(cwd, '.chatgpt-button-session.json'), 'utf8'), 'original-local-session');
+  assert.equal(readFileSync(join(cwd, '.session.json'), 'utf8'), 'original-local-session');
 });
 
 test('voice/text exchanges within the budget reach subsequent audio prompts in order', async t => {
@@ -188,7 +188,7 @@ test('RPC acceptance is not startup success: async auth error fails without uplo
   await assert.rejects(client.respondAudio(path), /requires API key auth/);
   assert.ok(!client.calls.some(c => c.method.endsWith('/appendAudio')));
   assert.equal(client.calls.at(-1)!.method, 'thread/realtime/stop');
-  assert.ok(!existsSync(join(cwd, '.chatgpt-button-realtime-session.json')));
+  assert.ok(!existsSync(join(cwd, '.realtime-session.json')));
 });
 
 test('final transcript permits trailing audio to drain; wrong-thread completion is ignored', async t => {
@@ -223,7 +223,7 @@ test('abort stops playback and rejects the request; late audio cannot restart pl
   controller.abort(); client.emit('outputAudio/delta', { audio: chunk });
   await assert.rejects(task, /Cancelled/);
   assert.equal(client.player.chunks.length, 1); assert.ok(client.player.stopped);
-  assert.ok(!existsSync(join(cwd, '.chatgpt-button-realtime-session.json')));
+  assert.ok(!existsSync(join(cwd, '.realtime-session.json')));
 });
 
 test('audio delayed beyond completion while playback drains cannot commit a partial answer', async t => {
@@ -237,7 +237,7 @@ test('audio delayed beyond completion while playback drains cannot commit a part
   finish(); await rejected;
   assert.equal(client.player.chunks.length, 1);
   assert.equal(client.currentExchanges.length, 0);
-  assert.equal(existsSync(join(cwd, '.chatgpt-button-realtime-session.json')), false);
+  assert.equal(existsSync(join(cwd, '.realtime-session.json')), false);
 });
 
 test('failed realtime stop after playback leaves the answer uncommitted', async t => {
@@ -255,7 +255,7 @@ test('failed realtime stop after playback leaves the answer uncommitted', async 
   };
   await assert.rejects(client.respondAudio(path), /stop failed/);
   assert.equal(client.currentExchanges.length, 0);
-  assert.equal(existsSync(join(cwd, '.chatgpt-button-realtime-session.json')), false);
+  assert.equal(existsSync(join(cwd, '.realtime-session.json')), false);
 });
 
 test('restart keeps committed realtime IDs and excludes transcripts from an aborted operation', async t => {

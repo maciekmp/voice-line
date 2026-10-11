@@ -1,4 +1,10 @@
-# ChatGPT Button (Windows prototype)
+# Voice Line (Windows prototype)
+
+Voice Line is the application's product name; its npm package is `voice-line`.
+
+Configuration uses `VOICE`, `TTS_RATE` and `APP_DATA_DIR`. The default data root
+is `%LOCALAPPDATA%\VoiceLine`; project previews and diagnostics use `.app-data/`.
+Previous prototype settings and data paths are not read or migrated.
 
 Hold the Copilot key to record. Release it to transcribe locally with whisper.cpp, then send the transcript to Codex app-server. A single Codex turn cleans the question and generates an answer in a persistent conversation. Hear the reply through Windows SAPI or local Piper TTS. Press the key again while the reply is playing to interrupt it. `npm start` runs the voice loop together with an Electron conversation panel and desktop orb, using the signed-in Codex account without an `OPENAI_API_KEY`. `npm run start:cli` runs the terminal-only voice loop with the same default app-server backend. The assistant is currently instructed to clean questions and answer in Polish.
 
@@ -14,7 +20,7 @@ Voice orchestration lives in `src/voice/local-engine.ts` and `src/voice/realtime
 - A working microphone visible to FFmpeg.
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp) `whisper-server.exe` for the default mode, plus a multilingual GGML model such as `ggml-small.bin`. Keep `whisper-server.exe` beside the executable specified by `WHISPER_BIN`, put it on `PATH` when using the default binary name, or set `WHISPER_SERVER_BIN` explicitly. `whisper-cli.exe` is needed for `STT_MODE=cli` and the STT benchmark. English-only `.en` models cannot transcribe Polish.
 - [Codex CLI](https://learn.chatgpt.com/docs/app-server), available as `codex.cmd` on `PATH`, with your existing ChatGPT login (`codex login` if needed). The default backend uses ephemeral app-server threads. `CODEX_MODE=cli` uses `codex exec --ephemeral`; the application supplies prior messages as context.
-- A Polish Windows SAPI voice for the default TTS mode, or Piper and FFplay for local neural speech. The app selects an installed Polish SAPI voice automatically. To choose a specific installed voice, set `CHATGPT_BUTTON_VOICE` in `.env` to part of its name, for example `CHATGPT_BUTTON_VOICE=Paulina`. List SAPI voices with `powershell -NoProfile -Command "$v=New-Object -ComObject SAPI.SpVoice; $v.GetVoices() | ForEach-Object { $_.GetDescription() }"`.
+- A Polish Windows SAPI voice for the default TTS mode, or Piper and FFplay for local neural speech. The app selects an installed Polish SAPI voice automatically. To choose a specific installed voice, set `VOICE` in `.env` to part of its name, for example `VOICE=Paulina`. List SAPI voices with `powershell -NoProfile -Command "$v=New-Object -ComObject SAPI.SpVoice; $v.GetVoices() | ForEach-Object { $_.GetDescription() }"`.
 
 ## Configure and run
 
@@ -28,8 +34,8 @@ The first Electron launch may download its official runtime binary.
 
 ### Osobna historia aplikacji
 
-Conversation data lives under `%LOCALAPPDATA%\ChatGPTButton`, independent of the
-project directory. `CHATGPT_BUTTON_DATA_DIR` in `.env` can override that root.
+Conversation data lives under `%LOCALAPPDATA%\VoiceLine`, independent of the
+project directory. `APP_DATA_DIR` in `.env` can override that root.
 The Electron host and voice worker use the same path. LOCAL, realtime and
 realtime's ImageGen worker have separate `local-codex`, `realtime-codex` and
 `imagegen-codex` storage directories. Only realtime audio uses its directory as
@@ -156,7 +162,7 @@ this history budget and remain intact. This is a byte limit, not an estimate of
 model tokens. The stored history, export and undo retain all committed exchanges;
 only the context sent with a new request is shortened.
 
-Realtime uses `%LOCALAPPDATA%\ChatGPTButton\realtime-codex` as its dedicated Codex home, including API credentials, history, retention index and `session.json` metadata. The account login RPC stores the API key in that dedicated home's credential store. History is restored from Codex's paginated timeline, including voice transcripts and typed answers. The two-minute expiry, durable previous-conversation control and 24-hour retention also apply to this separate session.
+Realtime uses `%LOCALAPPDATA%\VoiceLine\realtime-codex` as its dedicated Codex home, including API credentials, history, retention index and `session.json` metadata. The account login RPC stores the API key in that dedicated home's credential store. History is restored from Codex's paginated timeline, including voice transcripts and typed answers. The two-minute expiry, durable previous-conversation control and 24-hour retention also apply to this separate session.
 
 Available `CODEX_REALTIME_VOICE` values in 0.161.0: `alloy`, `arbor`, `ash`, `ballad`, `breeze`, `cedar`, `coral`, `cove`, `echo`, `ember`, `juniper`, `maple`, `marin`, `sage`, `shimmer`, `sol`, `spruce`, `vale`, `verse`.
 
@@ -174,7 +180,7 @@ PIPER_BIN=C:\path\to\piper\piper.exe
 PIPER_MODEL=C:\path\to\pl_PL-gosia-medium.onnx
 ```
 
-FFplay must be available on `PATH`, or set `FFPLAY_BIN` to its executable. The app pipes Piper's 16-bit mono PCM into FFplay as it is synthesized and reads the sample rate from the voice JSON. Piper runs locally without an API key. Switch back with `TTS_MODE=sapi`. On this machine, the trial files are under `.chatgpt-button/piper/` and are ignored by Git.
+FFplay must be available on `PATH`, or set `FFPLAY_BIN` to its executable. The app pipes Piper's 16-bit mono PCM into FFplay as it is synthesized and reads the sample rate from the voice JSON. Piper runs locally without an API key. Switch back with `TTS_MODE=sapi`. On this machine, the trial files are under `.app-data/piper/` and are ignored by Git.
 
 To compare Whisper CPU thread counts on exactly the same speech, add `SAVE_AUDIO=1` to `.env`, record one question, and use the printed WAV path with `npm run bench:stt -- "C:\path\to\recording.wav"`. The script loads the configured model with 4 and 8 threads and transcribes the WAV twice per setting. Compare the second run and its text; model loading is shown separately. Set `WHISPER_THREADS` in `.env` to the faster value, then remove `SAVE_AUDIO=1` when finished. Results vary with the machine, audio length, and system load; `.env.example` leaves the thread count unset.
 
@@ -240,7 +246,7 @@ The desktop orb fades/slides in over 380 ms. Its scale follows measured micropho
 
 `npm run test:desktop` checks positioning, transparency, WebGL, state/pause IPC, audio-reactive scale, conversation snapshots and restoration, safe text rendering, code copying, pinning, error recovery labels, reset, keyboard focus, narrow layout, and orb visibility through a simulated voice cycle. It runs without microphone or Codex calls. It opens native windows and tests clipboard IPC with a mocked write sink; it does not change the system clipboard. Run it explicitly when the desktop is available.
 
-The desktop orb has its own profile and Chromium cache in `%LOCALAPPDATA%\ChatGPTButton\electron\desktop` (cache under `session/`). The desktop preview uses the ignored project-local `.chatgpt-button/electron/preview` directory. Desktop tests use temporary app data and a separate Chromium profile, so they can run while the desktop orb is open. Paths are configured before Electron starts Chromium. Test captures are retained under `.chatgpt-button/test-results/desktop-<id>/`; temporary profiles and data are removed after the run.
+The desktop orb has its own profile and Chromium cache in `%LOCALAPPDATA%\VoiceLine\electron\desktop` (cache under `session/`). The desktop preview uses the ignored project-local `.app-data/electron/preview` directory. Desktop tests use temporary app data and a separate Chromium profile, so they can run while the desktop orb is open. Paths are configured before Electron starts Chromium. Test captures are retained under `.app-data/test-results/desktop-<id>/`; temporary profiles and data are removed after the run.
 
 ## Image generation
 
@@ -291,7 +297,7 @@ npm.cmd run check
 `check` runs strict TypeScript checking followed by `npm test`. `npm test`
 runs 12 unit test files, including tooling checks, without starting voice services,
 native UI, keyboard hooks or inference. Each test run gets temporary
-`CHATGPT_BUTTON_DATA_DIR`, `CODEX_HOME` and `CODEX_SQLITE_HOME` directories.
+`APP_DATA_DIR`, `CODEX_HOME` and `CODEX_SQLITE_HOME` directories.
 The runner does not load `.env`, removes inherited API credentials and cleans up
 its temporary data. Tests needing simulated authentication create their own dummy key.
 
@@ -385,7 +391,7 @@ renderers. Orb component and preview JavaScript remain outside that gradual migr
 
 `npm run probe:imagegen` and `npm run probe:image-history` are explicit experiments,
 excluded from `check`, unit and integration groups. They use real Codex connections
-and keep artifacts under `.chatgpt-button/`. The ImageGen probe inspects account and
+and keep artifacts under `.app-data/`. The ImageGen probe inspects account and
 provider capabilities by default; `--generate`, `--integrated` and `--automatic`
 request real image generation and may consume account/API quota. The history probe
 requires an existing generated-image source and realtime API credentials; it creates
@@ -405,7 +411,7 @@ test history and session metadata without inference. Neither probe is a default 
 - `src/codex-app-server.ts`: keeps [Codex app-server](https://learn.chatgpt.com/docs/app-server) running, reads saved history, resumes conversations, and sends each question as a structured-output turn. See the backend settings above for model and reasoning configuration.
 - `src/codex.ts`: shared Polish assistant instructions and the optional `CODEX_MODE=cli` answer backend, using `codex exec` / `codex exec resume` and an app-server connection for history.
 - `src/conversation-session.ts` and `src/conversation-history.ts`: session metadata, two-minute expiry, previous-conversation restoration, and paginated Codex history loading.
-- `src/speaker.ts`: prewarms a Windows SAPI voice when the app starts and keeps the PowerShell worker between answers. A new key press interrupts speech and starts a fresh worker while recording. Speaking rate defaults to `2` on SAPI's `-10` to `10` scale; set `CHATGPT_BUTTON_TTS_RATE=0` in `.env` for the former pace.
+- `src/speaker.ts`: prewarms a Windows SAPI voice when the app starts and keeps the PowerShell worker between answers. A new key press interrupts speech and starts a fresh worker while recording. Speaking rate defaults to `2` on SAPI's `-10` to `10` scale; set `TTS_RATE=0` in `.env` for the former pace.
 - `src/piper-speaker.ts`: optional local Piper voice streamed to FFplay. Each utterance starts a Piper process; a new key press stops both Piper and FFplay.
 
 The answer layer currently waits for the full structured Codex reply before TTS;

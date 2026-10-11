@@ -43,12 +43,12 @@ export class CodexRealtime extends CodexAppServer {
   constructor(cwd: string, storage?: AppStorage, imageStorage?: AppStorage,
     config: { codex: CodexConfig; realtime: RealtimeConfig } = { codex: loadCodexConfig(), realtime: loadRealtimeConfig() }) {
     const apiKey = config.realtime.apiKey;
-    super(cwd, storage?.session ?? new ConversationSession(cwd, Date.now, '.chatgpt-button-realtime-session.json'), false,
-      { home: storage?.home ?? resolve(cwd, '.chatgpt-button', 'realtime-codex'), apiKey, storage, config: config.codex });
+    super(cwd, storage?.session ?? new ConversationSession(cwd, Date.now, '.realtime-session.json'), false,
+      { home: storage?.home ?? resolve(cwd, '.app-data', 'realtime-codex'), apiKey, storage, config: config.codex });
     this.dataDirectory = storage?.dataDirectory;
     this.apiKey = apiKey;
     this.artifactsCwd = cwd;
-    this.imageWorker = new CodexAppServer(cwd, imageStorage?.session ?? new ConversationSession(cwd, Date.now, '.chatgpt-button-imagegen-session.json'), true,
+    this.imageWorker = new CodexAppServer(cwd, imageStorage?.session ?? new ConversationSession(cwd, Date.now, '.imagegen-session.json'), true,
       { home: imageStorage?.home, storage: imageStorage, config: config.codex });
     this.voice = config.realtime.voice;
     this.realtimeModel = config.realtime.model;
@@ -106,7 +106,7 @@ export class CodexRealtime extends CodexAppServer {
         cursors.add(page.nextCursor);
       } while (true);
       const mapped = mapRealtimeHistory(entries);
-      const store = new ArtifactStore(this.dataDirectory ?? resolve(this.artifactsCwd, '.chatgpt-button'));
+      const store = new ArtifactStore(this.dataDirectory ?? resolve(this.artifactsCwd, '.app-data'));
       await Promise.all(mapped.blobs.map(blob => store.ensure(blob.image, blob.bytes)));
       const history = legacy ?? mapped.history;
       const links = await readImageLinks(this.artifactsCwd, threadId, this.dataDirectory);

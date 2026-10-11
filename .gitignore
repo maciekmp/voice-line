@@ -1,7 +1,13 @@
+.app-data/
+.session.json
+.realtime-session.json
+.imagegen-session.json
+.env
+*.wav
+node_modules/
+
+# Archived prototype artifacts; never include their credentials or recordings in Git.
 .chatgpt-button/
 .chatgpt-button-session.json
 .chatgpt-button-realtime-session.json
 .chatgpt-button-imagegen-session.json
-.env
-*.wav
-node_modules/

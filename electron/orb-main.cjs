@@ -14,10 +14,10 @@ const { conversationMarkdown } = require('./conversation-export.cjs');
 
 const smokeTest = process.argv.includes('--smoke-test');
 const dataDirectory = process.argv.includes('--preview')
-  ? path.join(__dirname, '..', '.chatgpt-button') : appDataDirectory();
+  ? path.join(__dirname, '..', '.app-data') : appDataDirectory();
 const imageDirectory = path.join(dataDirectory, 'images');
-const outputDirectory = smokeTest ? process.env.VOICE_LINE_TEST_OUTPUT_DIR || path.join(dataDirectory, 'captures')
-  : path.join(__dirname, '..', '.chatgpt-button');
+const outputDirectory = smokeTest ? process.env.TEST_OUTPUT_DIR || path.join(dataDirectory, 'captures')
+  : path.join(__dirname, '..', '.app-data');
 if (smokeTest) mkdirSync(outputDirectory, { recursive: true });
 let savingConversation = false;
 // Set these before Chromium initializes. Keep the orb away from other Electron
@@ -27,7 +27,7 @@ const profileDirectory = smokeTest || process.argv.includes('--preview')
   : path.join(appDataDirectory(), 'electron', 'desktop');
 const sessionDirectory = path.join(profileDirectory, 'session');
 mkdirSync(sessionDirectory, { recursive: true });
-app.setName('Voice Line Orb');
+app.setName('Voice Line');
 app.setPath('userData', profileDirectory);
 app.setPath('sessionData', sessionDirectory);
 // Leave transparent space for entry/exit motion and Windows' minimum window size.
@@ -88,7 +88,7 @@ const onEngineMessage = createWorkerEventReceiver({
 const engineSupervisor = createEngineSupervisor({
   launch() {
     sendVoice({ state: 'starting', ready: false });
-    return spawn(process.env.VOICE_LINE_NODE || 'node',
+    return spawn(process.env.NODE_BIN || 'node',
     ['--env-file-if-exists=.env', '--experimental-strip-types', 'src/main.ts', '--desktop', ...(process.argv.includes('--debug') ? ['--debug'] : [])],
     { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'inherit', 'inherit', 'ipc'], windowsHide: true });
   },

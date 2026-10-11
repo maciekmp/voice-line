@@ -14,7 +14,7 @@ const reply = { prompt: 'Pytanie', answer: 'Odpowiedź' };
 
 function fixture(t: TestContext) {
   const cwd = mkdtempSync(join(tmpdir(), 'voice-line-session-'));
-  const file = join(cwd, '.chatgpt-button-session.json');
+  const file = join(cwd, '.session.json');
   t.after(() => { if (existsSync(file)) unlinkSync(file); rmdirSync(cwd); });
   return { cwd, file };
 }
@@ -227,7 +227,7 @@ test('restart restores visible messages with their context, including undo after
   assert.equal(expired.restorePrevious(), true);
   assert.equal(expired.threadId, firstId);
   assert.deepEqual(expired.currentExchanges, expected);
-  assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(cwd, '.chatgpt-button-session.json'), 'utf8'))).sort(), ['lastAnswerAt', 'threadId']);
+  assert.deepEqual(Object.keys(JSON.parse(readFileSync(join(cwd, '.session.json'), 'utf8'))).sort(), ['lastAnswerAt', 'threadId']);
 });
 
 test('undo restores expired and reset conversations, renews their deadline, and can switch back', t => {
