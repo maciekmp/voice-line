@@ -32,13 +32,13 @@ export abstract class BaseVoiceEngine implements VoiceEngine {
   expireConversation() { this.client.expireConversation(); }
   async maintainHistory() { return await this.client.maintainHistory?.() ?? false; }
   restorePrevious(signal?: AbortSignal) { return this.client.restorePrevious(signal); }
-  respond(text: string, signal?: AbortSignal) {
+  respond(text: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text') {
     const image = this.mode === 'local' ? explicitImageRequest(text) : imageRequest(text);
-    return image ? this.generateImage(image, signal) : this.client.respond(text, signal);
+    return image ? this.generateImage(image, signal, questionSource) : this.client.respond(text, signal, questionSource);
   }
-  generateImage(text: string, signal?: AbortSignal) {
+  generateImage(text: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text') {
     if (!this.client.generateImage) return Promise.reject(new Error('ImageGen jest niedostępny.'));
-    return this.client.generateImage(text, signal);
+    return this.client.generateImage(text, signal, questionSource);
   }
   abstract respondAudio(wav: string, signal?: AbortSignal, callbacks?: VoiceCallbacks): Promise<VoiceReply>;
 }

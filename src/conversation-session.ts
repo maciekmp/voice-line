@@ -95,6 +95,7 @@ export class ConversationSession {
       const committed = this.state.exchanges[baseline.length];
       exchanges.push(committed ? copyExchange(committed) : {
         id: partial.exchangeId ?? randomUUID(), revision: 1, question: partial.prompt, answer: partial.answer, interrupted: true,
+        ...(partial.questionSource && { questionSource: partial.questionSource }),
       });
     }
     let next = hydrateSession(this.state, this.threadId, exchanges);

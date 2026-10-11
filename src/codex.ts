@@ -61,16 +61,16 @@ export class CodexClient {
     await this.start();
     return this.historyServer!.restorePrevious(signal);
   }
-  async generateImage(raw: string, signal?: AbortSignal): Promise<VoiceReply> {
+  async generateImage(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text'): Promise<VoiceReply> {
     await this.start();
-    return this.historyServer!.generateImage(raw, signal);
+    return this.historyServer!.generateImage(raw, signal, questionSource);
   }
-  async respond(raw: string, signal?: AbortSignal): Promise<VoiceReply> {
+  async respond(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text'): Promise<VoiceReply> {
     await this.start();
     // Ephemeral exec cannot be read by a separate process after it exits.
     // Route recognizable image requests to the live server, which supplies pixels.
     const image = this.storage?.ephemeral ? imageRequest(raw) : null;
-    if (image) return this.historyServer!.generateImage(image, signal);
+    if (image) return this.historyServer!.generateImage(image, signal, questionSource);
     const release = this.storage ? await this.historyServer!.beginExternalTurn() : undefined;
     try {
       this.session.expire();
@@ -95,6 +95,7 @@ export class CodexClient {
       try { reply = JSON.parse(result.text); }
       catch { throw new Error(`Codex returned invalid JSON: ${result.text}`); }
       if (typeof reply.prompt !== 'string' || typeof reply.answer !== 'string' || !reply.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
+      reply.questionSource = questionSource;
       if (exchangeId) reply.exchangeId = exchangeId;
       if (result.images?.length) reply.images = result.images;
       if (ephemeral) this.session.threadId ??= randomUUID();

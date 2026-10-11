@@ -55,7 +55,7 @@ function registerDesktopIpc(ipcMain, host) {
     if (!trusted(event) || host.exitStarted || typeof text !== 'string' || !text.trim() || text.length > 12000
       || !host.voice.ready || !host.engine?.connected || !['idle', 'error'].includes(host.voice.state)) return false;
     overlay.intent('text-input');
-    sendVoice({ state: 'thinking', question: text.trim(), answer: '' });
+    sendVoice({ state: 'thinking', question: text.trim(), answer: '', questionSource: 'text' });
     host.engine.send({ command: 'text', text: text.trim() });
     return true;
   });

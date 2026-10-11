@@ -1,10 +1,11 @@
+export type QuestionSource = 'voice' | 'text';
 export type GeneratedImage = { id: string; alt: string };
 // Serialized legacy field `threadId` identifies the application image conversation.
 // Providers resolve CodexThreadId separately; turnId is the remote generation turn.
 export type ImageTask = { threadId: string; turnId: string };
 
-export type ConversationExchange = { id?: string; revision?: number; interrupted?: boolean; question: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask };
-export type VoiceReply = { exchangeId?: string; interrupted?: boolean; prompt: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask; startupMs?: number; turnMs?: number };
+export type ConversationExchange = { id?: string; revision?: number; interrupted?: boolean; questionSource?: QuestionSource; question: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask };
+export type VoiceReply = { exchangeId?: string; interrupted?: boolean; questionSource?: QuestionSource; prompt: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask; startupMs?: number; turnMs?: number };
 export type ConversationCheckpoint = { id: string | null; exchanges: ConversationExchange[] };
 
 export interface ConversationClient {
@@ -19,8 +20,8 @@ export interface ConversationClient {
   readonly canRestorePrevious: boolean;
   expireConversation(): void;
   restorePrevious(signal?: AbortSignal): Promise<boolean>;
-  respond(text: string, signal?: AbortSignal): Promise<VoiceReply>;
-  generateImage?(text: string, signal?: AbortSignal): Promise<VoiceReply>;
+  respond(text: string, signal?: AbortSignal, questionSource?: QuestionSource): Promise<VoiceReply>;
+  generateImage?(text: string, signal?: AbortSignal, questionSource?: QuestionSource): Promise<VoiceReply>;
   maintainHistory?(): Promise<boolean>;
 }
 

@@ -34,7 +34,7 @@ export class RealtimeVoiceEngine extends BaseVoiceEngine {
     } catch (error) {
       if (!requestedImage || signal?.aborted || !(error instanceof Error) || error.message !== 'Cancelled') throw error;
       callbacks.onUpdate?.('thinking', { question, answer: '' });
-      return await this.generateImage(requestedImage, signal);
+      return await this.generateImage(requestedImage, signal, 'voice');
     } finally { signal?.removeEventListener('abort', abort); }
   }
 }

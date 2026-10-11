@@ -13,6 +13,7 @@ function images(value) {
 /** @param {unknown} value */
 function exchange(value) {
   return record(value) && typeof value.question === 'string' && typeof value.answer === 'string'
+    && (value.questionSource === undefined || value.questionSource === 'voice' || value.questionSource === 'text')
     && (value.interrupted === undefined || typeof value.interrupted === 'boolean')
     && (value.id === undefined || identifier(value.id)) && (value.revision === undefined || revision(value.revision))
     && (value.images === undefined || images(value.images))
@@ -26,19 +27,22 @@ function conversation(value) {
   if (new Set(ids).size !== ids.length) return false;
   const pending = value.pending;
   return pending === null || (record(pending) && identifier(pending.id) && revision(pending.revision)
-    && typeof pending.question === 'string' && typeof pending.answer === 'string');
+    && typeof pending.question === 'string' && typeof pending.answer === 'string'
+    && (pending.questionSource === undefined || pending.questionSource === 'voice' || pending.questionSource === 'text'));
 }
 /** @param {import('./application-contract.ts').ConversationView} value */
 function copyConversation(value) {
   return { id: value.id, revision: value.revision,
     completed: value.completed.map(item => ({ question: item.question, answer: item.answer,
+      ...(item.questionSource !== undefined && { questionSource: item.questionSource }),
       ...(item.interrupted !== undefined && { interrupted: item.interrupted }),
       ...(item.id !== undefined && { id: item.id }), ...(item.revision !== undefined && { revision: item.revision }),
       ...(item.images !== undefined && { images: item.images.map(image => ({ id: image.id, alt: image.alt })) }),
       ...(item.imageTask !== undefined && { imageTask: { threadId: item.imageTask.threadId, turnId: item.imageTask.turnId } }),
     })),
     pending: value.pending && { id: value.pending.id, revision: value.pending.revision,
-      question: value.pending.question, answer: value.pending.answer },
+      question: value.pending.question, answer: value.pending.answer,
+      ...(value.pending.questionSource !== undefined && { questionSource: value.pending.questionSource }) },
   };
 }
 

@@ -11,7 +11,7 @@ export type DesktopVoice = {
   state: ApplicationState; ready: boolean; health?: ServiceHealth; mode?: 'local' | 'realtime';
   threadId?: string | null; canRestorePrevious?: boolean; revision?: number; operationId?: number | null;
   generatingImage?: boolean; question: string; answer: string; message: string;
-  interrupted?: boolean;
+  interrupted?: boolean; questionSource?: import('./conversation-contract.ts').QuestionSource;
   images: GeneratedImage[]; history: ConversationExchange[]; conversation: ConversationView;
 };
 export type DesktopEvent =

@@ -43,6 +43,10 @@ body[data-mode="compose"] :is(#history, #transcript) { display: none; }
 body[data-mode="compose"] main:not(:has(#status:not([hidden]), #error:not([hidden]), #retry:not([hidden]))) { display: none; }
 .interrupted-status { color: var(--color-muted); }
 article + article { margin-top: 8px; }
+.message-row { display: grid; grid-template-columns: 14px minmax(0, 1fr); column-gap: 8px; align-items: start; }
+.message-icon { width: 14px; height: 14px; margin-top: 2px; opacity: .65; pointer-events: none; }
+.message-row > :not(.message-icon) { min-width: 0; }
+#images, .message-attachments { margin-left: 22px; }
 p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 #question { color: var(--color-muted); }
 .generated-image { margin: 8px 0 0; }

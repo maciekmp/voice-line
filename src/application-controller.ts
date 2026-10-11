@@ -106,6 +106,7 @@ export class ApplicationController {
           revision: ++this.pendingRevision,
           question: typeof extra.question === 'string' ? extra.question : this.pendingExchange?.question ?? '',
           answer: typeof extra.answer === 'string' ? extra.answer : this.pendingExchange?.answer ?? '',
+          questionSource: extra.questionSource === 'voice' || extra.questionSource === 'text' ? extra.questionSource : this.pendingExchange?.questionSource,
         };
       }
     }
@@ -162,7 +163,7 @@ export class ApplicationController {
       if (operation) {
         const partial = playback ? {
           prompt: pending?.question || 'Wiadomość głosowa (transkrypcja niedostępna)',
-          answer: pending?.answer || '', interrupted: true } : undefined;
+          answer: pending?.answer || '', questionSource: pending?.questionSource, interrupted: true } : undefined;
         this.options.engine.interruptTurn?.(operation.checkpoint, partial);
       }
       this.revision++;
@@ -193,7 +194,8 @@ export class ApplicationController {
     if (previous && !engine.currentThreadId) {
       this.revision++; if (this.current) this.current.revision = this.revision;
       const question = this.pendingExchange?.question;
-      this.publish('thinking', { reset: true, ...(question && { question, answer: '' }) });
+      const questionSource = this.pendingExchange?.questionSource;
+      this.publish('thinking', { reset: true, ...(question && { question, answer: '', questionSource }) });
     }
   }
   private queue(operation: Operation, work: () => Promise<void>, fallback: string, cleanup?: () => Promise<void>): Promise<void> {
@@ -234,7 +236,7 @@ export class ApplicationController {
   private confirmRecording(): void {
     if (!this.held) return;
     if (this.options.desktop) this.options.emit({ type: 'ui', action: 'voice-input' });
-    this.log.log('Recording...'); this.publish('listening', { question: '', answer: '' });
+    this.log.log('Recording...'); this.publish('listening', { question: '', answer: '', questionSource: 'voice' });
   }
   private async releaseRecording(): Promise<void> {
     if (!this.held) return;
@@ -324,7 +326,7 @@ export class ApplicationController {
     const operation = this.operation();
     if (message.command === 'text') {
       if (this.options.desktop) this.options.emit({ type: 'ui', action: 'text-input' });
-      this.publish('thinking', { question: message.text, answer: '', generatingImage: Boolean(imageRequest(message.text)) });
+      this.publish('thinking', { question: message.text, answer: '', questionSource: 'text', generatingImage: Boolean(imageRequest(message.text)) });
       await this.queue(operation, async () => {
         this.prepareConversation(); await this.options.engine.respond(message.text, operation.controller.signal);
         if (this.live(operation)) this.completed();

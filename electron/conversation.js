@@ -1,6 +1,7 @@
 import { renderAnswer } from './answer-renderer.js';
 import { renderImages, refreshImageVisibility } from './image-renderer.js';
 import { createHistoryRenderer } from './history-renderer.js';
+import { decorateNotice, setMessageIcon, setQuestionIcon } from './message-icons.js';
 
 /** @typedef {{pin: HTMLButtonElement, previous: HTMLButtonElement, retry: HTMLButtonElement,
  * composer: HTMLFormElement, message: HTMLTextAreaElement, history: HTMLElement, status: HTMLElement,
@@ -26,6 +27,10 @@ let composing = false;
 let resizeFrame;
 let scrollToLatest = false;
 const historyRenderer = createHistoryRenderer(get('history'));
+const statusText = decorateNotice(get('status'), 'info');
+const errorText = decorateNotice(get('error'), 'error');
+decorateNotice(get('empty'), 'info');
+setMessageIcon(get('answer-block'), 'answer');
 function reportComposerFocus() {
   window.orbDesktop.composerFocus(document.hasFocus() && document.activeElement === get('message') && !get('composer').hidden);
 }
@@ -119,10 +124,11 @@ window.orbDesktop.onVoice(value => {
   get('history').hidden = document.body.dataset.mode !== 'chat' || !history.length;
   refreshImageVisibility();
   if (nearBottom) scrollToLatest = true;
-  get('status').textContent = value.interrupted ? 'Odpowiedź przerwana' : value.state === 'thinking' && value.generatingImage ? 'Generuję obraz…' : labels[value.state] || '';
+  statusText.textContent = value.interrupted ? 'Odpowiedź przerwana' : value.state === 'thinking' && value.generatingImage ? 'Generuję obraz…' : labels[value.state] || '';
   get('status').hidden = (!value.interrupted && Boolean(value.answer) && !['thinking', 'starting'].includes(value.state)) || !get('status').textContent;
   get('error').hidden = !value.message;
-  get('error').textContent = value.message || '';
+  errorText.textContent = value.message || '';
+  setQuestionIcon(get('question-block'), value.questionSource);
   get('retry').hidden = value.state !== 'error' || value.ready;
   for (const key of /** @type {const} */ (['question', 'answer'])) {
     if (key === 'answer') {
@@ -162,11 +168,11 @@ get('composer').addEventListener('submit', async event => {
       get('message').value = '';
       resizeMessage();
     } else {
-      get('error').textContent = 'Nie wysłano wiadomości. Poczekaj na gotowość usług i spróbuj ponownie.';
+      errorText.textContent = 'Nie wysłano wiadomości. Poczekaj na gotowość usług i spróbuj ponownie.';
       get('error').hidden = false;
     }
   } catch {
-    get('error').textContent = 'Nie wysłano wiadomości. Spróbuj ponownie.';
+    errorText.textContent = 'Nie wysłano wiadomości. Spróbuj ponownie.';
     get('error').hidden = false;
   } finally { pending = false; updateComposer(); }
 });

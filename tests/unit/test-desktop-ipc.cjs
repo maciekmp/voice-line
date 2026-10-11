@@ -75,7 +75,7 @@ test('desktop text boundary validates sender, readiness, size and worker connect
   host.voice.ready = true;
   assert.equal(text(event(), '  pytanie\n'), true);
   assert.deepEqual(sent, [{ command: 'text', text: 'pytanie' }]);
-  assert.deepEqual(updates, [{ state: 'thinking', question: 'pytanie', answer: '' }]);
+  assert.deepEqual(updates, [{ state: 'thinking', question: 'pytanie', answer: '', questionSource: 'text' }]);
 });
 
 test('desktop uses the current worker after restart and drops commands during shutdown', () => {

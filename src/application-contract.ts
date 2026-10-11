@@ -5,7 +5,7 @@ export type ApplicationCommand = { command: 'text'; text: string }
 export type ServiceHealth = 'starting' | 'ready' | 'error' | 'stopped';
 export type ResponsePhase = 'transcribing' | 'thinking' | 'preparing-speech' | 'speaking';
 export type ApplicationState = ResponsePhase | 'starting' | 'idle' | 'listening' | 'error';
-export type PendingExchange = { id: string; revision: number; question: string; answer: string };
+export type PendingExchange = { id: string; revision: number; question: string; answer: string; questionSource?: import('./conversation-contract.ts').QuestionSource };
 export type ConversationView = {
   id: string | null; revision: number; completed: ConversationExchange[]; pending: PendingExchange | null;
 };

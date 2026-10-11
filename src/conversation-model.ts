@@ -30,6 +30,7 @@ export function copyExchange(exchange: ConversationExchange): ConversationExchan
 }
 export function validExchange(item: any): item is ConversationExchange {
   return !!item && typeof item.question === 'string' && typeof item.answer === 'string'
+    && (item.questionSource === undefined || item.questionSource === 'voice' || item.questionSource === 'text')
     && (item.interrupted === undefined || typeof item.interrupted === 'boolean')
     && (item.id === undefined || (typeof item.id === 'string' && /^[a-z\d_-]{1,128}$/i.test(item.id)))
     && (item.revision === undefined || (Number.isSafeInteger(item.revision) && item.revision >= 1))
@@ -42,6 +43,7 @@ export function validExchange(item: any): item is ConversationExchange {
 export function answerSession(state: SessionState, reply: VoiceReply, now: number): SessionState {
   if (!state.threadId) return state;
   const exchange = { question: reply.prompt, answer: reply.answer,
+    ...(reply.questionSource && { questionSource: reply.questionSource }),
     ...(reply.interrupted && { interrupted: true }),
     ...(reply.exchangeId && { id: reply.exchangeId, revision: 1 }),
     ...(reply.images?.length && { images: reply.images }), ...(reply.imageTask && { imageTask: reply.imageTask }) };

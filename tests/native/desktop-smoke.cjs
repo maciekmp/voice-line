@@ -620,6 +620,39 @@ async function verifyDesktop(host) {
   openPanel();
   await new Promise(resolve => setTimeout(resolve, 350));
   await fs.writeFile(chatOutput, (await panelWindow.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+  const iconCompleted = [
+    { id: 'icon-voice', revision: 1, question: 'Pytanie mówione', answer: 'Odpowiedź na pytanie mówione.', questionSource: 'voice', interrupted: true },
+    { id: 'icon-text', revision: 1, question: 'Pytanie pisane', answer: 'Odpowiedź na pytanie pisane.', questionSource: 'text' },
+    { id: 'icon-legacy', revision: 1, question: 'Starsze pytanie', answer: 'Odpowiedź bez informacji o źródle.' },
+  ];
+  host.sendVoice({ state: 'thinking', ready: true, message: 'Przykładowy komunikat błędu.',
+    conversation: { id: 'icon-preview', revision: 1, completed: iconCompleted,
+      pending: { id: 'icon-pending', revision: 1, question: 'Bieżące pytanie pisane', answer: '', questionSource: 'text' } } });
+  await new Promise(resolve => setTimeout(resolve, 250));
+  const iconState = await panelWindow.webContents.executeJavaScript(`(() => {
+    const icon = document.querySelector('#question-block > .message-icon');
+    const style = getComputedStyle(icon);
+    const row = getComputedStyle(icon.parentElement);
+    return { current: icon.parentElement.dataset.messageIcon, label: icon.parentElement.getAttribute('aria-label'),
+      history: [...document.querySelectorAll('#history .previous-question')].map(node => node.dataset.messageIcon),
+      answers: document.querySelectorAll('#history .previous-answer > .message-icon').length,
+      interruption: document.querySelector('.interrupted-status').dataset.messageIcon,
+      status: document.querySelector('#status').dataset.messageIcon, error: document.querySelector('#error').dataset.messageIcon,
+      width: style.width, height: style.height, opacity: style.opacity, gap: row.columnGap,
+      decorative: icon.getAttribute('aria-hidden'), focusable: icon.getAttribute('focusable'),
+      noOverflow: document.documentElement.scrollWidth <= innerWidth };
+  })()`);
+  assert.deepEqual(iconState, { current: 'keyboard', label: 'Twoje pytanie pisane', history: ['mic', 'keyboard', 'question'],
+    answers: 3, interruption: 'info', status: 'info', error: 'error', width: '14px', height: '14px', opacity: '0.65', gap: '8px',
+    decorative: 'true', focusable: 'false', noOverflow: true });
+  await panelWindow.webContents.executeJavaScript('scrollTo(0, 0)');
+  await fs.writeFile(path.join(outputDirectory, 'electron-message-icons.png'), (await panelWindow.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
+  host.sendVoice({ conversation: { id: 'icon-preview', revision: 2, completed: [{ ...iconCompleted[0], questionSource: 'text' }], pending: null } });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#question-block').dataset.messageIcon"), 'keyboard');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelectorAll('#answer-block > .message-icon').length"), 1);
+  sendVoice();
+  console.log('Message type icon checks: passed');
   for (let index = 0; index < 10; index++) {
     sendVoice({ state: 'idle', question: `Pytanie ${index}`, answer: 'Poprzednia odpowiedź. '.repeat(8) });
   }

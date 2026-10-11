@@ -1,5 +1,6 @@
 import { renderAnswer } from './answer-renderer.js';
 import { renderImages } from './image-renderer.js';
+import { decorateNotice, setMessageIcon, setQuestionIcon } from './message-icons.js';
 
 /** @typedef {import('../src/conversation-contract.ts').ConversationExchange} Exchange */
 /** @param {Exchange} a @param {Exchange} b */
@@ -9,6 +10,7 @@ function sameImages(a, b) {
 }
 /** @param {Exchange} a @param {Exchange} b */
 function unchanged(a, b) {
+  if (a.questionSource !== b.questionSource) return false;
   if (a.id !== undefined && a.revision !== undefined && b.id !== undefined && b.revision !== undefined) return a.revision === b.revision;
   // Compatibility for synthetic previews and older callers without identity.
   return a.question === b.question && a.answer === b.answer && a.interrupted === b.interrupted && sameImages(a, b);
@@ -43,13 +45,20 @@ export function createHistoryRenderer(container) {
           const question = document.createElement('p'); question.className = 'previous-question'; question.setAttribute('aria-label', 'Twoje pytanie');
           const answer = document.createElement('div'); answer.className = 'previous-answer'; answer.setAttribute('aria-label', 'Odpowiedź');
           const attachments = document.createElement('div');
+          const questionRow = document.createElement('div'); questionRow.className = 'previous-question';
+          question.className = '';
+          questionRow.append(question); setQuestionIcon(questionRow, exchange.questionSource);
+          const answerRow = document.createElement('div'); answerRow.className = 'previous-answer';
+          answerRow.append(answer); setMessageIcon(answerRow, 'answer');
+          attachments.className = 'message-attachments';
           question.textContent = exchange.question;
           renderAnswer(answer, exchange.answer);
-          node.append(question, answer, attachments);
+          node.append(questionRow, answerRow, attachments);
           node.dataset.interrupted = String(!!exchange.interrupted);
           row = { node, question, answer, attachments, exchange, disposeImages: renderImages(attachments, exchange.images, { lazy: true }) };
           rows.set(key, row); stats.created++;
         } else if (!unchanged(row.exchange, exchange)) {
+          setQuestionIcon(/** @type {HTMLElement} */ (row.question.parentElement), exchange.questionSource);
           if (row.exchange.question !== exchange.question) row.question.textContent = exchange.question;
           if (row.exchange.answer !== exchange.answer) renderAnswer(row.answer, exchange.answer);
           if (!sameImages(row.exchange, exchange)) {
@@ -61,7 +70,7 @@ export function createHistoryRenderer(container) {
         let interruption = row.node.querySelector('.interrupted-status');
         if (exchange.interrupted && !interruption) {
           interruption = document.createElement('p'); interruption.className = 'interrupted-status';
-          interruption.textContent = 'Odpowiedź przerwana'; row.node.append(interruption);
+          interruption.textContent = 'Odpowiedź przerwana'; decorateNotice(/** @type {HTMLElement} */ (interruption), 'info'); row.node.append(interruption);
         } else if (!exchange.interrupted) interruption?.remove();
         if (row.node === cursor) cursor = cursor.nextElementSibling;
         else container.insertBefore(row.node, cursor);

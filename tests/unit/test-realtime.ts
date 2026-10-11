@@ -82,13 +82,13 @@ test('sends 24 kHz speech with a VAD silence tail, drains playback, saves separa
   const { cwd, path, client } = fixture(t);
   writeFileSync(join(cwd, '.session.json'), 'original-local-session');
   const reply = await client.respondAudio(path);
-  assert.deepEqual(reply, { prompt: 'Co słychać?', answer: 'Wszystko dobrze.' });
+  assert.deepEqual(reply, { prompt: 'Co słychać?', answer: 'Wszystko dobrze.', questionSource: 'voice' });
   const audio = client.calls.find(c => c.method === 'thread/realtime/appendAudio')!.params.audio;
   assert.equal(audio.sampleRate, 24000); assert.equal(audio.numChannels, 1);
   assert.equal(Buffer.from(audio.data, 'base64').length, realtimePcm(wav()).length + 57600);
   assert.ok(client.player.finished); assert.equal(client.player.chunks.length, 1);
   assert.equal(client.calls.at(-1)!.method, 'thread/realtime/stop');
-  assert.deepEqual(client.currentExchanges, [{ question: reply.prompt, answer: reply.answer }]);
+  assert.deepEqual(client.currentExchanges, [{ question: reply.prompt, answer: reply.answer, questionSource: 'voice' }]);
   const metadata = JSON.parse(readFileSync(join(cwd, '.realtime-session.json'), 'utf8'));
   assert.deepEqual(Object.keys(metadata).sort(), ['lastAnswerAt', 'threadId']);
   assert.equal(readFileSync(join(cwd, '.session.json'), 'utf8'), 'original-local-session');
@@ -174,8 +174,8 @@ test('streams user/assistant transcripts before playback ends, including canonic
   client.emit('transcript/done', { role: 'assistant', text: 'Ignored', }, 'other-thread');
   assert.equal(transcripts.length, 4);
   releasePlayback();
-  assert.deepEqual(await task, { prompt: 'Question', answer: 'Final answer' });
-  assert.deepEqual(client.currentExchanges, [{ question: 'Question', answer: 'Final answer' }]);
+  assert.deepEqual(await task, { prompt: 'Question', answer: 'Final answer', questionSource: 'voice' });
+  assert.deepEqual(client.currentExchanges, [{ question: 'Question', answer: 'Final answer', questionSource: 'voice' }]);
 });
 
 test('RPC acceptance is not startup success: async auth error fails without uploading audio', async t => {
