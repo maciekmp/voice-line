@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { launch } from './process.ts';
 import { ConversationSession } from './conversation-session.ts';
 import type { GeneratedImage } from './conversation-contract.ts';
-import { imageRequest, storeGeneratedImage } from './image-artifacts.ts';
+import { imageRequest, storeGeneratedImage, imageGenerationAnswer } from './image-artifacts.ts';
 import type { AppStorage } from './app-storage.ts';
 import type { VoiceReply, ConversationCheckpoint } from './conversation-contract.ts';
 export type { VoiceReply } from './conversation-contract.ts';
@@ -110,6 +110,7 @@ export class CodexClient {
         if (!latest || latest.question !== reply.prompt || latest.answer !== reply.answer) throw new Error('Codex returned mismatched latest reply history');
         if (latest.images?.length) reply.images = latest.images;
       }
+      reply.answer = imageGenerationAnswer(reply.answer, reply.images);
       if (signal?.aborted || !this.session.matchesOperation(commitOperation)) throw new Error('Cancelled');
       if (this.storage) await this.storage.commitReply(reply, undefined, () => !signal?.aborted && this.session.matchesOperation(commitOperation));
       else this.session.answered(reply);

@@ -572,6 +572,22 @@ async function verifyDesktop(host) {
   overlay.compose();
   await new Promise(resolve => setTimeout(resolve, 350));
   console.log('Popup pin checks: passed');
+  host.testLiveVisibility = true;
+  for (const window of [orbWindow, panelWindow]) {
+    overlay.open(); overlay.togglePin();
+    await new Promise(resolve => setTimeout(resolve, 350));
+    assert.equal(panelWindow.isVisible() && orbWindow.isVisible(), true);
+    window.close();
+    await new Promise(resolve => setTimeout(resolve, 350));
+    assert.equal(orbWindow.isDestroyed() || panelWindow.isDestroyed(), false, 'Native close must preserve both windows');
+    assert.equal(orbWindow.isVisible() || panelWindow.isVisible(), false, 'Native close dismisses both pinned surfaces');
+    assert.deepEqual(overlay.snapshot(), { mode: 'hidden', pinned: false, orbVisible: false });
+  }
+  overlay.compose();
+  await new Promise(resolve => setTimeout(resolve, 350));
+  assert.equal(panelWindow.isVisible() && orbWindow.isVisible(), true, 'Dismissed windows can reopen');
+  host.testLiveVisibility = false;
+  console.log('Paired native close checks: passed');
   const fill = text => panelWindow.webContents.executeJavaScript(`(() => {
     const input = document.querySelector('#message');
     input.value = ${JSON.stringify(text)};

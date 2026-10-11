@@ -5,6 +5,12 @@ export type { ImageLink } from './artifact-store.ts';
 import type { GeneratedImage } from './conversation-contract.ts';
 import type { ImageLink } from './artifact-store.ts';
 
+// Verified artifacts determine generation success, rather than the model's prose.
+export function imageGenerationAnswer(answer: string, images?: GeneratedImage[]): string {
+  if (!images?.length) return answer;
+  return images.length === 1 ? 'Wygenerowano obraz.' : 'Wygenerowano obrazy.';
+}
+
 // Compatibility functions delegate to the shared store used by providers and history hydration.
 function store(cwd: string, dataDirectory?: string): ArtifactStore {
   return new ArtifactStore(dataDirectory ?? resolve(cwd, '.app-data'));

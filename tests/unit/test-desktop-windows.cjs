@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { createWindowAdapter } = require('../../electron/desktop-windows.cjs');
+const { createOverlayController } = require('../../electron/overlay-controller.cjs');
 
 function fixture(options = {}) {
   const created = [], hover = [];
@@ -94,6 +95,30 @@ test('native adapter cancels hide and resize timers on disposal', async t => {
   t.mock.timers.tick(1000);
   assert.equal(f.host.panelWindow.messages.length, messages);
   assert.equal(f.adapter.mode, 'chat', 'Disposed hide timer cannot reset the popup contents');
+});
+
+test('native close of either surface dismisses a pinned pair and preserves windows for reopening', async t => {
+  for (const surface of ['orbWindow', 'panelWindow']) {
+    const f = fixture(); t.after(() => f.adapter.dispose()); await f.adapter.create();
+    const overlay = createOverlayController({ onChange(value) {
+      if (value.orbVisible) { f.host.orbWindow.showInactive(); f.adapter.openPanel(value.mode, false); }
+      else { f.host.orbWindow.hide(); f.adapter.hidePanel(); }
+    } });
+    t.after(() => overlay.dispose());
+    f.host.dismiss = () => overlay.dismiss();
+    overlay.open(); overlay.togglePin();
+    assert.equal(overlay.snapshot().pinned, true);
+    let prevented = false;
+    f.host[surface].emit('close', { preventDefault() { prevented = true; } });
+    assert.equal(prevented, true, `${surface}: native destruction must be prevented`);
+    assert.deepEqual(overlay.snapshot(), { mode: 'hidden', pinned: false, orbVisible: false });
+    assert.equal(f.host.orbWindow.isVisible(), false);
+    assert.equal(f.host.panelWindow.isVisible(), false);
+    overlay.open();
+    assert.equal(f.host.orbWindow.isVisible() && f.host.panelWindow.isVisible(), true);
+    f.host.exiting = () => true;
+    f.host[surface].emit('close', { preventDefault() { assert.fail('Application exit must allow window destruction'); } });
+  }
 });
 
 test('shutdown during orb loading prevents creation of a late panel', async () => {

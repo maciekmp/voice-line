@@ -2,6 +2,7 @@ import type { ConversationExchange } from './conversation-contract.ts';
 import { resolve } from 'node:path';
 import { ArtifactStore, imageFromProtocol } from './artifact-store.ts';
 import type { GeneratedImage } from './conversation-contract.ts';
+import { imageGenerationAnswer } from './image-artifacts.ts';
 
 export type MappedConversationExchange = { exchange: ConversationExchange; blobs: { image: GeneratedImage; bytes: Buffer }[] };
 
@@ -46,7 +47,8 @@ export async function readConversationHistory(request: Request, threadId: string
     }
     turns = history.thread.turns;
   }
-  return hydrateConversationExchanges(mapConversationTurns(turns, onlyTurnId, !!cwd), cwd, dataDirectory);
+  const history = await hydrateConversationExchanges(mapConversationTurns(turns, onlyTurnId, !!cwd), cwd, dataDirectory);
+  return history.map(exchange => ({ ...exchange, answer: imageGenerationAnswer(exchange.answer, exchange.images) }));
 }
 
 export async function readLatestConversationExchange(request: Request, threadId: string, cwd: string, dataDirectory?: string): Promise<ConversationExchange | undefined> {

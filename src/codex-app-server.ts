@@ -8,7 +8,7 @@ import { ConversationSession } from './conversation-session.ts';
 import { readConversationHistory, readLatestConversationExchange } from './conversation-history.ts';
 import type { VoiceReply, ConversationExchange, ConversationCheckpoint } from './conversation-contract.ts';
 import { LOCAL_INSTRUCTIONS } from './codex.ts';
-import { storeGeneratedImage } from './image-artifacts.ts';
+import { storeGeneratedImage, imageGenerationAnswer } from './image-artifacts.ts';
 import type { AppStorage } from './app-storage.ts';
 import { loadCodexConfig, type CodexConfig } from './app-config.ts';
 import { stableExchangeId } from './conversation-format.ts';
@@ -366,6 +366,7 @@ export class CodexAppServer {
         if (image && !turn.images.length) throw new Error(`Codex nie wygenerował obrazu: ${parsed.answer}`);
         if (turn.images.length) {
           parsed.images = await Promise.all(turn.images.map(item => storeGeneratedImage(this.cwd, item, this.connection.storage?.dataDirectory)));
+          parsed.answer = imageGenerationAnswer(parsed.answer, parsed.images);
           if (signal?.aborted || turn.cancelled) throw new Error('Cancelled');
           this.lastImageTurnId = turn.id;
         }

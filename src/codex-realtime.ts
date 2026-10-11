@@ -12,7 +12,7 @@ import { PcmPlayer } from './audio/pcm-player.ts';
 import type { VoiceReply, RealtimeCallbacks, ConversationExchange } from './conversation-contract.ts';
 export type { RealtimeCallbacks } from './conversation-contract.ts';
 import { WEB_RESPONSE_INSTRUCTIONS } from './codex.ts';
-import { readImageLinks, appendImageLink } from './image-artifacts.ts';
+import { readImageLinks, appendImageLink, imageGenerationAnswer } from './image-artifacts.ts';
 import { ArtifactStore, imageFromProtocol } from './artifact-store.ts';
 import { loadCodexConfig, loadRealtimeConfig, type CodexConfig, type RealtimeConfig } from './app-config.ts';
 
@@ -331,7 +331,8 @@ export function realtimeHistory(entries: any[]): ConversationExchange[] {
       try {
         const reply = JSON.parse(item.text);
         if (typeof reply.prompt === 'string' && typeof reply.answer === 'string' && reply.answer.trim()) {
-          flush(); history.push({ question: reply.prompt, answer: reply.answer, ...(images.has(entry.turnId) && { images: images.get(entry.turnId) }) });
+          const generated = images.get(entry.turnId);
+          flush(); history.push({ question: reply.prompt, answer: imageGenerationAnswer(reply.answer, generated), ...(generated?.length && { images: generated }) });
         }
       } catch {}
     } else if (entry.type === 'realtime' && item?.type === 'realtimeSessionClosed') flush();

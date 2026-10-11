@@ -117,6 +117,8 @@ function createWindowAdapter(host) {
       // Keep the overlay above other windows, including full-screen applications.
       orbWindow.setAlwaysOnTop(true, 'screen-saver');
       orbWindow.on('show', () => orbWindow.setAlwaysOnTop(true, 'screen-saver'));
+      // A native close (e.g. Alt+F4) dismisses the pair without destroying the orb.
+      orbWindow.on('close', event => { if (!host.exiting()) { event.preventDefault(); host.dismiss(); } });
       orbWindow.setMenu(null);
       orbWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       orbWindow.webContents.on('will-navigate', event => event.preventDefault());

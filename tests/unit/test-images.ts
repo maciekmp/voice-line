@@ -12,7 +12,7 @@ import { RealtimeVoiceEngine } from '../../src/voice/realtime-engine.ts';
 import type { RealtimeCallbacks } from '../../src/codex-realtime.ts';
 import { codexErrorMessage } from '../../src/codex-error.ts';
 import { CodexClient } from '../../src/codex.ts';
-import { readLatestConversationExchange, mapConversationTurns, hydrateConversationExchanges } from '../../src/conversation-history.ts';
+import { readConversationHistory, readLatestConversationExchange, mapConversationTurns, hydrateConversationExchanges } from '../../src/conversation-history.ts';
 
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1sAAAAASUVORK5CYII=';
 const threadId = '11111111-1111-1111-1111-111111111111';
@@ -71,8 +71,10 @@ test('protocol mapping is pure and filesystem hydration is an explicit second op
 class FakeImageServer extends CodexAppServer {
   calls: { method: string; params: any }[] = [];
   includeImage = true;
+  imageItem = item;
+  answer = 'Gotowe.';
   auth = 'chatgpt';
-  constructor(cwd: string) { super(cwd, new ConversationSession(cwd), true); }
+  constructor(cwd: string, localHistory = false) { super(cwd, new ConversationSession(cwd, Date.now, '.session.json', { localHistory }), true); }
   override async start() {}
   protected override async request(method: string, params: any): Promise<any> {
     this.calls.push({ method, params });
@@ -82,8 +84,8 @@ class FakeImageServer extends CodexAppServer {
     if (method === 'turn/start') {
       queueMicrotask(() => {
         const emit = (method: string, params: any) => (this as any).onMessage({ method, params: { threadId, turnId, ...params } });
-        if (this.includeImage) emit('item/completed', { item });
-        emit('item/completed', { item: { type: 'agentMessage', text: JSON.stringify({ prompt: 'Kwadrat', answer: 'Gotowe.' }) } });
+        if (this.includeImage) emit('item/completed', { item: this.imageItem });
+        emit('item/completed', { item: { type: 'agentMessage', text: JSON.stringify({ prompt: 'Kwadrat', answer: this.answer }) } });
         emit('turn/completed', { turn: { id: turnId, status: 'completed' } });
       });
       return { turn: { id: turnId } };
@@ -91,6 +93,63 @@ class FakeImageServer extends CodexAppServer {
     return {};
   }
 }
+
+const falseFailure = 'Nie udało się wygenerować obrazu — narzędzie nie zwróciło wyniku.';
+
+test('verified image overrides a false failure in explicit and ordinary turns and persisted history', async t => {
+  for (const explicit of [false, true]) {
+    const cwd = await directory(t);
+    const client = new FakeImageServer(cwd, true);
+    client.answer = falseFailure;
+    const reply = explicit ? await client.generateImage('Kwadrat') : await client.respond('Zrób obrazek kotka w dżungli.');
+    assert.equal(reply.answer, 'Wygenerowano obraz.');
+    assert.equal(reply.images?.length, 1);
+    assert.equal(client.currentExchanges[0].answer, reply.answer);
+    assert.equal(new ConversationSession(cwd).readLocalHistory(client.currentThreadId!)[0].answer, reply.answer);
+    client.includeImage = false;
+    assert.equal((await client.respond('Pytanie')).answer, falseFailure);
+    await assert.rejects(client.generateImage('Drugi'), /nie wygenerował/);
+  }
+});
+
+test('invalid image results cannot become successful replies', async t => {
+  const cwd = await directory(t);
+  const client = new FakeImageServer(cwd);
+  client.answer = falseFailure;
+  for (const change of [{ status: 'failed' }, { result: '????' }]) {
+    client.imageItem = { ...item, ...change };
+    await assert.rejects(client.generateImage('Kwadrat'), /ImageGen/);
+    assert.equal(client.currentExchanges.length, 0);
+  }
+});
+
+test('CLI validates original history text before confirming verified image success', async t => {
+  const cwd = await directory(t);
+  const image = await storeGeneratedImage(cwd, item);
+  const client = new CodexClient(cwd);
+  t.mock.method(client, 'start', async () => {});
+  const latest = { question: 'Kwadrat', answer: falseFailure, images: [image] };
+  (client as any).historyServer = { readLatestExchange: async () => latest };
+  t.mock.method(client as any, 'run', async () => ({ text: JSON.stringify({ prompt: 'Kwadrat', answer: falseFailure }), threadId }));
+  assert.equal((await client.respond('Kwadrat')).answer, 'Wygenerowano obraz.');
+  assert.equal(client.currentExchanges[0].answer, 'Wygenerowano obraz.');
+  latest.answer = 'Inna odpowiedź';
+  await assert.rejects(client.respond('Kwadrat'), /mismatched latest reply history/);
+  assert.equal(client.currentExchanges.length, 1);
+});
+
+test('provider history confirms verified images without changing text-only failures', async t => {
+  const cwd = await directory(t);
+  const message = { type: 'agentMessage', text: JSON.stringify({ prompt: 'Kwadrat', answer: falseFailure }) };
+  const turns = [
+    { id: turnId, status: 'completed', items: [item, message] },
+    { id: 'text', status: 'completed', items: [message] },
+  ];
+  const request = async (_method: string, params: any) => ({ thread: { id: threadId, ...(params.includeTurns && { turns }) } });
+  assert.deepEqual((await readConversationHistory(request, threadId, cwd)).map(exchange => exchange.answer), ['Wygenerowano obraz.', falseFailure]);
+  const entries = turns.flatMap((turn, index) => turn.items.map((value, position) => ({ type: 'item', position: index * 10 + position, turnId: turn.id, item: value })));
+  assert.deepEqual(mapRealtimeHistory(entries).history.map(exchange => exchange.answer), ['Wygenerowano obraz.', falseFailure]);
+});
 
 test('wire image items are stored only after successful generation, never on prose-only replies or API auth', async t => {
   const cwd = await directory(t);
