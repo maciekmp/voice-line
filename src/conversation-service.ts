@@ -57,7 +57,10 @@ export class ConversationService {
   async prune(deleteRemote: (id: CodexThreadId) => Promise<void>): Promise<boolean> {
     const { session, retention, ephemeral } = this.storage;
     const removed = await retention.prune(async id => {
-      if (!ephemeral) await deleteRemote(codexThreadId(retention.providerThreadFor(id) ?? session.providerThreadFor(id)));
+      if (!ephemeral) {
+        for (const retired of retention.retiredProviderThreadsFor(id)) await deleteRemote(codexThreadId(retired));
+        await deleteRemote(codexThreadId(retention.providerThreadFor(id) ?? session.providerThreadFor(id)));
+      }
     });
     if (removed.length) await this.coordinator.exclusive(() => session.forget(removed));
     return removed.length > 0;

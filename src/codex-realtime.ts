@@ -141,7 +141,7 @@ export class CodexRealtime extends CodexAppServer {
     await this.start();
     await this.cleanHistory();
     this.session.expire();
-    if (!this.session.threadId) await this.openThread();
+    if (!this.session.threadId || this.session.usesLocalContext) await this.openThread();
     if (signal?.aborted) throw new Error('Cancelled');
     const threadId = this.session.codexThreadId!;
     const operation = this.session.captureOperation();

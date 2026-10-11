@@ -13,6 +13,7 @@ function createConversationPresentation(initial = {}) {
         conversation = update.conversation;
         const active = conversation.pending || conversation.completed.at(-1);
         voice = { ...voice, message: '', ...update,
+          interrupted: !!(active && 'interrupted' in active && active.interrupted),
           threadId: conversation.id, question: active?.question || '', answer: active?.answer || '',
           images: active && 'images' in active ? active.images || [] : [],
           history: conversation.pending ? conversation.completed : conversation.completed.slice(0, -1) };

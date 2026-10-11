@@ -6,7 +6,7 @@ import { launch } from './process.ts';
 import { CodexRpcTransport } from './codex-rpc-transport.ts';
 import { ConversationSession } from './conversation-session.ts';
 import { readConversationHistory, readLatestConversationExchange } from './conversation-history.ts';
-import type { VoiceReply, ConversationExchange } from './conversation-contract.ts';
+import type { VoiceReply, ConversationExchange, ConversationCheckpoint } from './conversation-contract.ts';
 import { LOCAL_INSTRUCTIONS } from './codex.ts';
 import { storeGeneratedImage } from './image-artifacts.ts';
 import type { AppStorage } from './app-storage.ts';
@@ -69,6 +69,7 @@ export class CodexAppServer {
   get currentExchanges() { return this.session.currentExchanges; }
   get canRestorePrevious(): boolean { return this.session.canRestorePrevious; }
   expireConversation(): void { this.session.expire(); }
+  interruptTurn(checkpoint: ConversationCheckpoint, partial?: VoiceReply): void { this.session.interruptTurn(checkpoint, partial); }
   async restorePrevious(signal?: AbortSignal): Promise<boolean> {
     await this.start();
     await this.cleanHistory();
@@ -192,7 +193,7 @@ export class CodexAppServer {
   protected async openThread(): Promise<void> {
     this.session.expire();
     let reply: any;
-    if (this.session.threadId && !this.ephemeral) {
+    if (this.session.threadId && !this.ephemeral && !this.session.usesLocalContext) {
       try { reply = await this.request('thread/resume', { threadId: this.session.codexThreadId, config: { web_search: 'live' }, ...(this.model && { model: this.model }) }); }
       catch { this.session.reset(); }
       if (reply && reply?.thread?.id !== this.session.codexThreadId) throw new Error('Codex returned a different conversation');
@@ -203,7 +204,12 @@ export class CodexAppServer {
     if (this.ephemeral) {
       this.ephemeralThreadId = codexThreadId(id);
       this.session.threadId ??= randomUUID();
-    } else this.session.bindCodexThread(id);
+    } else if (this.session.usesLocalContext) {
+      const prepared = this.connection.storage?.retention.prepareTouch(this.session.threadId!, [], undefined, id, true);
+      try { this.session.rebindProvider(id, prepared ? [{ file: prepared.file, contents: prepared.contents }] : []); }
+      finally { prepared?.release(); }
+    }
+    else this.session.bindCodexThread(id);
     this.rememberActivity();
   }
 
@@ -309,7 +315,7 @@ export class CodexAppServer {
     this.session.expire();
     // CLI can create/resume this session through another Codex process.
     if (this.historyOnly && this.session.threadId && !this.ephemeral) await this.request('thread/resume', { threadId: this.session.codexThreadId, config: { web_search: 'live' } });
-    if (this.ephemeral || !this.session.threadId) await this.openThread();
+    if (this.ephemeral || !this.session.threadId || this.session.usesLocalContext) await this.openThread();
     if (!this.session.threadId) throw new Error('Codex thread is unavailable');
     const operation = this.session.captureOperation();
     const release = await this.acquireActivity();
@@ -338,7 +344,7 @@ export class CodexAppServer {
           threadId: turn.threadId,
           input: [{ type: 'text', text: image
             ? 'Wygeneruj dokładnie jeden obraz zgodny z prośbą, używając wyłącznie wbudowanego narzędzia generowania obrazów. Nie używaj shell, MCP ani innych narzędzi. Nie czytaj ani nie zmieniaj plików projektu. Nie zastępuj obrazu opisem ani kodem SVG. Po wygenerowaniu zwróć JSON z polami prompt (prośba użytkownika) i answer (bardzo krótkie potwierdzenie po polsku). Prośba użytkownika:\n' + raw
-            : this.responseInstructions + (this.ephemeral ? this.session.contextPrompt(raw) : raw) }],
+            : this.responseInstructions + (this.ephemeral || this.session.usesLocalContext ? this.session.contextPrompt(raw) : raw) }],
           ...(image ? { model: this.codexConfig.imageModel } : this.model && { model: this.model }),
           effort: this.codexConfig.effort,
           approvalPolicy: 'never',

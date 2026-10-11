@@ -1,7 +1,7 @@
 import type { ConversationExchange } from './conversation-contract.ts';
 
 export type ApplicationCommand = { command: 'text'; text: string }
-  | { command: 'record' | 'release' | 'cancel' | 'reset' | 'previous' | 'shutdown' };
+  | { command: 'record' | 'release' | 'tap' | 'cancel' | 'reset' | 'previous' | 'shutdown' };
 export type ServiceHealth = 'starting' | 'ready' | 'error' | 'stopped';
 export type ResponsePhase = 'transcribing' | 'thinking' | 'preparing-speech' | 'speaking';
 export type ApplicationState = ResponsePhase | 'starting' | 'idle' | 'listening' | 'error';
@@ -16,8 +16,9 @@ export type ApplicationSnapshot = {
   exchanges?: ConversationExchange[];
   [key: string]: unknown;
 };
+export type UiIntent = 'compose' | 'correct' | 'continue' | 'voice-input' | 'text-input';
 export type ApplicationEvent = ApplicationSnapshot | { type: 'level'; source: 'listening' | 'speaking'; level: number }
-  | { type: 'ui'; action: 'compose' };
+  | { type: 'ui'; action: UiIntent };
 
 export function parseApplicationCommand(value: unknown): ApplicationCommand | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -26,7 +27,7 @@ export function parseApplicationCommand(value: unknown): ApplicationCommand | nu
     if (typeof message.text !== 'string' || !message.text.trim() || message.text.length > 12000) return null;
     return { command: 'text', text: message.text.trim() };
   }
-  if (typeof message.command === 'string' && ['record', 'release', 'cancel', 'reset', 'previous', 'shutdown'].includes(message.command)) {
+  if (typeof message.command === 'string' && ['record', 'release', 'tap', 'cancel', 'reset', 'previous', 'shutdown'].includes(message.command)) {
     return { command: message.command as Exclude<ApplicationCommand['command'], 'text'> };
   }
   return null;

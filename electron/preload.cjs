@@ -23,6 +23,7 @@ const desktopApi = {
   exitComplete() { ipcRenderer.send('orb:exit-complete'); },
   onLevel(callback) { return listen('orb:level', callback); },
   onVoice(callback) { return listen('voice:snapshot', callback); },
+  onClearDraft(callback) { return listen('voice:clear-draft', callback); },
   onMode(callback) { return listen('voice:mode', callback); },
   onPinned(callback) { return listen('voice:pinned', callback); },
   onResizing(callback) { return listen('voice:resizing', callback); },

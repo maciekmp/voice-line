@@ -10,6 +10,7 @@ export type SessionMetadata = {
   previousThreadId?: string | null; previousLastAnswerAt?: number | null;
   receipts?: { [conversationId: string]: { [exchangeId: string]: string } };
   providerThreads?: { [conversationId: string]: string };
+  localContextIds?: string[];
 };
 const validId = (id: unknown) => id === null || (typeof id === 'string' && /^[a-f\d-]{36}$/i.test(id));
 const validTime = (time: unknown) => time === null || (typeof time === 'number' && Number.isFinite(time) && time >= 0);
@@ -23,6 +24,7 @@ export function decodeMetadata(value: any): { metadata: SessionMetadata; legacy:
   if (value?.version !== undefined && value.version !== 2) throw new UnsupportedStorageVersion(value.version);
   const legacy = value?.version === undefined;
   if (!value || Array.isArray(value) || !validId(value.threadId) || !validTime(value.lastAnswerAt)
+    || (value.localContextIds !== undefined && (!Array.isArray(value.localContextIds) || value.localContextIds.some((id: unknown) => id === null || !validId(id))))
     || (value.previousThreadId !== undefined && !validId(value.previousThreadId))
     || (value.previousLastAnswerAt !== undefined && !validTime(value.previousLastAnswerAt))
     || (!legacy && value.receipts !== undefined && !validReceipts(value.receipts))
@@ -31,6 +33,7 @@ export function decodeMetadata(value: any): { metadata: SessionMetadata; legacy:
     || (!legacy && (!Number.isSafeInteger(value.revision) || value.revision < 0))) throw new Error('Invalid conversation metadata');
   return { legacy, metadata: { version: 2, revision: legacy ? 0 : value.revision,
     threadId: value.threadId, lastAnswerAt: value.lastAnswerAt,
+    ...(value.localContextIds !== undefined && { localContextIds: value.localContextIds }),
     ...(value.previousThreadId !== undefined && { previousThreadId: value.previousThreadId }),
     ...(value.previousLastAnswerAt !== undefined && { previousLastAnswerAt: value.previousLastAnswerAt }),
     ...(!legacy && value.receipts !== undefined && { receipts: value.receipts }),

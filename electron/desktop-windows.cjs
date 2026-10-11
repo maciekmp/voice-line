@@ -31,7 +31,7 @@ function createWindowAdapter(host) {
   /** @type {import('../src/desktop-contract.ts').PanelMode} */
   let panelMode = 'peek';
   let panelHeight = 80;
-  const panelHeights = { peek: 80, chat: 140, compose: 66 };
+  const panelHeights = { peek: 80, chat: 140, compose: 66, compact: 122 };
   /** @type {ReturnType<typeof setInterval> | undefined} */
   let panelResizeTimer;
   function positionPanel(animate = false) {

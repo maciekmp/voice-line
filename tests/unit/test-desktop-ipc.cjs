@@ -18,7 +18,7 @@ function setup(options = {}) {
     engine: { connected: true, send: message => sent.push(message) },
     sendVoice: update => updates.push(update),
     engineSupervisor: { restart() { retries++; } },
-    overlay: { open() {}, togglePin() {}, toggle() {}, hover() {}, snapshot: () => ({ pinned: false }) },
+    overlay: { intent() {}, compose() {}, open() {}, togglePin() {}, toggle() {}, hover() {}, snapshot: () => ({ pinned: false }) },
     openPanel() {}, hidePanel() {}, finishExit() {},
     panelMode: 'chat', panelHeight: 100, panelHeights: { chat: 100 },
     PANEL_MAX_HEIGHT: 500, positionPanel() {},
@@ -44,6 +44,19 @@ test('composer focus accepts only boolean reports from the live conversation ren
   host.exitStarted = true;
   ipc.emit('voice:composer-focus', event(), true);
   assert.deepEqual(reports, [true, false]);
+});
+
+test('orb activation sends a tap to the worker without recording and falls back to drafting when disconnected', () => {
+  const { ipc, host, sent } = setup(); let compose = 0;
+  host.overlay.compose = () => compose++;
+  const event = { sender: host.orbWindow.webContents };
+  ipc.emit('voice:open', event);
+  assert.deepEqual(sent, [{ command: 'tap' }]);
+  host.engine.connected = false;
+  ipc.emit('voice:open', event);
+  assert.equal(compose, 1);
+  ipc.emit('voice:open', { sender: {} });
+  assert.equal(compose, 1);
 });
 
 test('desktop text boundary validates sender, readiness, size and worker connectivity', () => {

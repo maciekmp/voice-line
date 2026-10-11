@@ -1,5 +1,5 @@
 import type { VoiceEngine, VoiceCallbacks } from './voice-engine.ts';
-import type { VoiceReply, ConversationExchange } from './conversation-contract.ts';
+import type { VoiceReply, ConversationExchange, ConversationCheckpoint } from './conversation-contract.ts';
 import { parseApplicationCommand, type ApplicationEvent, type ApplicationSnapshot, type ServiceHealth, type ApplicationState, type PendingExchange } from './application-contract.ts';
 import { createCopilotGesture } from './keyboard/copilot-gesture.ts';
 import type { KeyEvent } from './keyboard/copilot-key.ts';
@@ -24,7 +24,7 @@ export type ControllerClock = {
   setInterval(callback: () => void, delay: number): ReturnType<typeof setInterval>;
   clearInterval(timer: ReturnType<typeof setInterval> | undefined): void;
 };
-type Operation = { id: number; revision: number; generation: number; controller: AbortController };
+type Operation = { id: number; revision: number; generation: number; controller: AbortController; checkpoint: ConversationCheckpoint; playbackStarted: boolean };
 type Options = {
   engine: VoiceEngine; recorder: AudioRecorder; emit: (event: ApplicationEvent) => void;
   removeAudio: (wav: string) => Promise<void>; desktop?: boolean; key?: number; saveAudio?: boolean; debug?: boolean;
@@ -40,6 +40,8 @@ export class ApplicationController {
   private health: ServiceHealth = 'starting';
   private phase: ApplicationState = 'starting';
   private held = false;
+  private pressIntent: 'compose' | 'correct' | 'continue' = 'compose';
+  private pressUnavailable = false;
   private generation = 0;
   private revision = 0;
   private nextId = 0;
@@ -62,10 +64,17 @@ export class ApplicationController {
     this.log = options.log ?? console;
     options.recorder.onLevel = level => this.level('listening', level);
     this.gesture = createCopilotGesture({
-      down: () => this.beginRecording(), hold: () => this.confirmRecording(),
+      down: () => {
+        this.pressUnavailable = this.health !== 'ready';
+        this.pressIntent = this.interruptForInput();
+        if (!this.pressUnavailable) this.beginRecording(false);
+      }, hold: () => {
+        if (this.pressUnavailable) this.options.emit({ type: 'ui', action: 'compose' });
+        else this.confirmRecording();
+      },
       tap: () => {
         if (this.held) { options.recorder.cancel(); this.held = false; this.publish('idle'); }
-        if (this.health === 'ready') options.emit({ type: 'ui', action: 'compose' });
+        options.emit({ type: 'ui', action: this.pressIntent });
       },
       release: () => { void this.releaseRecording(); },
     }, 250, this.clock, () => this.clock.now());
@@ -141,18 +150,46 @@ export class ApplicationController {
     this.pendingExchange = null;
     this.options.engine.cancel();
   }
+  private interruptForInput(): 'compose' | 'correct' | 'continue' {
+    const operation = this.current;
+    const pending = this.pendingExchange;
+    const active = this.held || ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking'].includes(this.phase);
+    if (!active) return 'compose';
+    const playback = operation?.playbackStarted ?? false;
+    // Gesture down must retain its timer, so only cancel recording here.
+    this.interrupt(); this.options.recorder.cancel(); this.held = false;
+    try {
+      if (operation) {
+        const partial = playback ? {
+          prompt: pending?.question || 'Wiadomość głosowa (transkrypcja niedostępna)',
+          answer: pending?.answer || '', interrupted: true } : undefined;
+        this.options.engine.interruptTurn?.(operation.checkpoint, partial);
+      }
+      this.revision++;
+      this.publish(this.health === 'ready' ? 'idle' : this.phase, { exchanges: this.options.engine.currentExchanges, generatingImage: false });
+    } catch (error) {
+      this.log.error(error);
+      this.health = 'error';
+      this.publish('error', { message: 'Nie udało się zapisać przerwania. Uruchom usługi ponownie przed kolejnym pytaniem.' });
+    }
+    return playback ? 'continue' : 'correct';
+  }
+  private checkpoint(): ConversationCheckpoint {
+    return { id: this.options.engine.currentThreadId, exchanges: structuredClone(this.options.engine.currentExchanges) };
+  }
   private live(operation: Operation): boolean {
     return this.health !== 'stopped' && this.current === operation && this.generation === operation.generation
       && operation.revision === this.revision && !operation.controller.signal.aborted;
   }
   private operation(): Operation {
-    const operation = { id: ++this.nextId, revision: this.revision, generation: this.generation, controller: new AbortController() };
+    const operation = { id: ++this.nextId, revision: this.revision, generation: this.generation, controller: new AbortController(), checkpoint: this.checkpoint(), playbackStarted: false };
     this.current = operation;
     return operation;
   }
   private prepareConversation(): void {
     const engine = this.options.engine, previous = engine.currentThreadId;
     engine.expireConversation();
+    if (this.current) this.current.checkpoint = this.checkpoint();
     if (previous && !engine.currentThreadId) {
       this.revision++; if (this.current) this.current.revision = this.revision;
       const question = this.pendingExchange?.question;
@@ -184,10 +221,10 @@ export class ApplicationController {
     void task.then(() => this.tasks.delete(task), () => this.tasks.delete(task));
     return task;
   }
-  private beginRecording(): boolean {
+  private beginRecording(interrupt = true): boolean {
     if (this.health !== 'ready' || this.held) return false;
     const interruptedPlayback = this.phase === 'speaking';
-    this.held = true; this.interrupt(); this.recordingStartedAt = this.clock.now();
+    this.held = true; if (interrupt) this.interrupt(); this.recordingStartedAt = this.clock.now();
     if (interruptedPlayback) this.publish('idle');
     try { this.options.recorder.start(); return true; }
     catch (error) {
@@ -196,6 +233,7 @@ export class ApplicationController {
   }
   private confirmRecording(): void {
     if (!this.held) return;
+    if (this.options.desktop) this.options.emit({ type: 'ui', action: 'voice-input' });
     this.log.log('Recording...'); this.publish('listening', { question: '', answer: '' });
   }
   private async releaseRecording(): Promise<void> {
@@ -223,6 +261,7 @@ export class ApplicationController {
         },
         onPlaybackStart: () => {
           if (!this.live(operation) || playbackStartedAt !== undefined) return;
+          operation.playbackStarted = true;
           playbackStartedAt = this.clock.now(); this.publish('speaking');
           this.timing('Recording end to playback start', playbackStartedAt - releasedAt);
         },
@@ -254,8 +293,9 @@ export class ApplicationController {
     if (event.event === 'down') this.pressed.add(event.vk); else this.pressed.delete(event.vk);
     if (event.event === 'down' && event.vk === 78 && [17, 162, 163].some(key => this.pressed.has(key))
       && [16, 160, 161].some(key => this.pressed.has(key))) { void this.command({ command: 'reset' }); return; }
-    if (event.vk !== (this.options.key ?? 134) || this.health !== 'ready') return;
+    if (event.vk !== (this.options.key ?? 134)) return;
     if (this.options.desktop) { if (event.event === 'down') this.gesture.down(); else this.gesture.up(); }
+    else if (this.health !== 'ready') return;
     else if (event.event === 'down') { if (this.beginRecording()) this.confirmRecording(); }
     else { void this.releaseRecording(); }
   }
@@ -263,6 +303,11 @@ export class ApplicationController {
     const message = parseApplicationCommand(value);
     if (!message || this.health === 'stopped') return false;
     if (message.command === 'shutdown') { await this.shutdown(); return true; }
+    if (message.command === 'tap') {
+      this.gesture.cancel();
+      this.pressIntent = this.interruptForInput();
+      this.options.emit({ type: 'ui', action: this.pressIntent }); return true;
+    }
     if (message.command === 'record' || message.command === 'release') {
       this.handleKey({ event: message.command === 'record' ? 'down' : 'up', vk: this.options.key ?? 134, scan: 0, flags: 0 }); return true;
     }
@@ -278,6 +323,7 @@ export class ApplicationController {
     if (message.command === 'previous' && !this.options.engine.canRestorePrevious) return false;
     const operation = this.operation();
     if (message.command === 'text') {
+      if (this.options.desktop) this.options.emit({ type: 'ui', action: 'text-input' });
       this.publish('thinking', { question: message.text, answer: '', generatingImage: Boolean(imageRequest(message.text)) });
       await this.queue(operation, async () => {
         this.prepareConversation(); await this.options.engine.respond(message.text, operation.controller.signal);

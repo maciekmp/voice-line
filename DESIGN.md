@@ -44,51 +44,57 @@ and `orb-renderer.js` remain the single visual orb primitive for browser,
 desktop indicator. The conversation popup does not duplicate the orb. The transparent desktop shell has
 its own geometry; it does not adopt the panel background.
 
+## Copilot: kontrakt interakcji
+
+Stan pracy i widok są niezależne. Orb i popup pojawiają się i znikają razem.
+
+| Tryb | Zawartość | Krótki Copilot przy gotowej aplikacji |
+| --- | --- | --- |
+| hidden | Obie powierzchnie ukryte | compose |
+| compose | Samo pole, ewentualnie status lub błąd | chat |
+| peek | Najnowsza tura/status, bez pola | compact |
+| compact | Najnowsza tura i pole | chat |
+| chat | Cała rozmowa i pole | compact |
+
+Wciśnięcie Copilota natychmiast przerywa pracę. Tap (<250 ms) odrzuca audio;
+hold (>=250 ms) pokazuje peek, zachowuje szkic i nagrywa od key-down.
+Puszczenie po hold wysyła nagranie. Repeats nie uruchamiają kolejnych działań.
+Klik orba wykonuje tap bez nagrywania. Tray otwiera chat.
+
+Przed rzeczywistym rozpoczęciem playbacku przerwanie usuwa bieżącą turę
+z historii, zapisu i kontekstu. Tap czyści szkic i zachowuje zakres chat/compact;
+z peek dodaje pole w compact, z hidden otwiera compose. Nie przełącza dodatkowo
+widoków. Po rozpoczęciu playbacku tura zostaje: LOCAL zachowuje pełną odpowiedź,
+API otrzymany fragment z oznaczeniem „Odpowiedź przerwana”. Tap także czyści szkic.
+Następne pytanie jest kontynuacją. Sam hold nie czyści szkicu.
+
+Wysłanie tekstu pokazuje compact; odpowiedź tekstowa nie uruchamia odczytu.
+Enter wysyła, Shift+Enter dodaje linię, IME nie wysyła. Błędne wysłanie zachowuje
+szkic. Podczas startu/awarii tap otwiera pole ze statusem, wysyłanie jest zablokowane;
+hold pokazuje stan bez nagrywania. Gotowość w trakcie gestu nie rozpoczyna nagrania.
+
+Escape ukrywa oba elementy, usuwa pin i fokus, zachowuje szkic i nie przerywa pracy.
+Aktualizacje tej samej pracy nie otwierają interfejsu. Nowe pytanie lub jawne otwarcie
+może go pokazać. Hover nie otwiera ukrytego interfejsu.
+
+Po zakończeniu lub przerwaniu aktywnej pracy działa jeden timer 5 sekund.
+Jeśli przy jego wygaśnięciu jest hover, fokus pola lub pin, okno zostaje do jawnego
+zamknięcia albo następnej pracy. Unhover, blur i unpin nie uruchamiają timera.
+Nowa praca unieważnia stary timer. Błędy pozostają do zamknięcia lub kolejnej akcji.
+
+Wycofanie korzysta z checkpointu danej operacji; spóźniony commit jest odrzucany.
+Po korekcie trwałe localContextIds kierują kolejne żądania do świeżego wątku
+z kontekstem zachowanych lokalnych tur. Mapowanie dostawcy i rejestr retencji
+zmieniają się atomowo; stare wątki pozostają zarejestrowane do czyszczenia.
+
 ## Layout and states
 
-The desktop orb shows a small LOCAL or API label below it, reflecting the engine
-selected at startup. LOCAL means local speech recognition and synthesis; Codex
-still generates the answer. API means Codex realtime. The label has no action,
-uses the existing surface/text colors and Segoe UI, and disappears with the orb.
-The native shell is 64 by 80 px; the orb keeps its original position and hit area.
-The orb has 0.9 opacity without hover and 1 on hover or keyboard focus.
-During playback, Copilot key-down stops the reply immediately and begins the
-normal tap/hold gesture: a short press opens the composer, a hold of at least
-250 ms listens for the next question. Repeats never restart capture.
-
-380 px wide popup with height measured from its content and capped at 500 px, anchored 8 px above
-the desktop orb and constrained to the display work area. Question and answer
-have no visible labels; semantic accessible names remain. The document owns scrolling;
-long answers and enlarged text grow naturally, with no competing inner scroller.
-Hover shows only the latest question and answer. Answer generation shows
-“Codex przygotowuje odpowiedź…” in the existing live status region, including
-while partial answer text is arriving; image generation keeps its own message.
-Tapping Copilot for less than 250 ms opens a focused input-only popup and shows
-the orb, even while idle. The transcript and history stay hidden in this mode;
-submitting or starting a voice question reveals chat. A hold of at least 250 ms
-starts voice recording; samples are collected from key-down, then discarded on a tap.
-Click smoothly grows the native window upward over 220 ms while revealing a
-sticky text composer with a matching upward slide and fade. No scrollbar is
-shown during expansion; short content fits without scrolling. Clicking the orb
-again collapses to peek, hiding the composer and history while preserving the draft.
-The native window shrinks smoothly, including during playback. Long content
-scrolls only when it exceeds the display's available height. The composer is
-focused on opening. Reduced motion reveals it immediately. The composer
-fills the entire bottom strip between two faint dividers (#36312d), with no
-input frame or send button. Enter sends; accessible input help describes the
-shortcut. Keyboard focus subtly changes the input background without a frame;
-forced colors use a system outline. There is no cancel button in the popup.
-Dismissal waits 180 ms after hiding the native surface before resetting the renderer
-to peek mode. Reopening cancels that pending reset and restores its cached
-content height before the next hover, while preserving the draft. The isolated Electron
-preview uses a sample question and answer instead of a preview notice. Enter submits;
-Shift+Enter adds a newline, and IME confirmation never submits. Text messages use
-the existing Codex thread without speech playback. Blank and duplicate submits
-are blocked; failed sends preserve the draft.
-Recording and reset remain available through Copilot and the tray menu.
-Controls have stable height, visible focus, pointer feedback
-and disabled states. Error text includes a recovery instruction. Color is never
-the sole state indicator: transcript text and the tray identify the current operation.
+Popup pozostaje szeroki na 380 px, maksymalnie 500 px, 8 px nad orbem.
+Shell ma 64 × 80 px, a hit target pozostaje stały. LOCAL/API jest etykietą
+silnika bez akcji. Wszystkie widoki korzystają ze wspólnych tokenów.
+Sticky composer nie ma przycisków wysyłania i anulowania. Status i błąd są
+dostępne także w compose. Reduced motion wyłącza animację rozszerzania 220 ms.
+Ukrycie resetuje renderer po schowaniu natywnego okna, zachowując szkic.
 
 ## Behavior owners
 
@@ -96,7 +102,7 @@ the sole state indicator: transcript text and the tray identify the current oper
 | --- | --- | --- | --- |
 | Voice lifecycle | src/application-controller.ts; src/main.ts adapters | Injected controller for Copilot/text, cancellation, reset, previous and shutdown | typecheck; controller public API tests; Electron snapshots |
 | State fan-out and visibility | electron/orb-main.cjs | User request: hide until listening, hide after speech | `npm run test:desktop` |
-| Overlay behavior | electron/overlay-controller.cjs | hidden/peek/chat/compose; one exit timer; new recording cancels stale hides | `npm test -- test-overlay.cjs`; `npm run test:desktop` |
+| Overlay behavior | electron/overlay-controller.cjs | hidden/peek/compose/compact/chat; one 5-second completion timer | `npm test -- test-overlay.cjs`; `npm run test:desktop` |
 | Copilot gestures | src/keyboard/copilot-gesture.ts | tap opens input; hold records; repeat and cancellation handling | `npm test -- test-copilot.ts`; typecheck |
 | Keyboard delivery | src/keyboard/bridge.ps1; src/keyboard/copilot-key.ts | configured key consumed while voice app runs; other keys pass; parent-exit cleanup | `npm run test:keyboard` |
 | Hover detection | electron/overlay-pointer.cjs | Native cursor and current window bounds, sampled every 50 ms | `npm test -- test-overlay.cjs`; `npm run test:desktop` |
@@ -116,42 +122,9 @@ IPC updates only the orb, never conversation layout or visibility. Reduced motio
 disables scaling and pausing freezes it. SAPI synthesizes to memory before playback
 so its envelope matches the played audio; no extra audio file is retained.
 
-The orb enters and exits gently; it is hidden during idle and startup and remains
-visible through transcription, answer generation and playback. Interrupted or
-failed cycles also hide it. While transcribing, thinking and preparing speech,
-the desktop orb has a rotating blue ring: clockwise at one turn per second during
-transcription, counterclockwise at two turns per second while preparing the answer
-and speech. Speech accelerates
-the shared cloud flow fourfold, with a smooth transition between speeds.
-Reduced motion suppresses transitions, breathing, ring rotation and cloud motion;
-the pause control freezes both the orb and its ring.
-The tray and window menus are native platform surfaces. Renderer Node access is
-disabled; a sandboxed preload exposes only explicit commands and state events.
-The orb remains visible after playback while the pointer is over either the orb
-or popup, including a one-second grace period; both hide after leaving them.
-During every active voice state, leaving both surfaces may close the popup after
-one second, but never hides the orb. Escape also dismisses only the popup while
-work is active. If the exit timer has already expired, completion hides the orb;
-otherwise the remaining grace period or hover keeps it visible. Starting voice
-or text work cancels an idle exit timer. Verification flows are maintained in
-`VERIFICATION-FLOWS.md`.
-The desktop orb does not steal focus. Hover opens the conversation popup without
-focus; a one-second exit delay allows crossing into it. Starting a new recording
-keeps the expanded chat popup's size stable. Compact peek always fits current
-content, including shrinking to the listening status after a long answer (within
-the native 64 px minimum and 500 px maximum). Answer text suppresses the status label
-after generation; while Codex is still working, its status remains visible.
-Primary mouse press toggles chat and peek before mouse-up; keyboard activation
-of the orb does the same, while tray activation always opens chat. All use the
-same controller. Hover never takes focus; native activation is enabled
-for mouse presses. Escape dismisses explicitly and clears pinning. The popup has
-a 24 px icon-only pin button fixed 4 px from the top-right corner in every mode,
-outside document flow, without adding height or changing content/composer spacing.
-The Lucide pin rotates from diagonal to upright when pinned; Polish accessible
-Przypnij popup/Odepnij popup names, tooltips and pressed state describe the action.
-The overlay controller owns pinning: it cancels automatic departure hiding and
-keeps the popup and orb visible when switching applications. Unpinning restores
-the one-second departure delay. Pinning lasts until unpinned or dismissed.
+Orb i popup mają wspólną widoczność zgodną z kontraktem. Pin pozostaje
+przyciskiem 24 px z nazwami Przypnij popup/Odepnij popup. Hover nie przejmuje fokusu.
+
 The adjacent 24 px Lucide undo button restores the previous Codex conversation
 after reset or context expiry, including exchanges read from Codex history.
 It shares the pin control's style and fixed positioning, 32 px from the right.
@@ -165,18 +138,9 @@ session file stores current/previous conversation IDs and timestamps. Startup an
 app-owned committed files, importing older realtime Codex history when needed, then publish restored context.
 Paginated history loads all turn and item pages. Empty history disables undo;
 failed reads or cancelled returns do not switch the selected thread.
-Focus/blur does not change mode. A focused composer in the active popup keeps both
-surfaces visible, including after interrupted playback. Losing input or window focus
-restores the exit delay when idle and outside both surfaces; completion grace is preserved.
-Escape still dismisses explicitly. One controller owns visibility and mode;
-voice snapshots do not reactivate windows or replace chat with peek. Starting
-a new recording cancels the previous hide timeout. Drafts survive dismissal.
-The keyboard hook consumes only the configured Copilot key's press and release
-while the voice app runs, keeping the default Windows action from launching.
-The diagnostic keys command remains passive. Closing or losing the owning Node
-process releases suppression; the isolated orb preview installs no hook.
-It starts hidden, has no taskbar
-entry and keeps the voice application running when dismissed.
+Focus/blur nie zmienia widoku ani nie uruchamia timera. Hook konsumuje tylko
+skonfigurowany Copilot. Zamknięcie procesu zwalnia hook; preview go nie instaluje.
+Aplikacja działa po ukryciu powierzchni i nie ma wpisu na pasku zadań.
 
 ## Content and retention
 
@@ -198,7 +162,7 @@ copy failures restore the copy icon and show recovery text below the code.
 Model output is always inserted as text,
 never HTML. Speech reads the prose and inline code, skipping fenced blocks; a
 code-only reply announces that the code is available in the conversation window.
-Hover displays only the latest exchange. Chat displays previous exchanges above
+The voice view displays only the latest exchange. Chat displays previous exchanges above
 it and supports document scrolling, with the composer flush to the window bottom.
 Exchanges are kept in main-process memory and in the application's private Codex
 history under `%LOCALAPPDATA%\VoiceLine` (override: `APP_DATA_DIR`).

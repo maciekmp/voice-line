@@ -13,6 +13,7 @@ function images(value) {
 /** @param {unknown} value */
 function exchange(value) {
   return record(value) && typeof value.question === 'string' && typeof value.answer === 'string'
+    && (value.interrupted === undefined || typeof value.interrupted === 'boolean')
     && (value.id === undefined || identifier(value.id)) && (value.revision === undefined || revision(value.revision))
     && (value.images === undefined || images(value.images))
     && (value.imageTask === undefined || (record(value.imageTask) && identifier(value.imageTask.threadId) && identifier(value.imageTask.turnId)));
@@ -31,6 +32,7 @@ function conversation(value) {
 function copyConversation(value) {
   return { id: value.id, revision: value.revision,
     completed: value.completed.map(item => ({ question: item.question, answer: item.answer,
+      ...(item.interrupted !== undefined && { interrupted: item.interrupted }),
       ...(item.id !== undefined && { id: item.id }), ...(item.revision !== undefined && { revision: item.revision }),
       ...(item.images !== undefined && { images: item.images.map(image => ({ id: image.id, alt: image.alt })) }),
       ...(item.imageTask !== undefined && { imageTask: { threadId: item.imageTask.threadId, turnId: item.imageTask.turnId } }),
@@ -54,7 +56,7 @@ function parseDesktopRequest(channel, value) {
   }
   if (channel === 'voice:resize') {
     if (!record(value) || typeof value.height !== 'number' || !Number.isFinite(value.height) || value.height < 0
-      || !['peek', 'chat', 'compose'].includes(/** @type {string} */ (value.mode)) || typeof value.reducedMotion !== 'boolean') return null;
+      || !['peek', 'chat', 'compose', 'compact'].includes(/** @type {string} */ (value.mode)) || typeof value.reducedMotion !== 'boolean') return null;
     return { channel, value: { height: value.height, mode: /** @type {import('./desktop-contract.ts').PanelMode} */ (value.mode), reducedMotion: value.reducedMotion } };
   }
   if (channel === 'voice:open' || channel === 'orb:ready' || channel === 'orb:exit-complete') return value === undefined ? { channel } : null;
@@ -68,7 +70,8 @@ function parseWorkerEvent(value) {
     if ((value.source !== 'listening' && value.source !== 'speaking') || typeof value.level !== 'number' || !Number.isFinite(value.level)) return null;
     return { type: 'level', source: value.source, level: Math.min(1, Math.max(0, value.level)) };
   }
-  if (value.type === 'ui') return value.action === 'compose' ? { type: 'ui', action: 'compose' } : null;
+  if (value.type === 'ui') return ['compose', 'correct', 'continue', 'voice-input', 'text-input'].includes(/** @type {string} */ (value.action))
+    ? { type: 'ui', action: /** @type {import('./application-contract.ts').UiIntent} */ (value.action) } : null;
   if (value.type !== 'voice' || typeof value.state !== 'string'
     || !['starting', 'idle', 'listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking', 'error'].includes(value.state)
     || !['starting', 'ready', 'error', 'stopped'].includes(/** @type {string} */ (value.health))

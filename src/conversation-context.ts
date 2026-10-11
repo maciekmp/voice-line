@@ -39,7 +39,8 @@ export function buildHistoryContext(history: readonly ConversationExchange[], fo
   let selected: TextExchange[] = [];
   let clipped = false;
   for (let index = history.length - 1; index >= 0 && selected.length < policy.maxExchanges; index--) {
-    const { question, answer } = history[index];
+    const { question } = history[index];
+    const answer = history[index].answer + (history[index].interrupted ? '\n[Odpowiedź przerwana — dostępny fragment.]' : '');
     const candidate = [{ question, answer }, ...selected];
     if (size(serialize(candidate, format)) <= policy.maxBytes) { selected = candidate; continue; }
     if (!selected.length) {

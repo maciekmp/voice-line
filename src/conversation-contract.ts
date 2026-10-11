@@ -3,13 +3,15 @@ export type GeneratedImage = { id: string; alt: string };
 // Providers resolve CodexThreadId separately; turnId is the remote generation turn.
 export type ImageTask = { threadId: string; turnId: string };
 
-export type ConversationExchange = { id?: string; revision?: number; question: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask };
-export type VoiceReply = { exchangeId?: string; prompt: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask; startupMs?: number; turnMs?: number };
+export type ConversationExchange = { id?: string; revision?: number; interrupted?: boolean; question: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask };
+export type VoiceReply = { exchangeId?: string; interrupted?: boolean; prompt: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask; startupMs?: number; turnMs?: number };
+export type ConversationCheckpoint = { id: string | null; exchanges: ConversationExchange[] };
 
 export interface ConversationClient {
   start(): Promise<void>;
   stop(): void;
   cancel(): void;
+  interruptTurn?(checkpoint: ConversationCheckpoint, partial?: VoiceReply): void;
   reset(): void;
   /** Compatibility name for the selected application ConversationId. */
   readonly currentThreadId: string | null;

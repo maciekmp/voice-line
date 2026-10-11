@@ -20,6 +20,7 @@ const main = (() => {
 /** @type {Partial<import('../src/desktop-contract.ts').DesktopVoice>} */
 let snapshot = { state: 'starting', ready: false };
 let pending = false;
+let draftRevision = 0;
 let composing = false;
 /** @type {ReturnType<typeof setTimeout> | undefined} */
 let resizeFrame;
@@ -64,7 +65,7 @@ window.orbDesktop.onResizing(resizing => {
 });
 function panelMode() {
   const mode = document.body.dataset.mode;
-  return mode === 'chat' || mode === 'compose' ? mode : 'peek';
+  return mode === 'chat' || mode === 'compose' || mode === 'compact' ? mode : 'peek';
 }
 const busy = () => ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking'].includes(snapshot.state || 'starting');
 const canSubmit = () => !pending && !busy() && snapshot.ready && Boolean(get('message').value.trim());
@@ -85,11 +86,14 @@ document.documentElement.addEventListener('pointerleave', () => window.orbDeskto
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !event.isComposing) window.orbDesktop.command('hide');
 });
+window.orbDesktop.onClearDraft(() => {
+  draftRevision++; get('message').value = ''; resizeMessage(); updateComposer();
+});
 window.orbDesktop.onMode(mode => {
   const changed = document.body.dataset.mode !== mode;
   if (changed) document.documentElement.dataset.resizing = 'true';
   document.body.dataset.mode = mode;
-  const editable = mode === 'chat' || mode === 'compose';
+  const editable = mode === 'chat' || mode === 'compose' || mode === 'compact';
   get('composer').hidden = !editable;
   get('history').hidden = mode !== 'chat' || !(snapshot.history?.length);
   refreshImageVisibility();
@@ -115,8 +119,8 @@ window.orbDesktop.onVoice(value => {
   get('history').hidden = document.body.dataset.mode !== 'chat' || !history.length;
   refreshImageVisibility();
   if (nearBottom) scrollToLatest = true;
-  get('status').textContent = value.state === 'thinking' && value.generatingImage ? 'Generuję obraz…' : labels[value.state] || '';
-  get('status').hidden = (Boolean(value.answer) && value.state !== 'thinking') || !get('status').textContent;
+  get('status').textContent = value.interrupted ? 'Odpowiedź przerwana' : value.state === 'thinking' && value.generatingImage ? 'Generuję obraz…' : labels[value.state] || '';
+  get('status').hidden = (!value.interrupted && Boolean(value.answer) && !['thinking', 'starting'].includes(value.state)) || !get('status').textContent;
   get('error').hidden = !value.message;
   get('error').textContent = value.message || '';
   get('retry').hidden = value.state !== 'error' || value.ready;
@@ -134,6 +138,7 @@ window.orbDesktop.onVoice(value => {
   reportSize();
 });
 get('message').addEventListener('input', () => {
+  draftRevision++;
   resizeMessage();
   updateComposer();
 });
@@ -148,10 +153,12 @@ get('composer').addEventListener('submit', async event => {
   event.preventDefault();
   if (composing || !canSubmit()) return;
   const text = get('message').value.trim();
+  const revision = draftRevision;
   pending = true;
   updateComposer();
   try {
     if (await window.orbDesktop.text(text)) {
+      if (revision !== draftRevision) return;
       get('message').value = '';
       resizeMessage();
     } else {

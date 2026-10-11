@@ -102,6 +102,47 @@ test('desktop short press composes without transcription; hold records through t
   assert.ok(f.calls.includes('audio'));
 });
 
+test('desktop correction interrupts at key-down and reports correction instead of toggling', async t => {
+  const f = fixture(true); t.after(() => f.controller.shutdown()); await f.controller.start();
+  const response = deferred<VoiceReply>(); let signal!: AbortSignal; let restored = 0;
+  f.engine.respond = async (_text, value) => { signal = value!; return response.promise; };
+  f.engine.interruptTurn = (checkpoint, partial) => { restored++; assert.deepEqual(checkpoint.exchanges, []); assert.equal(partial, undefined); };
+  const work = f.controller.command({ command: 'text', text: 'wrong' }); await flush();
+  await f.controller.command({ command: 'record' });
+  assert.equal(signal.aborted, true); assert.equal(restored, 1);
+  assert.equal(f.controller.snapshot().conversation.pending, null);
+  f.time.advance(80); await f.controller.command({ command: 'release' });
+  assert.equal(f.events.filter(e => e.type === 'ui').at(-1)?.action, 'correct');
+  response.resolve(f.reply); await work;
+});
+
+test('orb tap interrupts playback without recording and preserves received text', async t => {
+  const f = fixture(true); t.after(() => f.controller.shutdown()); await f.controller.start();
+  const response = deferred<VoiceReply>(); let callbacks!: VoiceCallbacks;
+  f.engine.respondAudio = async (_wav, _signal, updates = {}) => { callbacks = updates; return response.promise; };
+  let partial: VoiceReply | undefined;
+  f.engine.interruptTurn = (_checkpoint, reply) => { partial = reply; };
+  await f.controller.command({ command: 'record' }); f.time.advance(250);
+  await f.controller.command({ command: 'release' }); await flush();
+  callbacks.onUpdate?.('thinking', { question: 'question', answer: 'fragment' }); callbacks.onPlaybackStart?.();
+  const captures = f.calls.filter(c => c === 'record').length;
+  await f.controller.command({ command: 'tap' });
+  assert.equal(f.calls.filter(c => c === 'record').length, captures);
+  assert.equal(partial?.answer, 'fragment'); assert.equal(partial?.interrupted, true);
+  assert.equal(f.events.filter(e => e.type === 'ui').at(-1)?.action, 'continue');
+  response.resolve(f.reply); await flush();
+});
+
+test('a press begun while unavailable cannot record when startup completes during the gesture', async t => {
+  const f = fixture(true); t.after(() => f.controller.shutdown());
+  await f.controller.command({ command: 'record' }); await f.controller.start(); f.time.advance(250);
+  await f.controller.command({ command: 'release' });
+  assert.ok(!f.calls.includes('record') && !f.calls.includes('audio'));
+  assert.equal(f.events.filter(e => e.type === 'ui').at(-1)?.action, 'compose');
+  await f.controller.command({ command: 'record' }); f.time.advance(250);
+  assert.equal(f.events.filter(e => e.type === 'ui').at(-1)?.action, 'voice-input');
+});
+
 for (const { desktop, duration } of [{ desktop: true, duration: 80 }, { desktop: true, duration: 500 }, { desktop: false, duration: 500 }]) {
   test(`${desktop ? 'desktop' : 'CLI'} Copilot interrupts playback and ${duration < 250 ? 'composes on tap' : 'records on hold'}`, async t => {
     const f = fixture(desktop); t.after(() => f.controller.shutdown()); await f.controller.start();
@@ -129,7 +170,7 @@ for (const { desktop, duration } of [{ desktop: true, duration: 80 }, { desktop:
     response.resolve(f.reply); await flush();
     assert.equal(f.events.length, count, 'Stopped playback cannot publish late updates');
     await f.controller.command({ command: 'release' }); await flush();
-    assert.equal(f.events.some(event => event.type === 'ui' && event.action === 'compose'), desktop && duration < 250);
+    assert.equal(f.events.some(event => event.type === 'ui' && event.action === 'continue'), desktop && duration < 250);
     assert.equal(f.calls.filter(call => call === 'record.stop').length, duration < 250 ? 1 : 2);
     assert.equal(f.controller.snapshot().state, 'idle');
   });

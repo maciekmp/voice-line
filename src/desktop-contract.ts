@@ -2,7 +2,7 @@ import type { ApplicationState, ConversationView, ServiceHealth } from './applic
 import type { ConversationExchange, GeneratedImage } from './conversation-contract.ts';
 
 export type DesktopCommand = 'record' | 'release' | 'cancel' | 'reset' | 'previous' | 'pin' | 'hide' | 'retry';
-export type PanelMode = 'peek' | 'chat' | 'compose';
+export type PanelMode = 'peek' | 'chat' | 'compose' | 'compact';
 export type Presence = 'visible' | 'hidden' | 'leaving';
 export type SaveResult = 'saved' | 'cancelled' | 'error';
 export type PanelMeasurement = { height: number; mode: PanelMode; reducedMotion: boolean };
@@ -11,6 +11,7 @@ export type DesktopVoice = {
   state: ApplicationState; ready: boolean; health?: ServiceHealth; mode?: 'local' | 'realtime';
   threadId?: string | null; canRestorePrevious?: boolean; revision?: number; operationId?: number | null;
   generatingImage?: boolean; question: string; answer: string; message: string;
+  interrupted?: boolean;
   images: GeneratedImage[]; history: ConversationExchange[]; conversation: ConversationView;
 };
 export type DesktopEvent =
@@ -42,6 +43,7 @@ export interface DesktopApi {
   onLevel(callback: (level: number) => void): () => void;
   onVoice(callback: (snapshot: DesktopVoice) => void): () => void;
   onMode(callback: (mode: PanelMode) => void): () => void;
+  onClearDraft(callback: () => void): () => void;
   onPinned(callback: (pinned: boolean) => void): () => void;
   onResizing(callback: (resizing: boolean) => void): () => void;
   onPresence(callback: (presence: Presence) => void): () => void;

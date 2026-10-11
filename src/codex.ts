@@ -6,7 +6,7 @@ import { ConversationSession } from './conversation-session.ts';
 import type { GeneratedImage } from './conversation-contract.ts';
 import { imageRequest, storeGeneratedImage } from './image-artifacts.ts';
 import type { AppStorage } from './app-storage.ts';
-import type { VoiceReply } from './conversation-contract.ts';
+import type { VoiceReply, ConversationCheckpoint } from './conversation-contract.ts';
 export type { VoiceReply } from './conversation-contract.ts';
 import { loadCodexConfig, type CodexConfig } from './app-config.ts';
 
@@ -51,6 +51,7 @@ export class CodexClient {
   stop(): void { this.lifecycle++; this.startup = null; this.cancel(); this.historyServer?.stop(); }
   reset(): void { this.cancel(); this.session.reset(); }
   cancel(): void { this.active?.kill(); this.active = null; this.historyServer?.cancel(); }
+  interruptTurn(checkpoint: ConversationCheckpoint, partial?: VoiceReply): void { this.session.interruptTurn(checkpoint, partial); }
   get currentThreadId(): string | null { return this.session.threadId; }
   get currentExchanges() { return this.session.currentExchanges; }
   get canRestorePrevious(): boolean { return this.session.canRestorePrevious; }
@@ -82,13 +83,13 @@ export class CodexClient {
       }
       const args = ephemeral
         ? ['exec', ...modelArgs, '--ephemeral', '--json', '--output-schema', schemaPath, '--skip-git-repo-check', '-s', 'read-only', '-']
-        : this.session.threadId
+        : this.session.threadId && !this.session.usesLocalContext
         ? ['exec', 'resume', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', this.session.codexThreadId!, '-']
         : ['exec', ...modelArgs, '--json', '--output-schema', schemaPath, '--skip-git-repo-check', '-s', 'read-only', '-'];
       const operation = this.session.captureOperation();
       const conversationId = this.session.threadId ?? randomUUID();
       const exchangeId = this.storage ? randomUUID() : undefined;
-      const result = await this.run(args, LOCAL_INSTRUCTIONS + (ephemeral ? this.session.contextPrompt(raw) : raw), signal, conversationId);
+      const result = await this.run(args, LOCAL_INSTRUCTIONS + (ephemeral || this.session.usesLocalContext ? this.session.contextPrompt(raw) : raw), signal, conversationId);
       if (signal?.aborted || !this.session.matchesOperation(operation)) throw new Error('Cancelled');
       let reply: VoiceReply;
       try { reply = JSON.parse(result.text); }
@@ -98,7 +99,8 @@ export class CodexClient {
       if (result.images?.length) reply.images = result.images;
       if (ephemeral) this.session.threadId ??= randomUUID();
       else if (result.threadId) {
-        this.session.bindCodexThread(result.threadId, conversationId);
+        if (this.session.usesLocalContext) this.session.rebindProvider(result.threadId);
+        else this.session.bindCodexThread(result.threadId, conversationId);
       }
       // CLI JSON does not reliably carry image bytes; use the authoritative turn items.
       const commitOperation = this.session.captureOperation();

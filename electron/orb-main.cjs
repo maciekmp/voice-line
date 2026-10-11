@@ -83,7 +83,10 @@ async function saveCurrentConversation() {
 const onEngineMessage = createWorkerEventReceiver({
   sendVoice, get voice() { return voice; },
   onLevel: level => orbWindow?.webContents.send('orb:level', level),
-  compose: () => overlay.compose(),
+  compose: action => {
+    if (action === 'correct' || action === 'continue') panelWindow?.webContents.send('voice:clear-draft');
+    overlay.intent(action);
+  },
 });
 const engineSupervisor = createEngineSupervisor({
   launch() {

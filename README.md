@@ -149,7 +149,7 @@ OPENAI_API_KEY=your-api-key
 
 Run `npm start` or `npm run start:cli`. FFmpeg, FFplay and Codex CLI must be available. Whisper, its model, SAPI and Piper are not started in this mode. Remove `CODEX_MODE=cli` if set. The realtime model uses Codex's realtime default unless `CODEX_REALTIME_MODEL` overrides it; `CODEX_MODEL` still selects the model for typed questions.
 
-Hold Copilot to record and release it to upload the utterance. The app converts the recording to mono PCM16 at 24 kHz, adds a short silence tail for voice activity detection, and uses the **v2** realtime protocol over the existing stdio app-server connection. Audio starts playing as chunks arrive through FFplay. A final transcript followed by a 250 ms quiet window ends the output stream; the player drains queued audio before returning to idle. Pressing Copilot again, cancelling or resetting stops playback and closes the current realtime session. Recordings are limited to 60 seconds. The conversation panel displays question and answer transcripts as soon as Codex sends them, updating partial text during audio playback. Completed transcript segments are also displayed immediately; the full answer need not wait for playback to finish. The exchange is saved to application history after playback completes. Typed questions continue to use normal text turns without spoken playback.
+Hold Copilot to record and release it to upload the utterance. The app converts the recording to mono PCM16 at 24 kHz, adds a short silence tail for voice activity detection, and uses the **v2** realtime protocol over the existing stdio app-server connection. Audio starts playing as chunks arrive through FFplay. A final transcript followed by a 250 ms quiet window ends the output stream; the player drains queued audio before returning to idle. Pressing Copilot again, cancelling or resetting stops playback and closes the current realtime session. Recordings are limited to 60 seconds. The conversation panel displays question and answer transcripts as soon as Codex sends them, updating partial text during audio playback. Completed transcript segments are also displayed immediately; the full answer need not wait for playback to finish. The exchange is saved on completion; interrupted playback retains the received text, marked as interrupted. Typed questions continue to use normal text turns without spoken playback.
 
 Each voice request creates a new realtime session and supplies recent committed exchanges from the selected conversation, including voice transcripts and typed replies. Committed application history supplies restart and previous-conversation context; old private conversations without that history import Codex data once. Resetting the conversation or the existing two-minute inactivity expiry starts an empty context; restoring the previous conversation brings its context back. Generic realtime startup context forwarding is disabled. Typed questions retain the normal Codex thread behavior.
 
@@ -201,37 +201,38 @@ Only the orb's color field is rendered at reduced resolution. The circular edge 
 
 ### Desktop orb (Electron)
 
-`npm start` starts the real voice services with the conversation popup hidden. The
-orb is hidden while idle and during startup. It appears when recording starts,
-stays visible through transcription, answer generation and speech. It remains
-visible while the pointer is over the orb or popup; leaving both hides them after
-one second. A new recording cancels stale hide requests. Click
-the tray icon to reopen the popup at any time. Hover over the visible orb to show
-the frameless conversation popup above it without taking focus. Move into the
-popup to read or use its controls; leaving both surfaces dismisses it after a
-short delay. Use **Przypnij popup** to keep the panel open when the pointer leaves;
-Escape dismisses it and clears the pin. Press the orb to open text chat; press it again to return to the
-compact latest-exchange view, preserving the draft. Press Escape to dismiss it.
-While the text input has focus in the active popup, both popup and orb stay visible,
-including after interrupting speech. Losing focus restores normal idle dismissal
-when the pointer is outside both surfaces; Escape still closes the popup.
-The dark hover popup shows the latest question and answer, including an
-answer-generation status. A short Copilot press (under 250 ms) shows the orb and a focused popup
-containing only the text input, hiding earlier messages until the next question.
-Holding Copilot for at least 250 ms records a voice question; audio is collected
-from key-down to preserve its beginning, and a short tap discards it without transcription.
-This tap/hold distinction applies to the desktop app; terminal mode records every
-Copilot press until release. During spoken playback, pressing Copilot stops the
-reply immediately. A short press opens the text composer; holding for at least
-250 ms starts listening for the next question. Key repeat does not restart capture.
-Terminal mode continues to record on every press, also when interrupting playback.
+`npm start` starts the real voice services with both desktop surfaces hidden.
+
+The desktop orb and popup always appear and disappear together. A short Copilot
+press from hidden opens only the focused text input. A second tap opens history;
+subsequent taps alternate history with the latest exchange and input. A voice
+view shows the latest exchange without input; tapping adds input, and another
+tap opens history. Sending text always selects the latest-exchange input view.
+
+Copilot interrupts immediately on key-down. Before actual playback starts it
+removes the current exchange from history and context; a tap clears the draft
+and opens correction without also toggling views. Once playback has started,
+LOCAL keeps its full answer and API saves the received fragment marked interrupted.
+A tap then clears the draft and allows continuing by text. Holding at least 250 ms
+selects voice recording while preserving an unsent draft; release submits it.
+Audio is captured from key-down and discarded for taps. Orb clicks perform the
+same action as a tap without recording. CLI retains its existing press-to-record flow.
+
+Escape hides both surfaces without stopping work and preserves the draft; updates
+from the same operation do not reopen them. Hover cannot open hidden surfaces.
+After completion/interruption, a five-second timer hides both unless hover, input
+focus or pin protects them at expiry. If protected then, they remain until explicit
+dismissal or another operation. Departure, blur and unpin never start another timer.
+Errors stay visible until dismissal or another action. During startup/service failure,
+Copilot displays status and allows drafting, but recording and sending are unavailable.
+A press begun while unavailable needs to be repeated after readiness.
 
 Normal Codex text turns enable built-in live web search (`web_search="live"`),
 including LOCAL voice questions and typed questions in either voice mode. The
 assistant checks current information and includes source links in its answer.
 This does not require a separate search API key. Native realtime audio sessions
 retain their existing tool-free prompt; use LOCAL or a typed question for web research.
-Clicking the orb or tray reveals the conversation and a text composer: Enter sends,
+The tray opens history with a text composer; orb clicks follow the tap flow: Enter sends,
 Shift+Enter adds a newline. Typed questions continue the same Codex conversation
 and receive a text reply without speech playback. The composer has no send or cancel button.
 Recording uses Copilot; **Nowa rozmowa** remains in the tray menu.
@@ -245,7 +246,7 @@ While the voice application runs, its keyboard hook consumes the configured
 Other keys pass through. Exiting releases the hook, including after an unexpected
 Node process exit. `npm run diagnose:keys` starts only a passive keyboard observer and does not suppress keys;
 the isolated orb preview does not install a keyboard hook.
-Closing the panel hides it without stopping services; **Zakończ** in the tray
+Closing the panel hides both surfaces without stopping services; **Zakończ** in the tray
 menu quits and shuts down the microphone, keyboard hook and voice workers.
 The microphone remains active between questions, as in terminal mode; only
 question recording retains samples. Conversation text is held in memory in the

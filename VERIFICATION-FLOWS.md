@@ -6,143 +6,73 @@ konkretny tryb. LOCAL = `VOICE_MODE=local`; API = `VOICE_MODE=realtime`.
 Zmiana trybu wymaga restartu. Pokrycie oznacza zakres istniejących testów,
 nie potwierdzenie wykonania wszystkich scenariuszy na rzeczywistych usługach.
 
-## Reguły widoczności
+## Copilot: kontrakt interakcji
 
-Kulka pozostaje widoczna w każdym aktywnym stanie: `listening`, `transcribing`,
-`thinking`, `preparing-speech`, `speaking`. Zejście myszką ani Escape nie mogą
-ukryć aktywnej kulki. Nowa praca otwiera ukryty popup w `peek`; `compose`
-przechodzi w `chat`. Opuszczenie obu powierzchni nie zamyka popupu podczas pracy.
-Escape zamyka go od razu, usuwa przypięcie i podtrzymanie przez fokus.
-Ukrycie popupu nie przerywa pracy.
+Stan pracy i widok są niezależne. Orb i popup pojawiają się i znikają razem.
 
-Po zakończeniu pracy (`idle` lub `error`):
+| Tryb | Zawartość | Krótki Copilot przy gotowej aplikacji |
+| --- | --- | --- |
+| hidden | Obie powierzchnie ukryte | compose |
+| compose | Samo pole, ewentualnie status lub błąd | chat |
+| peek | Najnowsza tura/status, bez pola | compact |
+| compact | Najnowsza tura i pole | chat |
+| chat | Cała rozmowa i pole | compact |
 
-- Jeśli popup jest otwarty przy wyjściu z aktywnego stanu, zaczyna się nowe
-  2-sekundowe podtrzymanie popupu i kulki, także po błędzie lub przerwaniu.
-- Po tych 2 sekundach popup i kulka znikają, chyba że utrzymuje je hover,
-  przypięcie albo fokus pola tekstowego.
-- Zejście kursorem podczas podtrzymania nie skraca jego czasu. Po jego wygaśnięciu
-  późniejsze opuszczenie obu powierzchni uruchamia zwykły timer 1 sekundy.
-- Jeśli popup został zamknięty przed końcem pracy, podtrzymanie nie startuje;
-  bez hoveru kulka znika po zakończeniu pracy.
-- Przypięty popup lub skupione pole tekstowe pozostają widoczne mimo zejścia.
-  Odpięcie lub utrata fokusu przy braku hoveru uruchamia timer 1 sekundy,
-  o ile nie trwa praca ani podtrzymanie po jej zakończeniu.
-- Jawne otwarcie bez późniejszego opuszczenia powierzchni nie uruchamia timera.
+Wciśnięcie Copilota natychmiast przerywa pracę. Tap (<250 ms) odrzuca audio;
+hold (>=250 ms) pokazuje peek, zachowuje szkic i nagrywa od key-down.
+Puszczenie po hold wysyła nagranie. Repeats nie uruchamiają kolejnych działań.
+Klik orba wykonuje tap bez nagrywania. Tray otwiera chat.
 
-Nowa praca głosowa lub tekstowa unieważnia timer wyjścia i podtrzymanie poprzedniej pracy.
-Powtarzane snapshoty i zmiana głośności nie przejmują fokusu ani nie zmieniają trybu.
-Właścicielem tych reguł jest `electron/overlay-controller.cjs`.
+Przed rzeczywistym rozpoczęciem playbacku przerwanie usuwa bieżącą turę
+z historii, zapisu i kontekstu. Tap czyści szkic i zachowuje zakres chat/compact;
+z peek dodaje pole w compact, z hidden otwiera compose. Nie przełącza dodatkowo
+widoków. Po rozpoczęciu playbacku tura zostaje: LOCAL zachowuje pełną odpowiedź,
+API otrzymany fragment z oznaczeniem „Odpowiedź przerwana”. Tap także czyści szkic.
+Następne pytanie jest kontynuacją. Sam hold nie czyści szkicu.
 
-## Diagram: cykl rozmowy LOCAL
+Wysłanie tekstu pokazuje compact; odpowiedź tekstowa nie uruchamia odczytu.
+Enter wysyła, Shift+Enter dodaje linię, IME nie wysyła. Błędne wysłanie zachowuje
+szkic. Podczas startu/awarii tap otwiera pole ze statusem, wysyłanie jest zablokowane;
+hold pokazuje stan bez nagrywania. Gotowość w trakcie gestu nie rozpoczyna nagrania.
 
-Aktywne etapy utrzymują kulkę niezależnie od kursora. Po zakończeniu, błędzie
-lub przerwaniu jej widoczność wyznaczają reguły z następnego diagramu.
-Powiązane scenariusze: V01–V08, I01–I03, E01–E04.
-API pomija lokalne STT i TTS: po `listening` następuje `thinking`, a odtwarzanie
-strumienia przechodzi w `speaking`. Tekst w obu trybach nie uruchamia odczytu.
-Żądania obrazów opisują G01–G04; głosowe API może zakończyć je bez `speaking`.
+Escape ukrywa oba elementy, usuwa pin i fokus, zachowuje szkic i nie przerywa pracy.
+Aktualizacje tej samej pracy nie otwierają interfejsu. Nowe pytanie lub jawne otwarcie
+może go pokazać. Hover nie otwiera ukrytego interfejsu.
 
-```mermaid
-flowchart TD
-    START["Uruchomienie · starting"] --> READY["Gotowość · idle"]
-    READY --> INPUT{"Sposób zadania pytania"}
-    INPUT -->|"Copilot: krótkie naciśnięcie"| COMPOSE["Pole tekstowe · compose"]
-    COMPOSE -->|"Enter: poprawna wiadomość"| THINK
-    INPUT -->|"Copilot: przytrzymanie"| LISTEN
+Po zakończeniu lub przerwaniu aktywnej pracy działa jeden timer 5 sekund.
+Jeśli przy jego wygaśnięciu jest hover, fokus pola lub pin, okno zostaje do jawnego
+zamknięcia albo następnej pracy. Unhover, blur i unpin nie uruchamiają timera.
+Nowa praca unieważnia stary timer. Błędy pozostają do zamknięcia lub kolejnej akcji.
 
-    subgraph ACTIVE["Aktywna praca — kulka zawsze widoczna"]
-        LISTEN["Nagrywanie · listening"] -->|"Puszczenie klawisza"| STT["Rozpoznawanie mowy · transcribing"]
-        STT --> THINK["Generowanie odpowiedzi · thinking"]
-        THINK --> SOURCE{"Pytanie głosowe?"}
-        SOURCE -->|"Tak"| PREPARE["Przygotowanie dźwięku · preparing-speech"]
-        PREPARE --> SPEAK["Odczyt · speaking"]
-    end
+Wycofanie korzysta z checkpointu danej operacji; spóźniony commit jest odrzucany.
+Po korekcie trwałe localContextIds kierują kolejne żądania do świeżego wątku
+z kontekstem zachowanych lokalnych tur. Mapowanie dostawcy i rejestr retencji
+zmieniają się atomowo; stare wątki pozostają zarejestrowane do czyszczenia.
 
-    SOURCE -->|"Nie: odpowiedź tekstowa"| DONE["Zakończenie · idle"]
-    SPEAK --> DONE
-    ACTIVE -.->|"Błąd dowolnego etapu"| ERROR["Błąd · error"]
-    ACTIVE -.->|"Przerwij"| CANCEL["Praca zatrzymana · idle"]
-    DONE --> VIS["Ocena widoczności kulki"]
-    ERROR --> VIS
-    CANCEL --> VIS
-    VIS --> NEXT["Można zadać kolejne pytanie"]
-    NEXT --> INPUT
-```
-
-## Diagram: kiedy kulka może zniknąć
-
-Reguła jest oceniana przy zmianie stanu, hoveru, trybu popupu i wygaśnięciu timera.
-Powiązane scenariusze: V03–V10, V12–V19.
-
-```mermaid
-flowchart TD
-    EVENT["Zmiana stanu lub interakcji"] --> ACTIVE{"Nagrywanie, STT, generowanie,<br/>przygotowanie głosu lub odczyt?"}
-    ACTIVE -->|"Tak"| SHOW["Kulka widoczna"]
-    ACTIVE -->|"Nie: idle / error / starting"| HOVER{"Kursor nad kulką lub popupem?"}
-    HOVER -->|"Tak"| SHOW
-    HOVER -->|"Nie"| RETAIN{"Przypięty popup, fokus pola<br/>lub 2 sekundy podtrzymania?"}
-    RETAIN -->|"Tak"| SHOW
-    RETAIN -->|"Nie"| TIMER{"Timer wyjścia jeszcze trwa?"}
-    TIMER -->|"Tak"| GRACE["Kulka widoczna przez pozostały czas"]
-    GRACE -->|"Timer wygasa"| EVENT
-    TIMER -->|"Nie"| OPEN{"Popup nadal otwarty?"}
-    OPEN -->|"Tak"| SHOW
-    OPEN -->|"Nie"| HIDE["Kulka znika"]
-
-    LEAVE["Kursor opuszcza obie powierzchnie"] --> BLOCK{"Aktywna praca, przypięcie,<br/>fokus lub podtrzymanie?"}
-    BLOCK -->|"Tak"| KEEP["Nie uruchamiaj timera wyjścia"]
-    BLOCK -->|"Nie"| WAIT["Start timera: 1 sekunda"]
-    WAIT -->|"Powrót kursora"| STOP["Anuluj timer"]
-    WAIT -->|"Nowa praca, przypięcie<br/>lub fokus pola"| STOP
-    WAIT -->|"Upływa 1 sekunda"| CLOSE["Zamknij popup"]
-    CLOSE --> EVENT
-    STOP --> EVENT
-    FINISH["Koniec aktywnej pracy przy otwartym popupie"] --> GRACE2["Anuluj timer wyjścia;<br/>start podtrzymania: 2 sekundy"]
-    GRACE2 -->|"Upływ czasu bez hoveru,<br/>przypięcia i fokusu"| CLOSE
-    GRACE2 -->|"Nowa praca"| STOP
-    ESC["Escape"] --> CLOSE_NOW["Zamknij popup, usuń przypięcie<br/>i fokus; anuluj oba timery"]
-    CLOSE_NOW --> EVENT
-```
-
-Podtrzymanie liczy się od przejścia z aktywnego stanu do nieaktywnego, nie od
-zejścia myszką. Powtórzony snapshot `idle` nie rozpoczyna go ponownie.
-Czasy dotyczą kontrolera; natywne okno kulki kończy jeszcze animację wyjścia.
-
-## Diagram: tryby popupu
-
-`hidden` oznacza ukryty popup; kulka może nadal być widoczna podczas pracy.
-Hover nie przejmuje fokusu i nie zwija otwartego `chat` ani `compose`.
-Powiązane scenariusze: V09–V15, I01, I05–I08, E06.
+## Diagram widoków
 
 ```mermaid
 stateDiagram-v2
-    direction LR
-    state "Ukryty popup" as hidden
-    state "Podgląd ostatniej wymiany" as peek
-    state "Rozmowa, historia i pole tekstowe" as chat
-    state "Tylko pole tekstowe" as compose
-
-    [*] --> hidden
-    hidden --> peek: Nowa aktywna praca
-    hidden --> peek: Najazd na kulkę
-    hidden --> chat: Klik kulki / otwarcie rozmowy
-    hidden --> compose: Krótki Copilot
-    peek --> chat: Klik kulki / otwarcie rozmowy
-    peek --> compose: Krótki Copilot
-    chat --> peek: Klik kulki
-    chat --> compose: Krótki Copilot
-    compose --> peek: Klik kulki
-    compose --> chat: Wysłanie tekstu / aktywna praca
-    compose --> chat: Otwarcie rozmowy
-    peek --> hidden: Escape / wygaśnięcie timera bez podtrzymania
-    chat --> hidden: Escape / wygaśnięcie timera bez podtrzymania
-    compose --> hidden: Escape / wygaśnięcie timera bez podtrzymania
+    hidden --> compose: Tap
+    compose --> chat: Tap
+    peek --> compact: Tap
+    compact --> chat: Tap
+    chat --> compact: Tap
+    compose --> compact: Enter
+    chat --> compact: Enter
+    compose --> peek: Hold
+    compact --> peek: Hold
+    chat --> peek: Hold
+    hidden --> peek: Hold
+    peek --> hidden: Escape / timer
+    compact --> hidden: Escape / timer
+    chat --> hidden: Escape / timer
+    compose --> hidden: Escape / timer
 ```
 
-Przypięcie i fokus są osobnymi właściwościami, nie dodatkowymi trybami popupu.
-Timer wyjścia działa tylko bez pracy, podtrzymania, przypięcia i fokusu;
-timer końca pracy zamyka popup tylko bez hoveru, przypięcia i fokusu.
+Tap podczas pracy stosuje regułę poprawki/kontynuacji zamiast przełączenia.
+LOCAL: listening → transcribing → thinking → preparing-speech → speaking → idle.
+API pomija lokalne STT/TTS. Tekst nie uruchamia odczytu.
 
 ## Jak czytać pokrycie
 
@@ -197,31 +127,32 @@ zakończeniu; zrzuty desktop zostają w `.app-data/test-results/desktop-<id>/`.
 
 | ID | Kroki | Oczekiwany wynik | Pokrycie / kontrola ręczna |
 | --- | --- | --- | --- |
-| V01 | Uruchom aplikację; poczekaj na gotowość. | Kulka i popup ukryte w `starting` i `idle`. | desktop; ręcznie start usług |
-| V02 | Przytrzymaj Copilot do `listening` bez najeżdżania myszką. | Kulka widoczna; ukryty popup otwiera się w `peek` bez przejęcia fokusu. | overlay, desktop; ręcznie mikrofon |
-| V03 | W każdym z pięciu aktywnych stanów najedź na kulkę, zjedź poza obie powierzchnie i odczekaj ponad sekundę. | Popup i kulka pozostają przez cały aktywny stan. | overlay, desktop; ręcznie długi odczyt |
-| V04 | W LOCAL zjedź w trakcie nagrywania; przejdź przez STT, generowanie, przygotowanie głosu i odczyt. | Żadne przejście nie ukrywa popupu ani kulki; po pracy zaczynają się 2 sekundy podtrzymania. | overlay, voice-engine; ręcznie cały cykl |
-| V05 | Zakończ odczyt bez wcześniejszego hoveru, bez przypięcia i fokusu pola. | Otwarty popup i kulka zostają przez 2 sekundy od końca pracy, potem znikają. | overlay, desktop |
-| V06 | Zakończ odczyt, trzymając kursor nad kulką lub popupem; pozostań tam ponad 2 sekundy, potem zjedź. | Popup i kulka zostają; po zejściu znikają po sekundzie, o ile nie są przypięte i pole nie ma fokusu. | overlay, desktop |
-| V07 | Zjedź podczas odczytu; zakończ go po 500 ms, bez przypięcia i fokusu pola. | Od zakończenia zaczyna się pełne 2-sekundowe podtrzymanie. | overlay |
-| V08 | Zjedź podczas odczytu; zakończ go po ponad sekundzie, bez przypięcia i fokusu pola. | Popup i kulka zostają podczas odczytu i jeszcze 2 sekundy po jego końcu. | overlay, desktop |
-| V09 | Zjedź i wróć przed upływem sekundy. | Ukrycie anulowane; brak migania. | overlay, desktop |
-| V10 | Przejdź z kulki do popupu w czasie krótszym niż sekunda. | Popup i kulka zostają; liczy się hover obu powierzchni. | overlay, desktop |
-| V11 | Kliknij kulkę, potem kliknij ponownie także w trakcie odczytu. | `chat` przełącza się w `peek`; szkic zostaje; aktywna kulka widoczna. | overlay, desktop |
-| V12 | Naciśnij Escape w popupie podczas odpowiedzi. | Popup zamknięty; odczyt trwa i kulka pozostaje. | overlay; ręcznie Escape podczas odczytu |
-| V13 | Rozpocznij kolejne nagrywanie przed wygaśnięciem timera wyjścia w idle lub podtrzymania po odpowiedzi. | Stary timer anulowany; nie ukrywa popupu ani kulki nowej pracy. | overlay, desktop |
-| V14 | Po zejściu z pola tekstowego wyślij pytanie tuż przed wygaśnięciem timera. | Nowa praca anuluje stary timer; rozmowa widoczna. | overlay |
-| V15 | Zostaw nieruchomy kursor w popupie; rozpocznij kolejne pytanie, które zmienia wysokość okna. | Brak fałszywego wyjścia kursora, ukrycia i przejęcia fokusu. | overlay, desktop |
-| V16 | W trakcie odpowiedzi kliknij inne okno. | Zmiana fokusu nie przerywa ani nie ukrywa aktywnej kulki. | ręcznie, dwa okna |
-| V17 | Przypnij popup, zjedź, zmień fokus okna i zakończ odpowiedź; potem odepnij w idle bez hoveru i fokusu pola. | Przypięcie utrzymuje popup i kulkę; odpięcie przywraca ukrycie po sekundzie. Escape usuwa przypięcie. | overlay, desktop |
-| V18 | Przerwij odczyt krótkim Copilotem; pisz w skupionym polu poza hoverem ponad 2 sekundy, potem kliknij inne okno. | `compose` i szkic pozostają podczas pisania; utrata fokusu przywraca ukrycie po sekundzie. | overlay, controller, desktop |
-| V19 | Zamknij popup Escape podczas pracy, pozostaw kursor poza powierzchniami i zakończ pracę. | Popup pozostaje ukryty; aktywna kulka znika po końcu bez 2-sekundowego podtrzymania. | overlay |
+| V01 | Start aplikacji. | Obie ukryte; Copilot może pokazać stan startu. | controller, desktop |
+| V02 | Hold bez hoveru. | Obie widoczne, peek bez przejęcia fokusu. | copilot, overlay; ręcznie mikrofon |
+| V03 | Opuść powierzchnie w każdym aktywnym stanie. | Obie pozostają; brak timera unhover. | overlay, desktop |
+| V04 | Pełny cykl LOCAL. | Widok nie zmienia się między etapami. | voice-engine; ręcznie usługi |
+| V05 | Koniec pracy bez hoveru, fokusu i pina. | Obie znikają po 5 sekundach. | overlay, desktop |
+| V06 | Hover przy wygaśnięciu timera, potem odejdź. | Obie pozostają do zamknięcia/nowej pracy. | overlay |
+| V07 | Fokus pola przy wygaśnięciu, potem blur. | Brak ukrycia po utracie fokusu. | overlay, desktop |
+| V08 | Pin przy wygaśnięciu, potem unpin. | Brak ukrycia po odpięciu. | overlay, desktop |
+| V09 | Hover nad ukrytym interfejsem. | Nie otwiera powierzchni. | overlay, desktop |
+| V10 | Przejdź między orbem a popupem. | Hover obu chroni przy wygaśnięciu. | overlay, desktop |
+| V11 | Klikaj orb przy gotowej aplikacji. | Przejścia jak tap; szkic zachowany. | overlay, desktop |
+| V12 | Escape podczas odpowiedzi. | Obie ukryte, praca trwa. | overlay; ręcznie odczyt |
+| V13 | Nowe nagranie przed starym timerem. | Stary timer nie ukrywa nowej pracy. | overlay |
+| V14 | Tekst z compose/chat. | compact, anulowany stary timer. | overlay, desktop |
+| V15 | Snapshoty i audio-levels. | Brak zmiany widoku i przejęcia fokusu. | desktop |
+| V16 | Zmiana fokusu podczas odpowiedzi. | Praca trwa, brak timera blur. | overlay; ręcznie dwa okna |
+| V17 | Pin i Escape. | Escape usuwa pin i ukrywa oba. | overlay, desktop |
+| V18 | Tap podczas odczytu. | Puste pole, zachowana odpowiedź; compact lub chat. | controller, desktop |
+| V19 | Escape, dalsze aktualizacje i koniec pracy. | Obie pozostają ukryte. | overlay |
+
 
 ## Wejście i kolejne rozmowy
 
 | ID | Kroki | Oczekiwany wynik | Pokrycie / kontrola ręczna |
 | --- | --- | --- | --- |
-| I01 | Krótko naciśnij Copilot (<250 ms). | Skupione pole tekstowe, widoczna kulka; próbki odrzucone, brak STT. | copilot, overlay, desktop; ręcznie klawisz |
+| I01 | Z ukrycia krótko naciśnij Copilot (<250 ms). | Skupione pole tekstowe, widoczna kulka; próbki odrzucone, brak STT. | copilot, overlay, desktop; ręcznie klawisz |
 | I02 | W LOCAL przytrzymaj Copilot >=250 ms; mów; puść. | Nagrywanie, potem STT, generowanie, przygotowanie głosu i odczyt w tej kolejności. | copilot, controller, voice-engine; ręcznie pełny cykl |
 | I03 | Wyślij tekst Enterem w LOCAL i API. | Nowe pytanie w rozmowie; przygotowanie odpowiedzi; bez odczytu TTS. | desktop, controller, voice-engine; ręcznie Codex |
 | I04 | Enter na pustym polu, szybki podwójny Enter, Shift+Enter, Enter podczas IME. | Brak pustych i podwójnych wysłań; nowa linia działa; IME nie wysyła. | desktop (puste, duplikaty, IME); ręcznie Shift+Enter |
@@ -272,7 +203,7 @@ zakończeniu; zrzuty desktop zostają w `.app-data/test-results/desktop-<id>/`.
 | --- | --- | --- | --- |
 | R01 | Uruchom `VOICE_MODE=realtime`; sprawdź etykietę i usługi, następnie nagraj pytanie. | Etykieta API; Whisper, SAPI i Piper nie startują. Po `listening` następuje `thinking`, potem strumieniowy odczyt przez FFplay (`speaking`). | voice-engine, realtime, realtime-wire; ręcznie API i urządzenia |
 | R02 | Obserwuj transkrypty i odczyt dłuższej odpowiedzi. | Częściowy tekst jest aktualizowany bez duplikowania; `idle` dopiero po zakończeniu strumienia i opróżnieniu kolejki odtwarzania. | voice-engine, realtime, realtime-wire; ręcznie synchronizacja |
-| R03 | Przerwij, zresetuj lub rozpocznij nowe nagrywanie w trakcie odpowiedzi API. | Odtwarzanie i sesja realtime zatrzymane; stare callbacki ignorowane; wymiana anulowana przed zatwierdzeniem nie trafia do trwałej historii. | controller, realtime, storage; ręcznie API |
+| R03 | Przerwij Copilotem przed odczytem i po jego rozpoczęciu; osobno sprawdź reset. | Przed odczytem tura usunięta; po rozpoczęciu zapisany dostępny fragment z oznaczeniem przerwania. Sesja i audio zatrzymane, stare callbacki ignorowane. Reset rozpoczyna nową rozmowę. | controller, realtime, copilot-history; ręcznie API |
 | R04 | Po udanej odpowiedzi głosowej zadaj pytanie tekstowe, uruchom ponownie i użyj powrotu do rozmowy. | Tekst bez odczytu; kolejne audio otrzymuje kontekst zatwierdzonych wymian głosowych i tekstowych, także po restarcie i powrocie. | realtime, conversation, realtime-wire; ręcznie API |
 
 ## Obrazy i treść odpowiedzi
@@ -303,3 +234,16 @@ ręczne API/ImageGen korzystają z rzeczywistego konta i mogą zużywać jego li
 Przy zgłoszeniu zapisz ID scenariusza, stan silnika, tryb popupu, pozycję kursora,
 czas od opuszczenia powierzchni i oczekiwany/rzeczywisty wynik. Nie zapisuj sekretów
 z `.env`. Nowy przypadek wyścigu dodaj do testów kontrolera z wirtualnym zegarem.
+
+## Korekta i kontynuacja
+
+| ID | Kroki | Oczekiwany wynik | Pokrycie |
+| --- | --- | --- | --- |
+| C01 | Tap podczas STT/thinking/preparing-speech. | Tura wycofana, szkic pusty, wcześniejsze tury zachowane. | controller, copilot-history |
+| C02 | Restart po korekcie, nowe pytanie. | Wycofana tura nie wraca do historii ani kontekstu. | copilot-history |
+| C03 | Przerwij API po początku odczytu. | Fragment oznaczony; bez podwójnego/spóźnionego commitu. | copilot-history; ręcznie API |
+| C04 | Hold ze szkicem, potem tap przerywający. | Hold zachowuje szkic; tap podczas pracy go czyści. | desktop; ręcznie klawisz |
+| C05 | Hold przy niedostępności, gotowość przed puszczeniem. | Brak nagrania; nowy gest wymagany. | controller |
+
+copilot-history = tests/unit/test-copilot-history.ts. Testy automatyczne nie
+potwierdzają fizycznego klawisza, mikrofonu ani usług LOCAL/API.

@@ -1,4 +1,4 @@
-import type { ConversationClient, ConversationExchange, VoiceReply } from './conversation-contract.ts';
+import type { ConversationClient, ConversationExchange, VoiceReply, ConversationCheckpoint } from './conversation-contract.ts';
 export type { ConversationClient } from './conversation-contract.ts';
 import type { ResponsePhase } from './application-contract.ts';
 import { imageRequest, explicitImageRequest } from './image-artifacts.ts';
@@ -27,6 +27,7 @@ export abstract class BaseVoiceEngine implements VoiceEngine {
   start() { return this.client.start(); }
   stop() { this.client.stop(); }
   cancel() { this.client.cancel(); }
+  interruptTurn(checkpoint: ConversationCheckpoint, partial?: VoiceReply) { this.client.interruptTurn?.(checkpoint, partial); }
   reset() { this.cancel(); this.client.reset(); }
   expireConversation() { this.client.expireConversation(); }
   async maintainHistory() { return await this.client.maintainHistory?.() ?? false; }

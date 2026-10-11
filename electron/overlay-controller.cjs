@@ -1,141 +1,63 @@
-// The only owner of overlay visibility and interaction mode. Geometry and
-// renderer animations are deliberately handled by the native view adapter.
+﻿// One owner for paired visibility, popup mode and completion retention.
 const ACTIVE = new Set(['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking']);
-
-function createOverlayController({ onChange, delay = 1000, completionDelay = 2000, timers = globalThis }) {
-  let voiceState = 'starting';
-  let mode = 'hidden';
-  let dismissed = false;
-  let pinned = false;
-  let composerFocused = false;
-  let expiry;
-  let completionExpiry;
-  let completionRevision = 0;
-  let revision = 0;
+const EDITABLE = new Set(['compose', 'compact', 'chat']);
+function createOverlayController({ onChange, completionDelay = 5000, timers = globalThis }) {
+  let voiceState = 'starting', mode = 'hidden', pinned = false, composerFocused = false;
+  let completionExpiry, revision = 0, last = '';
   const hovered = new Set();
-  let last = '';
-
-  function snapshot() {
-    return { mode, pinned, orbVisible: ACTIVE.has(voiceState) || hovered.size > 0 || expiry !== undefined || completionExpiry !== undefined
-      || (!dismissed && mode !== 'hidden') };
-  }
+  function snapshot() { return { mode, pinned, orbVisible: mode !== 'hidden' }; }
   function publish(focus = false) {
-    const value = snapshot();
-    const key = JSON.stringify(value);
+    const value = snapshot(), key = JSON.stringify(value);
     if (key !== last || focus) { last = key; onChange(value, { focus }); }
   }
-  function cancelExpiry() {
-    revision++;
-    timers.clearTimeout(expiry);
-    expiry = undefined;
-  }
-  function scheduleExpiry() {
-    cancelExpiry();
-    if (pinned || composerFocused || ACTIVE.has(voiceState) || completionExpiry !== undefined) return;
-    const expected = revision;
-    expiry = timers.setTimeout(() => {
-      if (expected !== revision || hovered.size || pinned || composerFocused) return;
-      expiry = undefined;
-      dismissed = true;
-      mode = 'hidden';
-      publish();
-    }, delay);
-  }
-  function cancelCompletion() {
-    completionRevision++;
-    timers.clearTimeout(completionExpiry);
-    completionExpiry = undefined;
+  function cancelCompletion() { revision++; timers.clearTimeout(completionExpiry); completionExpiry = undefined; }
+  function dismiss() {
+    cancelCompletion(); mode = 'hidden'; pinned = false; composerFocused = false; hovered.clear(); publish();
   }
   function retainCompletion() {
-    cancelExpiry();
     cancelCompletion();
-    const expected = completionRevision;
+    if (mode === 'hidden') return;
+    const expected = revision;
     completionExpiry = timers.setTimeout(() => {
-      if (expected !== completionRevision) return;
+      if (revision !== expected) return;
       completionExpiry = undefined;
-      if (!hovered.size && !pinned && !composerFocused) {
-        dismissed = true;
-        mode = 'hidden';
-      }
-      publish();
+      if (!hovered.size && !pinned && !composerFocused) dismiss();
     }, completionDelay);
   }
+  function compose(interrupted = false) {
+    if (mode === 'hidden') mode = 'compose';
+    else if (interrupted) mode = mode === 'chat' ? 'chat' : 'compact';
+    else mode = mode === 'chat' ? 'compact' : mode === 'peek' ? 'compact' : 'chat';
+    publish(true);
+  }
   return {
-    snapshot,
-    togglePin() {
-      if (mode === 'hidden') return;
-      pinned = !pinned;
-      cancelExpiry();
-      if (!pinned && !hovered.size) scheduleExpiry();
-      publish();
+    snapshot, compose, toggle: () => compose(),
+    intent(action) {
+      if (action === 'voice-input') {
+        cancelCompletion(); mode = 'peek'; composerFocused = false; publish();
+      } else if (action === 'text-input') {
+        cancelCompletion(); mode = 'compact'; publish();
+      } else compose(action === 'correct' || action === 'continue');
     },
-    open(chat = true) {
-      cancelExpiry();
-      dismissed = false;
-      if (chat) mode = 'chat';
-      else if (mode === 'hidden') mode = 'peek';
-      publish(chat);
-    },
-    toggle() {
-      cancelExpiry();
-      dismissed = false;
-      mode = mode === 'chat' || mode === 'compose' ? 'peek' : 'chat';
-      if (mode === 'peek') composerFocused = false;
-      publish(mode === 'chat');
-    },
-    compose() {
-      cancelExpiry();
-      dismissed = false;
-      mode = 'compose';
-      publish(true);
-    },
-    composerFocus(focused) {
-      focused = focused && (mode === 'chat' || mode === 'compose');
-      if (composerFocused === focused) return;
-      composerFocused = focused;
-      if (focused) cancelExpiry();
-      else if (!hovered.size && mode !== 'hidden') scheduleExpiry();
-      publish();
-    },
+    open(chat = true) { mode = chat ? 'chat' : mode === 'hidden' ? 'peek' : mode; publish(chat); },
+    togglePin() { if (mode !== 'hidden') { pinned = !pinned; publish(); } },
+    composerFocus(focused) { composerFocused = focused && EDITABLE.has(mode); },
     hover(surface, entered) {
-      if (entered) {
-        hovered.add(surface);
-        cancelExpiry();
-        dismissed = false;
-        if (surface === 'orb' && mode === 'hidden') mode = 'peek';
-      } else {
-        const wasInside = hovered.delete(surface);
-        if (wasInside && !hovered.size) scheduleExpiry();
-      }
-      publish();
+      if (mode === 'hidden') return;
+      if (entered) hovered.add(surface); else hovered.delete(surface);
     },
     voice(state) {
       const wasActive = ACTIVE.has(voiceState);
-      const newTurn = (state === 'listening' && voiceState !== 'listening')
-        || (ACTIVE.has(state) && !ACTIVE.has(voiceState));
-      voiceState = state;
-      if (mode === 'compose' && ACTIVE.has(state)) mode = 'chat';
-      if (newTurn) {
-        // A previous turn's timeout must never hide the new recording.
-        cancelExpiry();
+      if (!wasActive && ACTIVE.has(state)) {
         cancelCompletion();
-        dismissed = false;
         if (mode === 'hidden') mode = 'peek';
       }
-      if (wasActive && !ACTIVE.has(state) && mode !== 'hidden') retainCompletion();
+      voiceState = state;
+      if (state === 'error') cancelCompletion();
+      else if (wasActive && !ACTIVE.has(state)) retainCompletion();
       publish();
     },
-    dismiss() {
-      pinned = false;
-      composerFocused = false;
-      cancelExpiry();
-      cancelCompletion();
-      hovered.delete('panel');
-      mode = 'hidden';
-      publish();
-    },
-    dispose() { cancelExpiry(); cancelCompletion(); hovered.clear(); },
+    dismiss, dispose() { cancelCompletion(); hovered.clear(); },
   };
 }
-
 module.exports = { createOverlayController };

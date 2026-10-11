@@ -7,7 +7,7 @@ import { storageCoordinator, conversationStorageKey } from './storage-coordinato
 const { writeAtomicSync } = createRequire(import.meta.url)('./atomic-file.cjs') as { writeAtomicSync: (file: string, contents: string) => void };
 
 export const HISTORY_TTL_MS = 24 * 60 * 60 * 1000;
-type Record = { updatedAt: number; images: string[]; tasks?: string[]; deleted?: boolean; revision?: number; providerThreadId?: string };
+type Record = { updatedAt: number; images: string[]; tasks?: string[]; deleted?: boolean; revision?: number; providerThreadId?: string; retiredProviderThreads?: string[] };
 type Index = { [threadId: string]: Record };
 export type CleanupHealth = { state: 'healthy' | 'deferred'; issues: { file: string; error: Error }[]; reason?: 'active-conversation' };
 const validId = /^[a-f\d-]{36}$/i;
@@ -38,6 +38,7 @@ export class ConversationRetention {
         || (record.tasks !== undefined && (!Array.isArray(record.tasks) || record.tasks.some(id => typeof id !== 'string' || !validId.test(id))))
         || (record.deleted !== undefined && typeof record.deleted !== 'boolean')
         || (record.providerThreadId !== undefined && !validId.test(record.providerThreadId))
+        || (record.retiredProviderThreads !== undefined && (!Array.isArray(record.retiredProviderThreads) || record.retiredProviderThreads.some(id => !validId.test(id))))
         || (record.revision !== undefined && (!Number.isSafeInteger(record.revision) || record.revision < 0));
     })) throw new Error('Invalid application history index');
     return data;
@@ -47,13 +48,14 @@ export class ConversationRetention {
   }
   get hasRecords(): boolean { return Object.keys(this.read()).length > 0; }
   providerThreadFor(id: string): string | undefined { return this.read()[id]?.providerThreadId; }
+  retiredProviderThreadsFor(id: string): string[] { return this.read()[id]?.retiredProviderThreads ?? []; }
   touch(threadId: string, images: GeneratedImage[] = [], task?: ImageTask, providerThreadId?: string): void {
     const prepared = this.prepareTouch(threadId, images, task, providerThreadId);
     try { writeAtomicSync(prepared.file, prepared.contents); }
     finally { prepared.release(); }
   }
   // The transaction owner holds this lease until all prepared files commit or roll back.
-  prepareTouch(threadId: string, images: GeneratedImage[] = [], task?: ImageTask | ImageTask[], providerThreadId?: string): { file: string; contents: string; release: () => void } {
+  prepareTouch(threadId: string, images: GeneratedImage[] = [], task?: ImageTask | ImageTask[], providerThreadId?: string, rebind = false): { file: string; contents: string; release: () => void } {
     const tasks = task ? Array.isArray(task) ? task : [task] : [];
     if (!validId.test(threadId) || images.some(image => !/^[a-f0-9]{64}$/.test(image.id))
       || tasks.some(task => !validId.test(task.threadId)) || (providerThreadId && !validId.test(providerThreadId))) throw new Error('Invalid conversation ID or image reference');
@@ -63,12 +65,16 @@ export class ConversationRetention {
       for (const task of tasks) releaseTasks.push(this.coordinator.lease(conversationStorageKey(join(this.dataDirectory, 'imagegen-codex'), task.threadId)));
       const data = this.read();
       if (data[threadId]?.deleted) throw new Error('Cannot renew a deleted conversation');
-      if (providerThreadId && data[threadId]?.providerThreadId && data[threadId].providerThreadId !== providerThreadId) throw new Error('Conversation provider identity changed');
+      const previousProvider = data[threadId]?.providerThreadId;
+      const changedProvider = providerThreadId && previousProvider && previousProvider !== providerThreadId;
+      if (changedProvider && !rebind) throw new Error('Conversation provider identity changed');
       const imageIndex = tasks.length ? this.read(join(this.dataDirectory, 'imagegen-codex', 'history-index.json')) : {};
       if (tasks.some(task => imageIndex[task.threadId]?.deleted)) {
         throw new Error('Cannot reference a deleted image task');
       }
       data[threadId] = { updatedAt: this.now(), revision: (data[threadId]?.revision ?? 0) + 1,
+        ...(data[threadId]?.retiredProviderThreads?.length || changedProvider ? { retiredProviderThreads:
+          [...new Set([...(data[threadId]?.retiredProviderThreads ?? []), ...(changedProvider ? [previousProvider!] : [])])] } : {}),
         ...((providerThreadId ?? data[threadId]?.providerThreadId) && { providerThreadId: providerThreadId ?? data[threadId]?.providerThreadId }),
         images: [...new Set([...(data[threadId]?.images || []), ...images.map(image => image.id)])],
         tasks: [...new Set([...(data[threadId]?.tasks || []), ...tasks.map(task => task.threadId)])] };

@@ -39,7 +39,9 @@ body { margin: 0; min-height: 100dvh; display: flex; flex-direction: column; }
 #pin[aria-pressed="true"] { color: var(--color-primary); background: var(--color-surface); }
 #pin[aria-pressed="true"] svg { transform: none; }
 main { padding: var(--space); }
-body[data-mode="compose"] main { display: none; }
+body[data-mode="compose"] :is(#history, #transcript) { display: none; }
+body[data-mode="compose"] main:not(:has(#status:not([hidden]), #error:not([hidden]), #retry:not([hidden]))) { display: none; }
+.interrupted-status { color: var(--color-muted); }
 article + article { margin-top: 8px; }
 p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 #question { color: var(--color-muted); }
@@ -65,7 +67,7 @@ p code { padding: 1px 3px; border-radius: 3px; background: var(--color-surface);
 #error { color: var(--color-danger); font-size: 12px; }
 #retry { margin-top: 12px; }
 #composer { position: sticky; bottom: 0; margin-top: auto; flex-shrink: 0; background: var(--color-background); border-block: 1px solid var(--color-divider); }
-body:is([data-mode="chat"], [data-mode="compose"]) #composer { animation: composer-slide-in 220ms cubic-bezier(.2, .7, .2, 1) both; }
+body:is([data-mode="chat"], [data-mode="compose"], [data-mode="compact"]) #composer { animation: composer-slide-in 220ms cubic-bezier(.2, .7, .2, 1) both; }
 @keyframes composer-slide-in {
   from { opacity: 0; transform: translateY(20px); }
   to { opacity: 1; transform: translateY(0); }

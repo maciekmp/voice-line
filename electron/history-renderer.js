@@ -11,7 +11,7 @@ function sameImages(a, b) {
 function unchanged(a, b) {
   if (a.id !== undefined && a.revision !== undefined && b.id !== undefined && b.revision !== undefined) return a.revision === b.revision;
   // Compatibility for synthetic previews and older callers without identity.
-  return a.question === b.question && a.answer === b.answer && sameImages(a, b);
+  return a.question === b.question && a.answer === b.answer && a.interrupted === b.interrupted && sameImages(a, b);
 }
 
 /** @param {HTMLElement} container */
@@ -46,6 +46,7 @@ export function createHistoryRenderer(container) {
           question.textContent = exchange.question;
           renderAnswer(answer, exchange.answer);
           node.append(question, answer, attachments);
+          node.dataset.interrupted = String(!!exchange.interrupted);
           row = { node, question, answer, attachments, exchange, disposeImages: renderImages(attachments, exchange.images, { lazy: true }) };
           rows.set(key, row); stats.created++;
         } else if (!unchanged(row.exchange, exchange)) {
@@ -57,6 +58,11 @@ export function createHistoryRenderer(container) {
           }
           row.exchange = exchange; stats.updated++;
         }
+        let interruption = row.node.querySelector('.interrupted-status');
+        if (exchange.interrupted && !interruption) {
+          interruption = document.createElement('p'); interruption.className = 'interrupted-status';
+          interruption.textContent = 'Odpowiedź przerwana'; row.node.append(interruption);
+        } else if (!exchange.interrupted) interruption?.remove();
         if (row.node === cursor) cursor = cursor.nextElementSibling;
         else container.insertBefore(row.node, cursor);
       }

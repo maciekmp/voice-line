@@ -5,9 +5,9 @@ import { encodeHistory, identifyHistory } from './conversation-format.ts';
 import { conversationId, codexThreadId, type ConversationId, type CodexThreadId } from './conversation-identifiers.ts';
 import { ConversationRepository } from './conversation-repository.ts';
 import type { LocalHistoryResult, TransactionFile } from './conversation-repository.ts';
-import type { ConversationExchange, VoiceReply } from './conversation-contract.ts';
+import type { ConversationExchange, VoiceReply, ConversationCheckpoint } from './conversation-contract.ts';
 import { emptySession, copyExchange, answerSession, resetSession, restoreSession, forgetSessions,
-  hydrateSession, sessionExpired, canRestore, type SessionState } from './conversation-model.ts';
+  hydrateSession, sessionExpired, canRestore, exchangeFingerprint, type SessionState } from './conversation-model.ts';
 export type { ConversationExchange } from './conversation-contract.ts';
 export type { LocalHistoryResult } from './conversation-repository.ts';
 
@@ -35,6 +35,7 @@ export class ConversationSession {
     }
     if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return;
     if (this.repository.versioned) { this.state.revision = saved.revision; this.state.receipts = saved.receipts ?? {}; this.state.providerThreads = saved.providerThreads ?? {}; }
+    this.state.localContextIds = saved.localContextIds ?? [];
     if (this.durablePrevious && typeof saved.previousThreadId === 'string' && /^[a-f\d-]{36}$/i.test(saved.previousThreadId)
       && Number.isFinite(saved.previousLastAnswerAt) && saved.previousLastAnswerAt <= now()) {
       this.state.previousThreadId = saved.previousThreadId;
@@ -78,6 +79,32 @@ export class ConversationSession {
     return operation.id === this.threadId && operation.revision === this.revision;
   }
   get currentExchanges(): ConversationExchange[] { return this.state.exchanges.map(copyExchange); }
+  get usesLocalContext(): boolean { return !!this.threadId && this.state.localContextIds.includes(this.threadId); }
+  rebindProvider(thread: string, files: TransactionFile[] = []): void {
+    if (!this.threadId) throw new Error('Conversation is unavailable');
+    const next = { ...this.state, providerThreads: { ...this.state.providerThreads, [this.threadId]: codexThreadId(thread) }, revision: this.revision + 1 };
+    this.write(next, false, files); this.state = next;
+  }
+  interruptTurn(checkpoint: ConversationCheckpoint, partial?: VoiceReply): void {
+    if (!this.threadId) return;
+    if (checkpoint.id !== null && checkpoint.id !== this.threadId) throw new Error('Interrupted conversation changed');
+    const baseline = checkpoint.exchanges;
+    if (baseline.some((entry, index) => JSON.stringify(entry) !== JSON.stringify(this.state.exchanges[index]))) throw new Error('Interrupted conversation history changed');
+    const exchanges = baseline.map(copyExchange);
+    if (partial) {
+      const committed = this.state.exchanges[baseline.length];
+      exchanges.push(committed ? copyExchange(committed) : {
+        id: partial.exchangeId ?? randomUUID(), revision: 1, question: partial.prompt, answer: partial.answer, interrupted: true,
+      });
+    }
+    let next = hydrateSession(this.state, this.threadId, exchanges);
+    next = { ...next, receipts: { ...next.receipts, [this.threadId]: Object.fromEntries(exchanges.filter(e => e.id).map(e => [e.id!, exchangeFingerprint(e)])) },
+      lastAnswerAt: exchanges.length ? (partial ? this.now() : this.state.lastAnswerAt) : null,
+      localContextIds: [...new Set([...next.localContextIds, this.threadId])] };
+    this.repository.commit(this.metadata(next), { id: this.threadId,
+      contents: this.repository.versioned ? encodeHistory(this.threadId, next.revision, exchanges) : JSON.stringify(exchanges) });
+    this.state = next;
+  }
   get previousConversationId(): string | null { return this.state.previousThreadId; }
   get canRestorePrevious(): boolean { return canRestore(this.state); }
 
@@ -120,6 +147,7 @@ export class ConversationSession {
 
   private metadata(next: SessionState): string {
     return JSON.stringify({ threadId: next.threadId, lastAnswerAt: next.lastAnswerAt,
+      ...(next.localContextIds.length && { localContextIds: next.localContextIds }),
       ...(this.repository.versioned && { version: 2, revision: next.revision,
         providerThreads: next.providerThreads,
         receipts: Object.fromEntries(Object.entries(next.receipts).filter(([id]) => id === next.threadId || id === next.previousThreadId)) }),

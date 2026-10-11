@@ -27,13 +27,16 @@ function registerDesktopIpc(ipcMain, host) {
   on('voice:open', event => {
     if (!trusted(event) || host.exitStarted) return;
     if (process.argv.includes('--debug')) console.log('[overlay] open request');
-    if (event.sender === host.orbWindow.webContents) overlay.toggle();
+    if (event.sender === host.orbWindow.webContents) {
+      if (host.engine?.connected) host.engine.send({ command: 'tap' });
+      else overlay.compose();
+    }
     else openPanel();
   });
   on('voice:resize', (event, size) => {
     if (!host.panelWindow || host.panelWindow.isDestroyed() || event.sender !== host.panelWindow.webContents || host.exitStarted
       || !size || !Number.isFinite(size.height) || size.height < 0
-      || !['peek', 'chat', 'compose'].includes(size.mode) || size.mode !== host.panelMode) return;
+      || !['peek', 'chat', 'compose', 'compact'].includes(size.mode) || size.mode !== host.panelMode) return;
     const measuredHeight = Math.max(64, Math.min(PANEL_MAX_HEIGHT, Math.ceil(size.height) + 2));
     // Preserve the expanded chat surface; compact peek always follows its content.
     host.panelHeight = size.mode === 'chat' && host.panelWindow.isVisible() && ['listening', 'transcribing', 'thinking'].includes(host.voice.state)
@@ -51,6 +54,7 @@ function registerDesktopIpc(ipcMain, host) {
   handle('voice:text', (event, text) => {
     if (!trusted(event) || host.exitStarted || typeof text !== 'string' || !text.trim() || text.length > 12000
       || !host.voice.ready || !host.engine?.connected || !['idle', 'error'].includes(host.voice.state)) return false;
+    overlay.intent('text-input');
     sendVoice({ state: 'thinking', question: text.trim(), answer: '' });
     host.engine.send({ command: 'text', text: text.trim() });
     return true;

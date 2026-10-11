@@ -11,16 +11,18 @@ export type SessionState = {
   previousExchanges: ConversationExchange[];
   revision: number;
   providerThreads: { [conversationId: string]: string };
+  localContextIds: string[];
   receipts: { [conversationId: string]: { [exchangeId: string]: string } };
 };
 export function emptySession(): SessionState {
   return { threadId: null, lastAnswerAt: null, previousThreadId: null, previousLastAnswerAt: null,
-    exchanges: [], previousExchanges: [], revision: 0, receipts: {}, providerThreads: {} };
+    exchanges: [], previousExchanges: [], revision: 0, receipts: {}, providerThreads: {}, localContextIds: [] };
 }
 export function exchangeFingerprint(exchange: ConversationExchange): string {
   return createHash('sha256').update(JSON.stringify([exchange.question, exchange.answer,
     (exchange.images ?? []).map(image => [image.id, image.alt]),
-    exchange.imageTask ? [exchange.imageTask.threadId, exchange.imageTask.turnId] : null])).digest('hex');
+    exchange.imageTask ? [exchange.imageTask.threadId, exchange.imageTask.turnId] : null,
+    ...(exchange.interrupted ? ['interrupted'] : [])])).digest('hex');
 }
 export function copyExchange(exchange: ConversationExchange): ConversationExchange {
   return { ...exchange, ...(exchange.images && { images: exchange.images.map(image => ({ ...image })) }),
@@ -28,6 +30,7 @@ export function copyExchange(exchange: ConversationExchange): ConversationExchan
 }
 export function validExchange(item: any): item is ConversationExchange {
   return !!item && typeof item.question === 'string' && typeof item.answer === 'string'
+    && (item.interrupted === undefined || typeof item.interrupted === 'boolean')
     && (item.id === undefined || (typeof item.id === 'string' && /^[a-z\d_-]{1,128}$/i.test(item.id)))
     && (item.revision === undefined || (Number.isSafeInteger(item.revision) && item.revision >= 1))
     && (item.images === undefined || (Array.isArray(item.images) && item.images.every((image: any) =>
@@ -39,6 +42,7 @@ export function validExchange(item: any): item is ConversationExchange {
 export function answerSession(state: SessionState, reply: VoiceReply, now: number): SessionState {
   if (!state.threadId) return state;
   const exchange = { question: reply.prompt, answer: reply.answer,
+    ...(reply.interrupted && { interrupted: true }),
     ...(reply.exchangeId && { id: reply.exchangeId, revision: 1 }),
     ...(reply.images?.length && { images: reply.images }), ...(reply.imageTask && { imageTask: reply.imageTask }) };
   if (!validExchange(exchange)) throw new Error('Invalid conversation exchange');
@@ -76,6 +80,7 @@ export function restoreSession(state: SessionState, now: number): SessionState {
     previousLastAnswerAt: state.lastAnswerAt, previousExchanges: state.exchanges, revision: state.revision + 1 };
 }
 export function forgetSessions(state: SessionState, ids: readonly string[]): SessionState {
+  state = { ...state, localContextIds: state.localContextIds.filter(id => !ids.includes(id)) };
   return { ...state, revision: state.revision + 1, receipts: Object.fromEntries(Object.entries(state.receipts).filter(([id]) => !ids.includes(id))),
     providerThreads: Object.fromEntries(Object.entries(state.providerThreads).filter(([id]) => !ids.includes(id))),
     ...(state.threadId && ids.includes(state.threadId) && { threadId: null, lastAnswerAt: null, exchanges: [] }),
