@@ -13,6 +13,7 @@ const desktopApi = {
   ready() { ipcRenderer.send('orb:ready'); },
   open() { ipcRenderer.send('voice:open'); },
   hover(entered) { ipcRenderer.send('voice:hover', entered); },
+  composerFocus(focused) { ipcRenderer.send('voice:composer-focus', focused); },
   text(text) { return ipcRenderer.invoke('voice:text', text); },
   copyCode(text) { return ipcRenderer.invoke('voice:copy-code', text); },
   imagePreview(id) { return ipcRenderer.invoke('voice:image-preview', id); },

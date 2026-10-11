@@ -16,6 +16,38 @@ function setup() {
     for (const [key, task] of [...tasks]) if (task.at <= time) { tasks.delete(key); task.callback(); }
   } };
 }
+
+test('interrupted playback keeps focused typing visible past completion and pointer departure', () => {
+  const { controller: c, advance } = setup();
+  c.voice('speaking'); c.voice('idle'); c.compose(); c.composerFocus(true);
+  c.hover('panel', true); c.hover('panel', false);
+  advance(2000); advance(10000);
+  assert.deepEqual(c.snapshot(), { mode: 'compose', orbVisible: true, pinned: false });
+  c.composerFocus(false); advance(999);
+  assert.equal(c.snapshot().mode, 'compose');
+  advance(1);
+  assert.deepEqual(c.snapshot(), { mode: 'hidden', orbVisible: false, pinned: false });
+});
+
+test('composer focus cancels departure and blur cannot shorten completion grace', () => {
+  const { controller: c, advance } = setup();
+  c.voice('idle'); c.open(); c.hover('panel', true); c.hover('panel', false);
+  advance(900); c.composerFocus(true); advance(2000);
+  assert.equal(c.snapshot().mode, 'chat');
+  c.voice('speaking'); c.voice('idle'); advance(500); c.composerFocus(false);
+  advance(1499); assert.equal(c.snapshot().mode, 'chat');
+  advance(1); assert.equal(c.snapshot().mode, 'hidden');
+});
+
+test('explicit dismissal and collapse clear composer focus retention', () => {
+  const { controller: c, advance } = setup();
+  c.voice('idle'); c.compose(); c.composerFocus(true); c.dismiss();
+  c.composerFocus(true); advance(3000);
+  assert.equal(c.snapshot().mode, 'hidden');
+  c.compose(); c.composerFocus(true); c.toggle();
+  c.composerFocus(true); c.hover('orb', true); c.hover('orb', false); advance(1000);
+  assert.equal(c.snapshot().mode, 'hidden');
+});
 test('pin cancels pending departure, survives voice completion, and unpin restores hiding', () => {
   const { controller: c, advance } = setup();
   c.voice('idle'); c.open(); c.hover('panel', true); c.hover('panel', false);
@@ -107,10 +139,13 @@ test('rapid reopen cancels an old timeout and hover never downgrades chat', () =
   c.open(); c.hover('orb', true); c.open(false); advance(500);
   assert.deepEqual(c.snapshot(), { mode: 'chat', orbVisible: true, pinned: false });
 });
-test('idle hides an untouched orb and repeated snapshots do not reactivate windows', () => {
-  const { controller: c, changes } = setup();
+test('completion retains an untouched popup for two seconds and repeated snapshots do not reactivate windows', () => {
+  const { controller: c, changes, advance } = setup();
   c.voice('listening'); assert.equal(c.snapshot().orbVisible, true);
-  c.voice('idle'); assert.equal(c.snapshot().orbVisible, false);
+  assert.equal(c.snapshot().mode, 'peek');
+  c.voice('idle'); advance(1999);
+  assert.equal(c.snapshot().orbVisible, true);
+  advance(1); assert.equal(c.snapshot().orbVisible, false);
   c.hover('orb', true); c.open();
   const count = changes.length;
   c.voice('speaking'); c.voice('speaking'); c.voice('idle');
@@ -128,20 +163,22 @@ test('native pointer tracking keeps a stationary cursor inside a resized popup',
   advance(2000);
   assert.deepEqual(c.snapshot(), { mode: 'chat', orbVisible: true, pinned: false });
   track({ x: 0, y: 0 }, { orb, panel }); advance(1000);
-  assert.deepEqual(c.snapshot(), { mode: 'hidden', orbVisible: true, pinned: false });
+  assert.deepEqual(c.snapshot(), { mode: 'chat', orbVisible: true, pinned: false });
   c.voice('idle');
+  advance(2000);
   assert.deepEqual(c.snapshot(), { mode: 'hidden', orbVisible: false, pinned: false });
 });
 
 for (const state of ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking']) {
-  test(`leaving both surfaces during ${state} never hides the active orb`, () => {
+  test(`leaving both surfaces during ${state} keeps the popup and orb visible`, () => {
     const { controller: c, advance } = setup();
     c.voice(state); c.hover('orb', true); c.hover('orb', false);
     advance(1000);
-    assert.deepEqual(c.snapshot(), { mode: 'hidden', orbVisible: true, pinned: false });
+    assert.deepEqual(c.snapshot(), { mode: 'peek', orbVisible: true, pinned: false });
     advance(5000); c.voice(state);
     assert.equal(c.snapshot().orbVisible, true);
     c.dismiss();
+    assert.equal(c.snapshot().mode, 'hidden', 'Explicit dismissal remains available');
     assert.equal(c.snapshot().orbVisible, true, 'Escape dismisses the popup, not active work');
     c.voice('idle');
     assert.equal(c.snapshot().orbVisible, false);
@@ -154,9 +191,12 @@ test('hover departure survives state transitions and hides only after playback f
   advance(500); c.voice('transcribing'); advance(500);
   for (const state of ['thinking', 'preparing-speech', 'speaking']) {
     c.voice(state); advance(2000);
-    assert.deepEqual(c.snapshot(), { mode: 'hidden', orbVisible: true, pinned: false });
+    assert.deepEqual(c.snapshot(), { mode: 'chat', orbVisible: true, pinned: false });
   }
   c.voice('idle');
+  advance(1999);
+  assert.deepEqual(c.snapshot(), { mode: 'chat', orbVisible: true, pinned: false });
+  advance(1);
   assert.deepEqual(c.snapshot(), { mode: 'hidden', orbVisible: false, pinned: false });
 });
 
@@ -177,10 +217,21 @@ test('completion while hovered preserves the orb until a fresh departure timeout
   advance(1); assert.equal(c.snapshot().orbVisible, false);
 });
 
-test('completion during departure grace preserves the remaining timer', () => {
+test('completion starts a fresh two-second grace after departure during playback', () => {
   const { controller: c, advance } = setup();
   c.voice('speaking'); c.hover('orb', true); c.hover('orb', false);
-  advance(500); c.voice('idle'); advance(499);
+  advance(500); c.voice('idle'); advance(1999);
   assert.equal(c.snapshot().orbVisible, true);
   advance(1); assert.equal(c.snapshot().orbVisible, false);
+});
+
+test('a new recording cancels completion grace and hover cannot shorten it', () => {
+  const { controller: c, advance } = setup();
+  c.voice('listening'); c.voice('speaking'); c.voice('idle');
+  advance(500); c.hover('orb', true); c.hover('orb', false);
+  advance(1000); assert.equal(c.snapshot().mode, 'peek');
+  c.voice('listening'); advance(5000);
+  assert.equal(c.snapshot().mode, 'peek');
+  c.voice('idle'); advance(2000);
+  assert.equal(c.snapshot().mode, 'hidden');
 });

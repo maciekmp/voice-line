@@ -29,6 +29,23 @@ function setup(options = {}) {
   return { ipc, handlers, host, sent, updates, dispose, event, retries: () => retries };
 }
 
+test('composer focus accepts only boolean reports from the live conversation renderer', () => {
+  const { ipc, host, event } = setup();
+  const reports = [];
+  host.overlay.composerFocus = value => reports.push(value);
+  ipc.emit('voice:composer-focus', event(), true);
+  ipc.emit('voice:composer-focus', event(), false);
+  ipc.emit('voice:composer-focus', event(), 'true');
+  ipc.emit('voice:composer-focus', { sender: host.orbWindow.webContents }, true);
+  ipc.emit('voice:composer-focus', { sender: {} }, true);
+  host.panelWindow.isDestroyed = () => true;
+  ipc.emit('voice:composer-focus', event(), true);
+  host.panelWindow.isDestroyed = () => false;
+  host.exitStarted = true;
+  ipc.emit('voice:composer-focus', event(), true);
+  assert.deepEqual(reports, [true, false]);
+});
+
 test('desktop text boundary validates sender, readiness, size and worker connectivity', () => {
   const { handlers, host, event, sent, updates } = setup();
   const text = handlers.get('voice:text');
@@ -104,4 +121,16 @@ test('IPC disposal removes only the registered listeners and invocation handlers
   assert.deepEqual(ipc.listeners('voice:command'), [unrelated]);
   assert.equal(ipc.listenerCount('orb:ready'), 0);
   assert.equal(handlers.size, 0);
+});
+
+test('compact popup shrinks to current content throughout the next voice cycle', () => {
+  const { ipc, host, event } = setup({ panelMode: 'peek', panelHeight: 400, panelHeights: { peek: 400 } });
+  for (const state of ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking', 'idle']) {
+    host.voice.state = state;
+    ipc.emit('voice:resize', event(), { mode: 'peek', height: 300, reducedMotion: false });
+    assert.equal(host.panelHeight, 302, `${state}: grows to fit content`);
+    ipc.emit('voice:resize', event(), { mode: 'peek', height: 40, reducedMotion: false });
+    assert.equal(host.panelHeight, 64, `${state}: drops previous answer height`);
+    assert.equal(host.panelHeights.peek, 64, `${state}: reopening uses the updated height`);
+  }
 });

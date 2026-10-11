@@ -10,14 +10,12 @@
       body { display: grid; place-items: center; }
       body > button { position: absolute; top: var(--orb-button-top); left: var(--orb-button-left); }
       #voice-mode {
-        position: absolute; bottom: 3px; left: 0; width: 100%; text-align: center;
-        font: 600 10px/14px 'Segoe UI', system-ui, sans-serif;
-        opacity: 0; pointer-events: none;
+        position: absolute; bottom: -2px; right: -7px; z-index: 1;
+        font: 600 9px/12px 'Segoe UI', system-ui, sans-serif;
+        opacity: .9; pointer-events: none;
       }
-      #voice-mode span { color: #eee9e2; background: #302d29; border-radius: 3px; padding: 2px 4px; text-box: trim-both cap alphabetic; }
-      body[data-presence="visible"] #voice-mode { opacity: 1; }
+      #voice-mode span { color: #eee9e2; background: #302d29b3; text-shadow: 0 1px 2px #000; border-radius: 3px; padding: 1px 3px; text-box: trim-both cap alphabetic; }
       button { position: relative; border: 0; padding: 0; background: transparent; cursor: pointer; display: grid; place-items: center; width: var(--orb-button-size); height: var(--orb-button-size); border-radius: 50%; }
-      button:hover { background: #ffffff30; }
       button:focus-visible { outline: 2px solid #2457d6; }
       button[data-state="error"] { outline: 2px solid #a12932; }
       button:is([data-state="thinking"], [data-state="transcribing"], [data-state="starting"], [data-state="preparing-speech"])::after {
@@ -36,7 +34,8 @@
         opacity: 0; transform: translateY(10px) scale(.72);
         transition: opacity 320ms ease, transform 380ms cubic-bezier(.2, .7, .25, 1);
       }
-      body[data-presence="visible"] voice-orb { opacity: 1; transform: translateY(0) scale(1); }
+      body[data-presence="visible"] voice-orb { opacity: .9; transform: translateY(0) scale(1); }
+      body[data-presence="visible"] button:is(:hover, :focus-visible) voice-orb { opacity: 1; }
       body[data-presence="leaving"] voice-orb, body[data-presence="hidden"] voice-orb {
         opacity: 0; transform: translateY(12px) scale(.72); transition-duration: 240ms;
       }
@@ -48,5 +47,5 @@
     <script src="./orb-geometry.cjs"></script>
     <script type="module" src="./orb-ui.js"></script>
   </head>
-  <body><button type="button" aria-label="Otwórz rozmowę"><voice-orb state="idle"></voice-orb></button><div id="voice-mode" hidden><span></span></div></body>
+  <body><button type="button" aria-label="Otwórz rozmowę"><voice-orb state="idle"><span id="voice-mode" slot="overlay" aria-hidden="true" hidden><span></span></span></voice-orb></button></body>
 </html>

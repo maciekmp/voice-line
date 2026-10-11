@@ -102,6 +102,39 @@ test('desktop short press composes without transcription; hold records through t
   assert.ok(f.calls.includes('audio'));
 });
 
+for (const { desktop, duration } of [{ desktop: true, duration: 80 }, { desktop: true, duration: 500 }, { desktop: false, duration: 500 }]) {
+  test(`${desktop ? 'desktop' : 'CLI'} Copilot interrupts playback and ${duration < 250 ? 'composes on tap' : 'records on hold'}`, async t => {
+    const f = fixture(desktop); t.after(() => f.controller.shutdown()); await f.controller.start();
+    const response = deferred<VoiceReply>(); let callbacks!: VoiceCallbacks; let signal!: AbortSignal;
+    f.engine.respondAudio = async (_wav, value, updates = {}) => {
+      assert.ok(value);
+      signal = value; callbacks = updates; return response.promise;
+    };
+    await f.controller.command({ command: 'record' });
+    if (desktop) f.time.advance(250);
+    await f.controller.command({ command: 'release' }); await flush();
+    callbacks.onPlaybackStart?.();
+    assert.equal(f.controller.snapshot().state, 'speaking');
+    const recordings = f.calls.filter(call => call === 'record').length;
+    const cancellations = f.calls.filter(call => call === 'engine.cancel').length;
+    await f.controller.command({ command: 'record' });
+    assert.equal(signal.aborted, true, 'Playback is interrupted on key-down');
+    assert.equal(f.controller.snapshot().state, desktop ? 'idle' : 'listening');
+    await f.controller.command({ command: 'record' }); f.time.advance(duration);
+    assert.equal(f.calls.filter(call => call === 'record').length, recordings + 1, 'Repeat cannot restart capture');
+    assert.equal(f.calls.filter(call => call === 'engine.cancel').length, cancellations + 1);
+    assert.equal(f.controller.snapshot().state, desktop && duration < 250 ? 'idle' : 'listening');
+    const count = f.events.length;
+    callbacks.onUpdate?.('speaking', { answer: 'late' }); callbacks.onLevel?.(.9);
+    response.resolve(f.reply); await flush();
+    assert.equal(f.events.length, count, 'Stopped playback cannot publish late updates');
+    await f.controller.command({ command: 'release' }); await flush();
+    assert.equal(f.events.some(event => event.type === 'ui' && event.action === 'compose'), desktop && duration < 250);
+    assert.equal(f.calls.filter(call => call === 'record.stop').length, duration < 250 ? 1 : 2);
+    assert.equal(f.controller.snapshot().state, 'idle');
+  });
+}
+
 test('cancel suppresses late callbacks and next response waits until the previous provider call settles', async t => {
   const f = fixture(); t.after(() => f.controller.shutdown()); await f.controller.start();
   const first = deferred<VoiceReply>(); let active = 0, maximum = 0;

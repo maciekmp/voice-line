@@ -45,7 +45,16 @@ async function verifyDesktop(host) {
     orb.addEventListener('transitionend', done);
     setTimeout(resolve, 500);
   })`);
-  assert.equal(await orbWindow.webContents.executeJavaScript("Number(getComputedStyle(document.querySelector('voice-orb')).opacity)"), 1);
+  orbWindow.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 });
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.equal(await orbWindow.webContents.executeJavaScript("Number(getComputedStyle(document.querySelector('voice-orb')).opacity)"), .9);
+  orbWindow.webContents.sendInputEvent({ type: 'mouseMove', x: 32, y: 32 });
+  await new Promise(resolve => setTimeout(resolve, 400));
+  assert.equal(await orbWindow.webContents.executeJavaScript("Number(getComputedStyle(document.querySelector('voice-orb')).opacity)"), 1, 'Hover restores full orb opacity');
+  assert.equal(await orbWindow.webContents.executeJavaScript("getComputedStyle(document.querySelector('button')).backgroundColor"), 'rgba(0, 0, 0, 0)', 'Hover has no background highlight');
+  orbWindow.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 });
+  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerleave'))");
+  hidePanel();
   assert.equal(app.getPath('userData'), profileDirectory);
   assert.equal(app.getPath('sessionData'), sessionDirectory);
   assert.equal(orbWindow.webContents.session.getStoragePath(), sessionDirectory);
@@ -57,11 +66,20 @@ async function verifyDesktop(host) {
     const indicator = await orbWindow.webContents.executeJavaScript(`(() => {
       const label = document.querySelector('#voice-mode');
       const bounds = label.getBoundingClientRect();
+      const orbBounds = document.querySelector('voice-orb').getBoundingClientRect();
       return { text: label.textContent, hidden: label.hidden, bottom: bounds.bottom,
+        overlaps: bounds.left < orbBounds.right && bounds.top < orbBounds.bottom && bounds.bottom > orbBounds.top,
+        right: bounds.right, orbRight: orbBounds.right, opacity: Number(getComputedStyle(label).opacity),
+        insideOrb: label.parentElement === document.querySelector('voice-orb'),
+        slotted: label.assignedSlot?.name === 'overlay',
         buttonTop: document.querySelector('button').getBoundingClientRect().top };
     })()`);
     assert.equal(indicator.text, label);
     assert.equal(indicator.hidden, false);
+    assert.equal(indicator.overlaps, true, 'Mode label overlaps the lower-right edge of the orb');
+    assert.ok(indicator.right >= indicator.orbRight);
+    assert.equal(indicator.opacity, .9, 'Label remains readable while sharing its orb parent hover effect');
+    assert.equal(indicator.insideOrb && indicator.slotted, true, 'Label belongs to the orb structure');
     assert.ok(indicator.bottom <= WINDOW_HEIGHT);
     assert.equal(indicator.buttonTop, 5);
   }
@@ -108,9 +126,13 @@ async function verifyDesktop(host) {
   assert.equal(orbWindow.isVisible(), true, 'Recording reveals the orb');
   const audioScale = () => orbWindow.webContents.executeJavaScript("Number(getComputedStyle(document.querySelector('voice-orb').shadowRoot.querySelector('.sphere')).scale)");
   host.paused = false; sendSettings();
+  onEngineMessage({ type: 'level', source: 'listening', level: .12 });
+  await new Promise(resolve => setTimeout(resolve, 180));
+  assert.ok(reducedMotion ? await audioScale() === 1 : await audioScale() > 1.05, 'Quiet syllables visibly grow the orb quickly');
   onEngineMessage({ type: 'level', source: 'listening', level: 1 });
   await new Promise(resolve => setTimeout(resolve, 400));
   assert.ok(reducedMotion ? await audioScale() === 1 : await audioScale() > 1.15, 'Loud speech grows the orb');
+  assert.ok(await audioScale() <= 1.201, 'Loud speech stays inside the fixed desktop hit area');
   onEngineMessage({ type: 'level', source: 'listening', level: 0 });
   await new Promise(resolve => setTimeout(resolve, 700));
   assert.ok(await audioScale() < 1.01, 'Silence returns the orb to its base size');
@@ -124,6 +146,14 @@ async function verifyDesktop(host) {
   assert.ok(await audioScale() < 1.01, 'Late playback levels cannot animate an idle orb');
   console.log('Audio reactive scale checks: passed');
   sendVoice({ state: 'thinking', question: 'Test <script>unsafe</script>' }); updateVisibility(true);
+  const status = () => panelWindow.webContents.executeJavaScript(`(() => {
+    const element = document.querySelector('#status');
+    return { text: element.textContent, hidden: element.hidden, role: element.getAttribute('role') };
+  })()`);
+  assert.deepEqual(await status(), { text: 'Codex przygotowuje odpowiedź…', hidden: false, role: 'status' });
+  sendVoice({ answer: 'Początek odpowiedzi…' });
+  assert.equal((await status()).hidden, false, 'Partial answer does not hide generation feedback');
+  sendVoice({ answer: '' });
   assert.equal(orbWindow.isVisible(), true, 'Processing keeps the orb visible');
   await orbWindow.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
   const ring = () => orbWindow.webContents.executeJavaScript(`(() => {
@@ -342,12 +372,17 @@ async function verifyDesktop(host) {
     await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerenter')); document.querySelector('button').dispatchEvent(new PointerEvent('pointerleave'))");
     await new Promise(resolve => setTimeout(resolve, 1400));
     updateVisibility(true);
-    assert.equal(panelWindow.isVisible(), false, `${activeState}: departure closes popup`);
+    assert.equal(panelWindow.isVisible(), true, `${activeState}: departure preserves popup`);
     assert.equal(orbWindow.isVisible(), true, `${activeState}: departure cannot hide active orb`);
   }
   sendVoice({ state: 'idle' }); updateVisibility(true);
   await new Promise(resolve => setTimeout(resolve, 300));
-  assert.equal(orbWindow.isVisible(), false, 'Completion hides orb after departure timer has expired');
+  assert.equal(panelWindow.isVisible(), true, 'Completion retains popup briefly after playback');
+  await new Promise(resolve => setTimeout(resolve, 2000));
+  assert.equal(panelWindow.isVisible(), false, 'Completion hides popup after two seconds');
+  updateVisibility(true);
+  await new Promise(resolve => setTimeout(resolve, 300));
+  assert.equal(orbWindow.isVisible(), false, 'Completion hides orb after grace and exit animation');
   console.log('Active voice departure checks: passed');
   sendVoice({ state: 'error', ready: false, message: 'Sprawdź mikrofon.' });
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#retry').hidden"), false);
@@ -362,6 +397,20 @@ async function verifyDesktop(host) {
   const peekContent = await panelWindow.webContents.executeJavaScript('document.body.getBoundingClientRect().height');
   assert.ok(Math.abs(peekHeight - peekContent) <= 4, `Hover popup fits its content: ${peekHeight}, content ${peekContent}, requested ${host.panelHeight}`);
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('h2') === null"), true);
+  sendVoice({ answer: 'Dłuższa odpowiedź.\n'.repeat(12) });
+  await new Promise(resolve => setTimeout(resolve, 350));
+  const previousAnswerHeight = panelWindow.getBounds().height;
+  for (const state of ['listening', 'transcribing', 'thinking']) {
+    sendVoice({ state, question: '', answer: '' });
+    await new Promise(resolve => setTimeout(resolve, 350));
+    const measured = await panelWindow.webContents.executeJavaScript('Math.ceil(document.querySelector("main").getBoundingClientRect().height)');
+    assert.ok(Math.abs(panelWindow.getBounds().height - Math.max(64, measured + 2)) <= 2,
+      `${state}: compact popup follows current content`);
+    assert.ok(panelWindow.getBounds().height < previousAnswerHeight, `${state}: old answer leaves no empty space`);
+    assert.equal(panelWindow.isVisible(), true, `${state}: compact popup stays visible`);
+  }
+  sendVoice({ state: 'idle', question: 'Jak zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania i zacznij od jednego.' });
+  await new Promise(resolve => setTimeout(resolve, 350));
   host.testLiveVisibility = true;
   await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerenter'))");
   orbWindow.webContents.sendInputEvent({ type: 'mouseMove', x: 32, y: 32 });
@@ -465,6 +514,8 @@ async function verifyDesktop(host) {
   console.log('Previous conversation undo checks: passed');
   sendVoice({ question: 'Jak zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania i zacznij od jednego.' });
   host.testLiveVisibility = true;
+  sendVoice({ state: 'speaking' });
+  sendVoice({ state: 'idle' });
   onEngineMessage({ type: 'ui', action: 'compose' });
   await new Promise(resolve => setTimeout(resolve, 350));
   assert.equal(orbWindow.isVisible(), true, 'Copilot tap shows the idle orb');
@@ -476,6 +527,20 @@ async function verifyDesktop(host) {
   assert.ok(panelWindow.getBounds().height <= 72, 'Input-only popup stays compact; pin occupies no layout space');
   assert.equal(await panelWindow.webContents.executeJavaScript('document.documentElement.scrollHeight <= innerHeight'), true);
   await fs.writeFile(path.join(outputDirectory, 'electron-conversation-compose.png'), (await panelWindow.webContents.capturePage()).toPNG());
+  overlay.hover('orb', false);
+  overlay.hover('panel', true);
+  overlay.hover('panel', false);
+  await new Promise(resolve => setTimeout(resolve, 2300));
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.hasFocus() && document.activeElement.id === 'message'"), true);
+  assert.equal(panelWindow.isVisible() && orbWindow.isVisible(), true, 'Focused typing survives interrupted playback completion and pointer departure');
+  panelWindow.blur();
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(panelWindow.isFocused(), false, 'Native popup releases keyboard focus');
+  assert.equal(await panelWindow.webContents.executeJavaScript('document.hasFocus()'), false, 'Renderer observes native blur');
+  await new Promise(resolve => setTimeout(resolve, 1600));
+  assert.equal(panelWindow.isVisible() || orbWindow.isVisible(), false, 'Window blur restores idle departure hiding');
+  overlay.compose();
+  await new Promise(resolve => setTimeout(resolve, 350));
   host.testLiveVisibility = false;
   console.log('Copilot input-only mode checks: passed');
   await panelWindow.webContents.executeJavaScript("document.querySelector('#pin').click()");
@@ -488,7 +553,7 @@ async function verifyDesktop(host) {
   overlay.hover('orb', false);
   overlay.hover('panel', true);
   overlay.hover('panel', false);
-  panelWindow.blur();
+  orbWindow.focus();
   await new Promise(resolve => setTimeout(resolve, 1100));
   assert.equal(panelWindow.isVisible(), true, 'Pin preserves popup after blur and departure');
   await panelWindow.webContents.executeJavaScript("document.querySelector('#pin').click()");
@@ -516,7 +581,8 @@ async function verifyDesktop(host) {
   assert.equal(host.voice.question, 'Kontynuuj rozmowę');
   assert.equal(host.voice.answer, '', 'New question clears the previous reply');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'chat', 'Submitting from input-only mode reveals the conversation');
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#status').hidden"), true, 'Answer preparation has no status text');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#status').hidden"), false, 'Answer preparation shows status text');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#status').textContent"), 'Codex przygotowuje odpowiedź…');
   assert.equal(host.voice.history.at(-1).question, 'Jak zaplanować dzień?', 'Previous exchange is retained');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#message').value"), '');
   await panelWindow.webContents.executeJavaScript("window.orbDesktop.command('cancel')");

@@ -47,7 +47,7 @@ function parseDesktopRequest(channel, value) {
   }
   if (channel === 'voice:copy-code') return typeof value === 'string' ? { channel, value } : null;
   if (channel === 'voice:image-preview' || channel === 'voice:image-save') return imageId(value) ? { channel, value } : null;
-  if (channel === 'voice:hover') return typeof value === 'boolean' ? { channel, value } : null;
+  if (channel === 'voice:hover' || channel === 'voice:composer-focus') return typeof value === 'boolean' ? { channel, value } : null;
   if (channel === 'voice:command') {
     if (typeof value !== 'string' || !['record', 'release', 'cancel', 'reset', 'previous', 'pin', 'hide', 'retry'].includes(value)) return null;
     return { channel, value: /** @type {import('./desktop-contract.ts').DesktopCommand} */ (value) };

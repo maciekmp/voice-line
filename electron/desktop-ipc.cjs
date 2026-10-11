@@ -35,8 +35,8 @@ function registerDesktopIpc(ipcMain, host) {
       || !size || !Number.isFinite(size.height) || size.height < 0
       || !['peek', 'chat', 'compose'].includes(size.mode) || size.mode !== host.panelMode) return;
     const measuredHeight = Math.max(64, Math.min(PANEL_MAX_HEIGHT, Math.ceil(size.height) + 2));
-    // Keep the hovered surface stable when a new recording clears the transcript.
-    host.panelHeight = host.panelWindow.isVisible() && ['listening', 'transcribing', 'thinking'].includes(host.voice.state)
+    // Preserve the expanded chat surface; compact peek always follows its content.
+    host.panelHeight = size.mode === 'chat' && host.panelWindow.isVisible() && ['listening', 'transcribing', 'thinking'].includes(host.voice.state)
       ? Math.max(host.panelHeight, measuredHeight) : measuredHeight;
     panelHeights[size.mode] = host.panelHeight;
     if (host.panelResetTimer && !host.panelWindow.isVisible()) return;
@@ -77,6 +77,10 @@ function registerDesktopIpc(ipcMain, host) {
     // pointerleave can be caused by window resizing, not actual cursor movement.
     if (!smokeTest || host.testNativePointer) return;
     overlay.hover(event.sender === host.orbWindow.webContents ? 'orb' : 'panel', entered);
+  });
+  on('voice:composer-focus', (event, focused) => {
+    if (!host.panelWindow || host.panelWindow.isDestroyed() || event.sender !== host.panelWindow.webContents || host.exitStarted) return;
+    overlay.composerFocus(focused);
   });
   on('voice:command', (event, command) => {
     if (!trusted(event) || host.exitStarted) return;

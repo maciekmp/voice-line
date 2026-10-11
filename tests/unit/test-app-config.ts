@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadAppConfig, loadCodexConfig, loadWhisperConfig } from '../../src/app-config.ts';
+import { loadAppConfig, loadCodexConfig, loadWhisperConfig, loadPlaybackConfig, loadPiperConfig, loadRealtimeConfig } from '../../src/app-config.ts';
 import { CodexAppServer } from '../../src/codex-app-server.ts';
 import { CodexClient } from '../../src/codex.ts';
 import { ConversationSession } from '../../src/conversation-session.ts';
@@ -55,11 +55,14 @@ test('app-server requests keep model, image model and effort from the injected c
   const root = await mkdtemp(join(tmpdir(), 'voice-config-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const env = { CODEX_MODEL: 'text-before', CODEX_IMAGE_MODEL: 'image-before', CODEX_EFFORT: 'medium' };
-  const config = loadCodexConfig(env), requests: any[] = [];
+  const config = loadCodexConfig(env), requests: any[] = [], threadRequests: any[] = [];
   class Server extends CodexAppServer {
     override async start() {}
     protected override async request(method: string, params: any): Promise<any> {
-      if (method === 'thread/start') return { thread: { id: '11111111-1111-1111-1111-111111111111' } };
+      if (method === 'thread/start' || method === 'thread/resume') {
+        threadRequests.push(params);
+        return { thread: { id: '11111111-1111-1111-1111-111111111111' } };
+      }
       if (method === 'turn/start') {
         requests.push(params);
         (this as any).onMessage({ method: 'item/completed', params: { threadId: params.threadId,
@@ -76,6 +79,23 @@ test('app-server requests keep model, image model and effort from the injected c
   await server.respond('Q');
   assert.equal(requests[0].model, 'text-before');
   assert.equal(requests[0].effort, 'medium');
+  await server.respond('Second question');
+  assert.ok(threadRequests.every(params => params.config.web_search === 'live'), 'New and resumed threads allow live search');
+  assert.ok(requests.every(params => params.input[0].text.includes('wyszukiwania i przeglądania internetu')));
+});
+
+test('playback prefers native FFplay beside configured FFmpeg while preserving explicit overrides', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'voice-player-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const env = { FFMPEG_BIN: join(root, 'ffmpeg.exe') };
+  assert.equal(loadPlaybackConfig(env).ffplay, 'ffplay.exe');
+  const player = join(root, 'ffplay.exe');
+  await writeFile(player, 'native-player-fixture');
+  assert.equal(loadPlaybackConfig(env).ffplay, player);
+  assert.equal(loadPiperConfig(env).player, player);
+  assert.equal(loadRealtimeConfig(env).player, player);
+  assert.equal(loadPlaybackConfig({ ...env, FFPLAY_BIN: 'explicit-player' }).ffplay, 'explicit-player');
+  assert.equal(loadPlaybackConfig({ FFMPEG_BIN: 'ffmpeg.exe' }).ffplay, 'ffplay.exe');
 });
 
 test('CLI uses the injected model across successive answers', async t => {
@@ -88,4 +108,5 @@ test('CLI uses the injected model across successive answers', async t => {
   } });
   await client.respond('first'); await client.respond('second');
   assert.ok(args.every(input => input[input.indexOf('-m') + 1] === 'configured-model'));
+  assert.ok(args.every(input => input.includes('web_search="live"')), 'CLI enables live search on new and resumed turns');
 });

@@ -51,12 +51,18 @@ selected at startup. LOCAL means local speech recognition and synthesis; Codex
 still generates the answer. API means Codex realtime. The label has no action,
 uses the existing surface/text colors and Segoe UI, and disappears with the orb.
 The native shell is 64 by 80 px; the orb keeps its original position and hit area.
+The orb has 0.9 opacity without hover and 1 on hover or keyboard focus.
+During playback, Copilot key-down stops the reply immediately and begins the
+normal tap/hold gesture: a short press opens the composer, a hold of at least
+250 ms listens for the next question. Repeats never restart capture.
 
 380 px wide popup with height measured from its content and capped at 500 px, anchored 8 px above
 the desktop orb and constrained to the display work area. Question and answer
 have no visible labels; semantic accessible names remain. The document owns scrolling;
 long answers and enlarged text grow naturally, with no competing inner scroller.
-Hover shows only the latest question and answer; answer generation has no status text.
+Hover shows only the latest question and answer. Answer generation shows
+“Codex przygotowuje odpowiedź…” in the existing live status region, including
+while partial answer text is arriving; image generation keeps its own message.
 Tapping Copilot for less than 250 ms opens a focused input-only popup and shows
 the orb, even while idle. The transcript and history stay hidden in this mode;
 submitting or starting a voice question reveals chat. A hold of at least 250 ms
@@ -102,7 +108,9 @@ the sole state indicator: transcript text and the tray identify the current oper
 ## Motion and platform
 
 Desktop speech uses measured 40 ms PCM RMS windows for microphone and both TTS
-engines. The shared orb scales from 1 to 1.18 with a fast attack and gentle release;
+engines. The shared orb lifts quiet syllables with a bounded nonlinear envelope,
+scales from 1 to 1.2 with a 48/s attack and 12/s release, and follows scale changes
+with a 40 ms transition. Audio activity also accelerates and bends its cloud flow;
 silence returns it to its base size. Its 54 px hit target stays fixed. Audio-level
 IPC updates only the orb, never conversation layout or visibility. Reduced motion
 disables scaling and pausing freezes it. SAPI synthesizes to memory before playback
@@ -129,7 +137,10 @@ or text work cancels an idle exit timer. Verification flows are maintained in
 `VERIFICATION-FLOWS.md`.
 The desktop orb does not steal focus. Hover opens the conversation popup without
 focus; a one-second exit delay allows crossing into it. Starting a new recording
-keeps the visible popup's size stable. Answer text suppresses the status label.
+keeps the expanded chat popup's size stable. Compact peek always fits current
+content, including shrinking to the listening status after a long answer (within
+the native 64 px minimum and 500 px maximum). Answer text suppresses the status label
+after generation; while Codex is still working, its status remains visible.
 Primary mouse press toggles chat and peek before mouse-up; keyboard activation
 of the orb does the same, while tray activation always opens chat. All use the
 same controller. Hover never takes focus; native activation is enabled
@@ -154,8 +165,10 @@ session file stores current/previous conversation IDs and timestamps. Startup an
 app-owned committed files, importing older realtime Codex history when needed, then publish restored context.
 Paginated history loads all turn and item pages. Empty history disables undo;
 failed reads or cancelled returns do not switch the selected thread.
-Focus/blur does not change mode
-or independently schedule hiding. One controller owns visibility and mode;
+Focus/blur does not change mode. A focused composer in the active popup keeps both
+surfaces visible, including after interrupted playback. Losing input or window focus
+restores the exit delay when idle and outside both surfaces; completion grace is preserved.
+Escape still dismisses explicitly. One controller owns visibility and mode;
 voice snapshots do not reactivate windows or replace chat with peek. Starting
 a new recording cancels the previous hide timeout. Drafts survive dismissal.
 The keyboard hook consumes only the configured Copilot key's press and release

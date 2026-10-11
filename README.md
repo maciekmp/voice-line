@@ -180,7 +180,12 @@ PIPER_BIN=C:\path\to\piper\piper.exe
 PIPER_MODEL=C:\path\to\pl_PL-gosia-medium.onnx
 ```
 
-FFplay must be available on `PATH`, or set `FFPLAY_BIN` to its executable. The app pipes Piper's 16-bit mono PCM into FFplay as it is synthesized and reads the sample rate from the voice JSON. Piper runs locally without an API key. Switch back with `TTS_MODE=sapi`. On this machine, the trial files are under `.app-data/piper/` and are ignored by Git.
+FFplay must be available beside the configured absolute `FFMPEG_BIN` or on `PATH`, or set `FFPLAY_BIN` to its actual executable (not a Chocolatey launcher). The app pipes Piper's 16-bit mono PCM into FFplay as it is synthesized and reads the sample rate from the voice JSON. Piper runs locally without an API key. Switch back with `TTS_MODE=sapi`. On this machine, the trial files are under `.app-data/piper/` and are ignored by Git.
+
+To verify native playback interruption with the configured Piper model, run
+`node --env-file-if-exists=.env --experimental-strip-types tests/native/test-piper-interruption.ts`.
+It exercises Copilot tap and hold through the controller, checks that the actual
+FFplay process exits, and uses a dummy audio device without microphone or Codex calls.
 
 To compare Whisper CPU thread counts on exactly the same speech, add `SAVE_AUDIO=1` to `.env`, record one question, and use the printed WAV path with `npm run bench:stt -- "C:\path\to\recording.wav"`. The script loads the configured model with 4 and 8 threads and transcribes the WAV twice per setting. Compare the second run and its text; model loading is shown separately. Set `WHISPER_THREADS` in `.env` to the faster value, then remove `SAVE_AUDIO=1` when finished. Results vary with the machine, audio length, and system load; `.env.example` leaves the thread count unset.
 
@@ -207,14 +212,25 @@ popup to read or use its controls; leaving both surfaces dismisses it after a
 short delay. Use **Przypnij popup** to keep the panel open when the pointer leaves;
 Escape dismisses it and clears the pin. Press the orb to open text chat; press it again to return to the
 compact latest-exchange view, preserving the draft. Press Escape to dismiss it.
-Window focus changes do not close the conversation.
-The dark hover popup shows the latest question and answer, with no answer-generation
-status text. A short Copilot press (under 250 ms) shows the orb and a focused popup
+While the text input has focus in the active popup, both popup and orb stay visible,
+including after interrupting speech. Losing focus restores normal idle dismissal
+when the pointer is outside both surfaces; Escape still closes the popup.
+The dark hover popup shows the latest question and answer, including an
+answer-generation status. A short Copilot press (under 250 ms) shows the orb and a focused popup
 containing only the text input, hiding earlier messages until the next question.
 Holding Copilot for at least 250 ms records a voice question; audio is collected
 from key-down to preserve its beginning, and a short tap discards it without transcription.
 This tap/hold distinction applies to the desktop app; terminal mode records every
-Copilot press until release.
+Copilot press until release. During spoken playback, pressing Copilot stops the
+reply immediately. A short press opens the text composer; holding for at least
+250 ms starts listening for the next question. Key repeat does not restart capture.
+Terminal mode continues to record on every press, also when interrupting playback.
+
+Normal Codex text turns enable built-in live web search (`web_search="live"`),
+including LOCAL voice questions and typed questions in either voice mode. The
+assistant checks current information and includes source links in its answer.
+This does not require a separate search API key. Native realtime audio sessions
+retain their existing tool-free prompt; use LOCAL or a typed question for web research.
 Clicking the orb or tray reveals the conversation and a text composer: Enter sends,
 Shift+Enter adds a newline. Typed questions continue the same Codex conversation
 and receive a text reply without speech playback. The composer has no send or cancel button.
@@ -406,7 +422,7 @@ test history and session metadata without inference. Neither probe is a default 
 - `src/desktop-contract.ts` and `src/desktop-validation.cjs`: preload API, requests/events and runtime validation of renderer requests and worker snapshots. `electron/desktop-worker.cjs` dispatches validated events; `desktop-conversation.cjs` presents authoritative completed/pending exchanges; `desktop-windows.cjs` applies native geometry and window lifecycle.
 - `src/answer-format.js` and `src/app-data.cjs`: shared answer formatting and data-root resolution, independent of Electron. Renderer/host imports retain thin compatibility adapters.
 - `src/keyboard/bridge.ps1`: a small Win32 low-level keyboard hook bridge. It emits physical DOWN and UP events as JSON lines. `src/keyboard/copilot-key.ts` reads them in Node.
-- `src/audio/recorder.ts`: FFmpeg opens the microphone at startup and streams 16 kHz mono PCM. Samples are kept only while Copilot is held; release writes a WAV immediately. This keeps the microphone in use while the app runs, even between utterances. Set `FFMPEG_BIN` to the real executable if your `ffmpeg.exe` on `PATH` is a launcher such as Chocolatey's shim.
+- `src/audio/recorder.ts`: FFmpeg opens the microphone at startup and streams 16 kHz mono PCM. Samples are kept only while Copilot is held; release writes a WAV immediately. This keeps the microphone in use while the app runs, even between utterances. Set `FFMPEG_BIN` to the real executable if your `ffmpeg.exe` on `PATH` is a launcher such as Chocolatey's shim. When `FFPLAY_BIN` is unset, playback prefers the real `ffplay.exe` beside that configured FFmpeg. This allows Copilot interruption to terminate the actual player instead of leaving it running behind a launcher. An explicit `FFPLAY_BIN` must also point to the actual executable.
 - `src/stt/transcriber.ts`: local whisper.cpp server loaded once at startup. The model stays in memory between utterances; `STT_MODE=cli` in `.env` restores the old per-utterance CLI mode for troubleshooting.
 - `src/codex-app-server.ts`: keeps [Codex app-server](https://learn.chatgpt.com/docs/app-server) running, reads saved history, resumes conversations, and sends each question as a structured-output turn. See the backend settings above for model and reasoning configuration.
 - `src/codex.ts`: shared Polish assistant instructions and the optional `CODEX_MODE=cli` answer backend, using `codex exec` / `codex exec resume` and an app-server connection for history.

@@ -25,12 +25,13 @@ export type DesktopRequest =
   | { channel: 'voice:text' | 'voice:copy-code'; value: string }
   | { channel: 'voice:image-preview' | 'voice:image-save'; value: string }
   | { channel: 'voice:resize'; value: PanelMeasurement }
-  | { channel: 'voice:hover'; value: boolean }
+  | { channel: 'voice:hover' | 'voice:composer-focus'; value: boolean }
   | { channel: 'voice:open' | 'orb:ready' | 'orb:exit-complete' };
 export interface DesktopApi {
   ready(): void;
   open(): void;
   hover(entered: boolean): void;
+  composerFocus(focused: boolean): void;
   text(text: string): Promise<boolean>;
   copyCode(text: string): Promise<boolean>;
   imagePreview(id: string): Promise<string | null>;

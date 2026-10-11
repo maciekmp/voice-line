@@ -25,6 +25,13 @@ let composing = false;
 let resizeFrame;
 let scrollToLatest = false;
 const historyRenderer = createHistoryRenderer(get('history'));
+function reportComposerFocus() {
+  window.orbDesktop.composerFocus(document.hasFocus() && document.activeElement === get('message') && !get('composer').hidden);
+}
+get('message').addEventListener('focus', reportComposerFocus);
+get('message').addEventListener('blur', reportComposerFocus);
+window.addEventListener('focus', reportComposerFocus);
+window.addEventListener('blur', () => window.orbDesktop.composerFocus(false));
 /** @type {string | undefined} */
 let renderedAnswer;
 let renderedImages = '';
@@ -97,7 +104,7 @@ window.orbDesktop.onMode(mode => {
 });
 const labels = {
   starting: 'Uruchamiam usługi…', idle: '', listening: 'Słucham…',
-  transcribing: 'Rozpoznaję mowę…', thinking: '',
+  transcribing: 'Rozpoznaję mowę…', thinking: 'Codex przygotowuje odpowiedź…',
   'preparing-speech': 'Przygotowuję głos…', speaking: 'Odczytuję odpowiedź…', error: '',
 };
 window.orbDesktop.onVoice(value => {
@@ -109,7 +116,7 @@ window.orbDesktop.onVoice(value => {
   refreshImageVisibility();
   if (nearBottom) scrollToLatest = true;
   get('status').textContent = value.state === 'thinking' && value.generatingImage ? 'Generuję obraz…' : labels[value.state] || '';
-  get('status').hidden = Boolean(value.answer) || !get('status').textContent;
+  get('status').hidden = (Boolean(value.answer) && value.state !== 'thinking') || !get('status').textContent;
   get('error').hidden = !value.message;
   get('error').textContent = value.message || '';
   get('retry').hidden = value.state !== 'error' || value.ready;

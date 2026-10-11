@@ -38,7 +38,7 @@ void main() {
   float y = p.y / pulse * .5 + .5;
   vec2 flow = vec2(p.x * 2.1 + time * .28, y * 3. - time * .12);
   flow += vec2(sin(y * 4. + time * .3), sin(p.x * 2.4 - time * .2))
-          * (.18 + speaking * .35);
+          * (.18 + speaking * .35 + activity * .25);
   float broad = fbm(flow);
   float detail = fbm(flow * 2.3 + vec2(broad * 1.5, time * .10));
   // Speech pulls blue, white and lavender into broad overlapping currents.
@@ -46,7 +46,7 @@ void main() {
   float currents = .13 * sin(p.x * 3.2 + time * .95)
                    + .08 * sin(p.x * 1.7 - time * .70)
                    + (broad - .45) * .60 + (detail - .45) * .18;
-  y += speaking * currents + (broad - .45) * .06;
+  y += (speaking + activity * .55) * currents + (broad - .45) * .06;
   float wave = sin(p.x * 2.5 + time * .85);
   float center = .535 + (.025 + activity * .025) * wave
                  + (broad - .45) * .18 + (detail - .45) * .05;
@@ -149,16 +149,18 @@ export class OrbRenderer {
   };
   draw(delta) {
     const reactive = this.host.hasAttribute('audio-reactive');
-    const level = reactive && ['listening', 'speaking'].includes(this.host.state) ? this.host.level : 0;
-    this.envelope += (level - this.envelope) * (1 - Math.exp(-delta * (level > this.envelope ? 24 : 7)));
-    if (reactive) this.host.style.setProperty('--audio-scale', String(1 + this.envelope * .18));
+    const rawLevel = reactive && ['listening', 'speaking'].includes(this.host.state) ? this.host.level : 0;
+    // Lift quiet syllables without exceeding the desktop's fixed 54 px hit area.
+    const level = Number.isFinite(rawLevel) ? Math.min(1, Math.pow(Math.max(0, rawLevel), .65) * 1.25) : 0;
+    this.envelope += (level - this.envelope) * (1 - Math.exp(-delta * (level > this.envelope ? 48 : 12)));
+    if (reactive) this.host.style.setProperty('--audio-scale', String(1 + this.envelope * .2));
     const target = this.host.state === 'speaking' ? .65 + .25 * Math.sin(this.time * 7.3)
       : this.host.state === 'listening' ? .28 : .06;
-    this.activity += ((reactive ? .06 + this.envelope * .85 : target) - this.activity) * (1 - Math.exp(-delta * 5));
+    this.activity += ((reactive ? .06 + this.envelope * .94 : target) - this.activity) * (1 - Math.exp(-delta * 18));
     this.speaking += ((this.host.state === 'speaking' ? 1 : 0) - this.speaking)
       * (1 - Math.exp(-delta * 3));
     // Speech accelerates the cloud flow fourfold, easing with the speaking blend.
-    this.time += delta * (.9 + this.activity * 1.5) * (1 + this.speaking * 3);
+    this.time += delta * (.9 + this.activity * 2.5) * (1 + this.speaking * 3);
     const gl = this.gl;
     const size = this.renderSize;
     if (this.canvas.width !== size || this.canvas.height !== size) {

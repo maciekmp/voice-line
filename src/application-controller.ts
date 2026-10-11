@@ -186,7 +186,9 @@ export class ApplicationController {
   }
   private beginRecording(): boolean {
     if (this.health !== 'ready' || this.held) return false;
+    const interruptedPlayback = this.phase === 'speaking';
     this.held = true; this.interrupt(); this.recordingStartedAt = this.clock.now();
+    if (interruptedPlayback) this.publish('idle');
     try { this.options.recorder.start(); return true; }
     catch (error) {
       this.held = false; this.log.error(error); this.publish('error', { message: 'Nie udało się rozpocząć nagrywania. Spróbuj ponownie.' }); return false;

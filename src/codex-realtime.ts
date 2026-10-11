@@ -11,7 +11,7 @@ import { realtimePcm, type RealtimeAudioChunk } from './audio/realtime-pcm.ts';
 import { PcmPlayer } from './audio/pcm-player.ts';
 import type { VoiceReply, RealtimeCallbacks, ConversationExchange } from './conversation-contract.ts';
 export type { RealtimeCallbacks } from './conversation-contract.ts';
-import { INSTRUCTIONS } from './codex.ts';
+import { WEB_RESPONSE_INSTRUCTIONS } from './codex.ts';
 import { readImageLinks, appendImageLink } from './image-artifacts.ts';
 import { ArtifactStore, imageFromProtocol } from './artifact-store.ts';
 import { loadCodexConfig, loadRealtimeConfig, type CodexConfig, type RealtimeConfig } from './app-config.ts';
@@ -27,7 +27,7 @@ const voices = new Set(['alloy', 'arbor', 'ash', 'ballad', 'breeze', 'cedar', 'c
   'juniper', 'maple', 'marin', 'sage', 'shimmer', 'sol', 'spruce', 'vale', 'verse']);
 
 export class CodexRealtime extends CodexAppServer {
-  protected override readonly responseInstructions = INSTRUCTIONS;
+  protected override readonly responseInstructions = WEB_RESPONSE_INSTRUCTIONS;
   protected override readonly threadHistoryMode = 'paginated' as const;
   private audio: AudioSession | null = null;
   private audioTask: Promise<VoiceReply> | null = null;

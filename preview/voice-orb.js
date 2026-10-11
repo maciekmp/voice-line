@@ -12,6 +12,7 @@ class VoiceOrb extends HTMLElement {
     this.attachShadow({ mode: 'open' }).innerHTML = `
       <style>
         :host {
+          position: relative;
           display: inline-block;
           width: var(--orb-size, 45px);
           max-width: 100%;
@@ -34,7 +35,7 @@ class VoiceOrb extends HTMLElement {
         :host([paused]) .sphere { animation-play-state: paused; }
         :host([audio-reactive]) .sphere {
           animation: none; scale: var(--audio-scale, 1);
-          transition: scale 100ms ease-out;
+          transition: scale 40ms ease-out;
         }
         @keyframes listen-breathe { 0%, 100% { transform: scale(.94); } 50% { transform: scale(1); } }
         @keyframes speak-breathe { 0%, 100% { transform: scale(.97); } 45% { transform: scale(1); } }
@@ -43,6 +44,7 @@ class VoiceOrb extends HTMLElement {
       <div class="sphere" aria-hidden="true">
         <canvas></canvas>
       </div>
+      <slot name="overlay"></slot>
     `;
   }
 

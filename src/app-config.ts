@@ -1,4 +1,5 @@
 import { dirname, isAbsolute, join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 const { appDataDirectory } = createRequire(import.meta.url)('./app-data.cjs') as { appDataDirectory: (env?: NodeJS.ProcessEnv) => string };
 
@@ -38,7 +39,10 @@ export function loadWhisperConfig(env: NodeJS.ProcessEnv = process.env, override
     threads: overrides.threads !== undefined ? overrides.threads : (env.WHISPER_THREADS === undefined ? null : integer(env, 'WHISPER_THREADS', 4, 1, 1024)) });
 }
 export function loadPlaybackConfig(env: NodeJS.ProcessEnv = process.env): PlaybackConfig {
-  return Object.freeze({ ffplay: env.FFPLAY_BIN ?? 'ffplay.exe' });
+  // Chocolatey's PATH entry is a launcher: killing it can leave FFplay playing.
+  // Prefer the real player beside a configured native FFmpeg executable.
+  const sibling = env.FFMPEG_BIN && isAbsolute(env.FFMPEG_BIN) ? join(dirname(env.FFMPEG_BIN), 'ffplay.exe') : undefined;
+  return Object.freeze({ ffplay: env.FFPLAY_BIN ?? (sibling && existsSync(sibling) ? sibling : 'ffplay.exe') });
 }
 export function loadPiperConfig(env: NodeJS.ProcessEnv = process.env): PiperConfig {
   return Object.freeze({ binary: env.PIPER_BIN ?? 'piper.exe', model: env.PIPER_MODEL ?? '', player: loadPlaybackConfig(env).ffplay });

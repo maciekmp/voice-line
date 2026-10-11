@@ -80,7 +80,7 @@ export class CodexAppServer {
       if (signal?.aborted || this.session.previousConversationId !== id) return false;
       this.session.loadHistory(id, exchanges);
       if (!this.session.canRestorePrevious) return false;
-      if (!this.historyOnly && !this.ephemeral) await this.request('thread/resume', { threadId: this.providerThreadId(id), ...(this.model && { model: this.model }) });
+      if (!this.historyOnly && !this.ephemeral) await this.request('thread/resume', { threadId: this.providerThreadId(id), config: { web_search: 'live' }, ...(this.model && { model: this.model }) });
       if (signal?.aborted || this.session.previousConversationId !== id) return false;
       const restored = this.connection.storage
         ? await this.connection.storage.restorePrevious(() => !signal?.aborted && this.session.previousConversationId === id)
@@ -144,7 +144,7 @@ export class CodexAppServer {
     const home = this.ephemeral ? undefined : this.connection.home;
     if (home) await mkdir(home, { recursive: true });
     if (this.lifecycle !== lifecycle) throw new Error('Codex startup stopped');
-    const child = this.launchServer(['app-server', '--listen', 'stdio://',
+    const child = this.launchServer(['app-server', '--listen', 'stdio://', '-c', 'web_search="live"',
       ...(this.connection.storage && !this.ephemeral ? ['-c', 'cli_auth_credentials_store="file"'] : [])], { cwd: this.cwd,
       ...(home && { env: { CODEX_HOME: home, CODEX_SQLITE_HOME: home, CODEX_ACCESS_TOKEN: undefined } }),
     });
@@ -193,11 +193,11 @@ export class CodexAppServer {
     this.session.expire();
     let reply: any;
     if (this.session.threadId && !this.ephemeral) {
-      try { reply = await this.request('thread/resume', { threadId: this.session.codexThreadId, ...(this.model && { model: this.model }) }); }
+      try { reply = await this.request('thread/resume', { threadId: this.session.codexThreadId, config: { web_search: 'live' }, ...(this.model && { model: this.model }) }); }
       catch { this.session.reset(); }
       if (reply && reply?.thread?.id !== this.session.codexThreadId) throw new Error('Codex returned a different conversation');
     }
-    if (!reply) reply = await this.request('thread/start', { cwd: this.cwd, approvalPolicy: 'never', sandbox: 'read-only', ...(this.ephemeral && { ephemeral: true }), ...(this.threadHistoryMode && { historyMode: this.threadHistoryMode }), ...(this.model && { model: this.model }) });
+    if (!reply) reply = await this.request('thread/start', { cwd: this.cwd, approvalPolicy: 'never', sandbox: 'read-only', config: { web_search: 'live' }, ...(this.ephemeral && { ephemeral: true }), ...(this.threadHistoryMode && { historyMode: this.threadHistoryMode }), ...(this.model && { model: this.model }) });
     const id = reply?.thread?.id;
     if (typeof id !== 'string') throw new Error('Codex app-server returned no thread ID');
     if (this.ephemeral) {
@@ -308,7 +308,7 @@ export class CodexAppServer {
     if (signal?.aborted) throw new Error('Cancelled');
     this.session.expire();
     // CLI can create/resume this session through another Codex process.
-    if (this.historyOnly && this.session.threadId && !this.ephemeral) await this.request('thread/resume', { threadId: this.session.codexThreadId });
+    if (this.historyOnly && this.session.threadId && !this.ephemeral) await this.request('thread/resume', { threadId: this.session.codexThreadId, config: { web_search: 'live' } });
     if (this.ephemeral || !this.session.threadId) await this.openThread();
     if (!this.session.threadId) throw new Error('Codex thread is unavailable');
     const operation = this.session.captureOperation();
