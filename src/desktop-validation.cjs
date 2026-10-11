@@ -63,7 +63,7 @@ function parseDesktopRequest(channel, value) {
       || !['peek', 'chat', 'compose', 'compact'].includes(/** @type {string} */ (value.mode)) || typeof value.reducedMotion !== 'boolean') return null;
     return { channel, value: { height: value.height, mode: /** @type {import('./desktop-contract.ts').PanelMode} */ (value.mode), reducedMotion: value.reducedMotion } };
   }
-  if (channel === 'voice:open' || channel === 'orb:ready' || channel === 'orb:exit-complete') return value === undefined ? { channel } : null;
+  if (channel === 'voice:open' || channel === 'voice:ready') return value === undefined ? { channel } : null;
   return null;
 }
 

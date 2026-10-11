@@ -21,7 +21,7 @@ Stan pracy i widok są niezależne. Orb i popup pojawiają się i znikają razem
 Wciśnięcie Copilota natychmiast przerywa pracę. Tap (<250 ms) odrzuca audio;
 hold (>=250 ms) pokazuje peek, zachowuje szkic i nagrywa od key-down.
 Puszczenie po hold wysyła nagranie. Repeats nie uruchamiają kolejnych działań.
-Klik orba wykonuje tap bez nagrywania. Tray otwiera chat.
+Tray otwiera chat. Mini orb jest wyłącznie wskaźnikiem audio.
 
 Przed rzeczywistym rozpoczęciem playbacku przerwanie usuwa bieżącą turę
 z historii, zapisu i kontekstu. Tap czyści szkic i zachowuje zakres chat/compact;
@@ -35,7 +35,7 @@ Enter wysyła, Shift+Enter dodaje linię, IME nie wysyła. Błędne wysłanie za
 szkic. Podczas startu/awarii tap otwiera pole ze statusem, wysyłanie jest zablokowane;
 hold pokazuje stan bez nagrywania. Gotowość w trakcie gestu nie rozpoczyna nagrania.
 
-Escape ukrywa oba elementy, usuwa pin i fokus, zachowuje szkic i nie przerywa pracy.
+Escape ukrywa panel elementy, usuwa pin i fokus, zachowuje szkic i nie przerywa pracy.
 Aktualizacje tej samej pracy nie otwierają interfejsu. Nowe pytanie lub jawne otwarcie
 może go pokazać. Hover nie otwiera ukrytego interfejsu.
 
@@ -111,8 +111,8 @@ wymaga PowerShell, Codex i FFplay, ale używa symulowanych providerów i nie
 wykonuje płatnej inferencji. FFplay otwiera wyjście audio dla testowego PCM.
 Test klawiatury jest w `tests/native/`, a pomocnicze fixture i skrypty
 w `tests/helpers/`. Smoke Electron jest w `tests/native/desktop-smoke.cjs`;
-runner uruchamia produkcyjny host `electron/orb-main.cjs` z `--smoke-test`,
-który przekazuje harnessowi rzeczywiste okna i adaptery.
+runner uruchamia produkcyjny host `electron/desktop-main.cjs` z `--smoke-test`,
+który przekazuje harnessowi rzeczywisty panel i adaptery.
 Smoke mierzy też historię dla 100, 1000 i 3000 wymian, zachowanie istniejących
 węzłów i leniwe podglądy obrazów; zapisuje `history-scale.json` obok zrzutów.
 
@@ -120,39 +120,40 @@ Runner nie ładuje `.env`, usuwa odziedziczone klucze API oraz ustawia tymczasow
 `APP_DATA_DIR`, `CODEX_HOME` i `CODEX_SQLITE_HOME`. Testy tworzące mock
 logowania ustawiają własny fikcyjny klucz. Dane i profile testowe są usuwane po
 zakończeniu; zrzuty desktop zostają w `.app-data/test-results/desktop-<id>/`.
-`preview:desktop` i `preview:web` służą do podglądu, a `probe:imagegen` oraz
+`preview:desktop` służą do podglądu, a `probe:imagegen` oraz
 `probe:image-history` są jawnymi eksperymentami poza automatycznymi zestawami.
 
-## Kulka, popup i czas odpowiedzi
+## Popup i czas odpowiedzi
 
 | ID | Kroki | Oczekiwany wynik | Pokrycie / kontrola ręczna |
 | --- | --- | --- | --- |
-| V01 | Start aplikacji. | Obie ukryte; Copilot może pokazać stan startu. | controller, desktop |
-| V02 | Hold bez hoveru. | Obie widoczne, peek bez przejęcia fokusu. | copilot, overlay; ręcznie mikrofon |
-| V03 | Opuść powierzchnie w każdym aktywnym stanie. | Obie pozostają; brak timera unhover. | overlay, desktop |
+| V01 | Start aplikacji. | Panel ukryty; Copilot może pokazać stan startu. | controller, desktop |
+| V02 | Hold bez hoveru. | Panel widoczny, peek bez przejęcia fokusu. | copilot, overlay; ręcznie mikrofon |
+| V03 | Opuść panel w każdym aktywnym stanie. | Panel pozostaje; brak timera unhover. | overlay, desktop |
 | V04 | Pełny cykl LOCAL. | Widok nie zmienia się między etapami. | voice-engine; ręcznie usługi |
-| V05 | Koniec pracy bez hoveru, fokusu i pina. | Obie znikają po 5 sekundach. | overlay, desktop |
-| V06 | Hover przy wygaśnięciu timera, potem odejdź. | Obie pozostają do zamknięcia/nowej pracy. | overlay |
+| V05 | Koniec pracy bez hoveru, fokusu i pina. | Panel znika po 5 sekundach. | overlay, desktop |
+| V06 | Hover przy wygaśnięciu timera, potem odejdź. | Panel pozostaje do zamknięcia/nowej pracy. | overlay |
 | V07 | Fokus pola przy wygaśnięciu, potem blur. | Brak ukrycia po utracie fokusu. | overlay, desktop |
 | V08 | Pin przy wygaśnięciu, potem unpin. | Brak ukrycia po odpięciu. | overlay, desktop |
 | V09 | Hover nad ukrytym interfejsem. | Nie otwiera powierzchni. | overlay, desktop |
-| V10 | Przejdź między orbem a popupem. | Hover obu chroni przy wygaśnięciu. | overlay, desktop |
-| V11 | Klikaj orb przy gotowej aplikacji. | Przejścia jak tap; szkic zachowany. | overlay, desktop |
-| V12 | Escape podczas odpowiedzi. | Obie ukryte, praca trwa. | overlay; ręcznie odczyt |
+| V10 | Najedź na panel przy wygaśnięciu timera. | Hover chroni widoczność panelu. | overlay, desktop |
+| V11 | Przełączaj cztery warianty wskaźnika przez tray podczas pisania. | Szkic, rozmowa, fokus i widoczność zachowane. | desktop |
+| V20 | Wybierz efekt w menu „Efekty wizualne”, zamknij aplikację i uruchom ponownie. | Zapisany wybór przywrócony; podgląd ma osobne ustawienia. | visual-preferences, desktop; ręcznie restart |
+| V12 | Escape podczas odpowiedzi. | Panel ukryty, praca trwa. | overlay; ręcznie odczyt |
 | V13 | Nowe nagranie przed starym timerem. | Stary timer nie ukrywa nowej pracy. | overlay |
 | V14 | Tekst z compose/chat. | compact, anulowany stary timer. | overlay, desktop |
 | V15 | Snapshoty i audio-levels. | Brak zmiany widoku i przejęcia fokusu. | desktop |
 | V16 | Zmiana fokusu podczas odpowiedzi. | Praca trwa, brak timera blur. | overlay; ręcznie dwa okna |
 | V17 | Pin i Escape. | Escape usuwa pin i ukrywa oba. | overlay, desktop |
 | V18 | Tap podczas odczytu. | Puste pole, zachowana odpowiedź; compact lub chat. | controller, desktop |
-| V19 | Escape, dalsze aktualizacje i koniec pracy. | Obie pozostają ukryte. | overlay |
+| V19 | Escape, dalsze aktualizacje i koniec pracy. | Panel pozostaje ukryte. | overlay |
 
 
 ## Wejście i kolejne rozmowy
 
 | ID | Kroki | Oczekiwany wynik | Pokrycie / kontrola ręczna |
 | --- | --- | --- | --- |
-| I01 | Z ukrycia krótko naciśnij Copilot (<250 ms). | Skupione pole tekstowe, widoczna kulka; próbki odrzucone, brak STT. | copilot, overlay, desktop; ręcznie klawisz |
+| I01 | Z ukrycia krótko naciśnij Copilot (<250 ms). | Skupione pole tekstowe, widoczny panel; próbki odrzucone, brak STT. | copilot, overlay, desktop; ręcznie klawisz |
 | I02 | W LOCAL przytrzymaj Copilot >=250 ms; mów; puść. | Nagrywanie, potem STT, generowanie, przygotowanie głosu i odczyt w tej kolejności. | copilot, controller, voice-engine; ręcznie pełny cykl |
 | I03 | Wyślij tekst Enterem w LOCAL i API. | Nowe pytanie w rozmowie; przygotowanie odpowiedzi; bez odczytu TTS. | desktop, controller, voice-engine; ręcznie Codex |
 | I04 | Enter na pustym polu, szybki podwójny Enter, Shift+Enter, Enter podczas IME. | Brak pustych i podwójnych wysłań; nowa linia działa; IME nie wysyła. | desktop (puste, duplikaty, IME); ręcznie Shift+Enter |
@@ -183,7 +184,7 @@ zakończeniu; zrzuty desktop zostają w `.app-data/test-results/desktop-<id>/`.
 | A03 | Włącz ograniczony ruch. | Brak skalowania, obrotu pierścienia i ruchu chmur; funkcje nadal działają. | desktop |
 | A04 | Wstrzymaj animację przez tray. | Ruch zamrożony; samo wstrzymanie animacji nie zmienia głosowego cyklu. | desktop (atrybut pauzy); ręcznie tray |
 | A05 | Długa odpowiedź i wiele wymian, mała dostępna wysokość ekranu. | Dostępne przewijanie; composer osiągalny; brak poziomego overflow. | desktop; ręcznie mały ekran |
-| A06 | Zmień monitor, DPI i obszar roboczy. | Kulka i popup w obszarze ekranu; przechodzenie kursorem nadal działa. | ręcznie Windows |
+| A06 | Zmień monitor, DPI i obszar roboczy. | Popup w obszarze ekranu; przechodzenie kursorem nadal działa. | ręcznie Windows |
 
 ## Osobna historia i zapis rozmowy
 

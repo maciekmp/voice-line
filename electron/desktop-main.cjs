@@ -4,23 +4,24 @@ const { mkdirSync } = require('node:fs');
 const { spawn } = require('node:child_process');
 const { createEngineSupervisor } = require('./engine-supervisor.cjs');
 const { writeAtomic } = require('./atomic-file.cjs');
-const orbGeometry = require('./orb-geometry.cjs');
 const { createOverlayController } = require('./overlay-controller.cjs');
 const { createWindowAdapter } = require('./desktop-windows.cjs');
 const { registerDesktopIpc } = require('./desktop-ipc.cjs');
 const { createWorkerEventReceiver } = require('./desktop-worker.cjs');
 const { appDataDirectory } = require('./app-data.cjs');
 const { conversationMarkdown } = require('./conversation-export.cjs');
+const { loadVisualPreferences, saveVisualPreferences, visualIndicatorMenu } = require('./visual-preferences.cjs');
 
 const smokeTest = process.argv.includes('--smoke-test');
 const dataDirectory = process.argv.includes('--preview')
   ? path.join(__dirname, '..', '.app-data') : appDataDirectory();
 const imageDirectory = path.join(dataDirectory, 'images');
+const visualPreferencesFile = path.join(dataDirectory, process.argv.includes('--preview') ? 'desktop-preview-settings.json' : 'desktop-settings.json');
 const outputDirectory = smokeTest ? process.env.TEST_OUTPUT_DIR || path.join(dataDirectory, 'captures')
   : path.join(__dirname, '..', '.app-data');
 if (smokeTest) mkdirSync(outputDirectory, { recursive: true });
 let savingConversation = false;
-// Set these before Chromium initializes. Keep the orb away from other Electron
+// Set these before Chromium initializes. Keep the desktop host away from other Electron
 // profiles, and keep smoke tests away from an already-running desktop instance.
 const profileDirectory = smokeTest || process.argv.includes('--preview')
   ? path.join(dataDirectory, 'electron', smokeTest ? `smoke-${process.pid}` : 'preview')
@@ -30,29 +31,21 @@ mkdirSync(sessionDirectory, { recursive: true });
 app.setName('Voice Line');
 app.setPath('userData', profileDirectory);
 app.setPath('sessionData', sessionDirectory);
-// Leave transparent space for entry/exit motion and Windows' minimum window size.
-const WINDOW_SIZE = orbGeometry.windowWidth;
-const WINDOW_HEIGHT = orbGeometry.windowHeight;
-const MARGIN = 20;
 const PANEL_MAX_HEIGHT = 500;
-let orbWindow;
 let tray;
 let panelWindow;
 let engine;
-let voice = { state: 'starting', ready: false, question: '', answer: '', message: '',
-  mode: process.argv.includes('--smoke-test') || process.argv.includes('--preview') ? 'local' : undefined };
+let voice = { state: 'starting', ready: false, question: '', answer: '', message: '', mode: undefined };
 const { createConversationPresentation } = require('./desktop-conversation.cjs');
 const conversationPresentation = createConversationPresentation(voice);
 const preview = process.argv.includes('--preview');
-let testLiveVisibility = false;
 let testNativePointer = false;
 let pointerPoll;
 
 function sendVoice(update = {}) {
   voice = conversationPresentation.update(update);
   overlay.voice(voice.state);
-  state = voice.state === 'listening' ? 'listening' : voice.state === 'speaking' ? 'speaking' : 'idle';
-  for (const window of [orbWindow, panelWindow]) {
+  for (const window of [panelWindow]) {
     if (window && !window.isDestroyed()) window.webContents.send('voice:snapshot', voice);
   }
   tray?.setToolTip(`Voice Line: ${voice.state}`);
@@ -82,7 +75,9 @@ async function saveCurrentConversation() {
 
 const onEngineMessage = createWorkerEventReceiver({
   sendVoice, get voice() { return voice; },
-  onLevel: level => orbWindow?.webContents.send('orb:level', level),
+  onLevel: level => {
+    if (panelWindow && !panelWindow.isDestroyed() && panelWindow.isVisible() && !exitStarted) panelWindow.webContents.send('voice:level', level);
+  },
   compose: action => {
     if (action === 'correct' || action === 'continue') panelWindow?.webContents.send('voice:clear-draft');
     overlay.intent(action);
@@ -119,43 +114,25 @@ const overlay = createOverlayController({
       } else if (value.mode !== windows.mode || !panelWindow.isVisible() || focus) windows.openPanel(value.mode, focus);
       panelWindow.webContents.send('voice:pinned', value.pinned);
     }
-    updateVisibility();
   },
 });
 function openPanel(focus = true) { overlay.open(Boolean(focus)); }
 function hidePanel() { overlay.dismiss(); }
 const windows = createWindowAdapter({
-  screen, BrowserWindow, root: __dirname, position, PANEL_MAX_HEIGHT,
-  get orbWindow() { return orbWindow; }, set orbWindow(value) { orbWindow = value; },
+  screen, BrowserWindow, root: __dirname, PANEL_MAX_HEIGHT,
   get panelWindow() { return panelWindow; }, set panelWindow(value) { panelWindow = value; },
   hover: (surface, entered) => overlay.hover(surface, entered),
-  menu, exiting: () => exitStarted, dismiss: hidePanel,
+  exiting: () => exitStarted, dismiss: hidePanel,
 });
 const positionPanel = animate => windows.positionPanel(animate);
 const samplePointer = cursor => windows.samplePointer(cursor);
-let state = 'idle';
+let indicator = loadVisualPreferences(visualPreferencesFile).indicator;
 let paused = false;
 let exitStarted = false;
 let exitFinished = false;
-let exitAcknowledged = false;
 let exitTimer;
-let hideTimer;
-
-function updateVisibility(force = false) {
-  if (!orbWindow || orbWindow.isDestroyed() || exitStarted || (!force && ((smokeTest && !testLiveVisibility) || preview))) return;
-  clearTimeout(hideTimer);
-  if (overlay.snapshot().orbVisible) {
-    // Re-showing an already visible native overlay can disturb popup activation
-    // on Windows. Voice snapshots should update contents, not window activation.
-    if (!orbWindow.isVisible()) orbWindow.showInactive();
-    orbWindow.webContents.send('orb:presence', 'visible');
-  } else {
-    orbWindow.webContents.send('orb:presence', 'hidden');
-    hideTimer = setTimeout(() => {
-      if (!orbWindow.isDestroyed() && !overlay.snapshot().orbVisible) orbWindow.hide();
-    }, 260);
-  }
-}
+let previewPoll;
+let previewLevel = .5;
 
 function finishExit() {
   if (!exitStarted || exitFinished) return;
@@ -165,51 +142,53 @@ function finishExit() {
 }
 
 const disposeDesktopIpc = registerDesktopIpc(ipcMain, {
-  clipboard, dialog, overlay, openPanel, hidePanel, positionPanel, sendVoice, finishExit,
+  clipboard, dialog, overlay, openPanel, hidePanel, positionPanel, sendVoice, sendSettings,
   imageDirectory, panelHeights: windows.heights, PANEL_MAX_HEIGHT, smokeTest, preview, engineSupervisor,
-  get orbWindow() { return orbWindow; }, get panelWindow() { return panelWindow; },
+  get panelWindow() { return panelWindow; },
   get exitStarted() { return exitStarted; }, get voice() { return voice; }, get engine() { return engine; },
   get panelMode() { return windows.mode; },
   get panelHeight() { return windows.height; }, set panelHeight(value) { windows.height = value; },
   get panelResetTimer() { return windows.resetTimer; },
   get testNativePointer() { return testNativePointer; },
-  set exitAcknowledged(value) { exitAcknowledged = value; },
 });
 
-app.on('will-quit', () => {
-  disposeDesktopIpc();
-  if (!smokeTest) return;
-  if (!exitAcknowledged) {
-    console.error('Exit animation did not acknowledge completion');
-    app.exit(1);
-  } else console.log('Exit animation: passed');
-});
+app.on('will-quit', () => disposeDesktopIpc());
 app.on('before-quit', event => {
-  if (exitFinished || !orbWindow || orbWindow.isDestroyed()) return;
+  if (exitFinished) return;
   event.preventDefault();
   if (exitStarted) return;
   exitStarted = true;
   overlay.dispose();
   windows.dispose();
-  clearTimeout(hideTimer);
   clearInterval(pointerPoll);
-  if (!smokeTest && !preview) void engineSupervisor.stop();
+  clearInterval(previewPoll);
   panelWindow?.hide();
-  exitTimer = setTimeout(finishExit, smokeTest ? 2500 : 700);
-  orbWindow.webContents.send('orb:presence', 'leaving');
+  // Allow the supervisor's three-second worker shutdown deadline to finish first.
+  exitTimer = setTimeout(finishExit, 5000);
+  Promise.resolve(!smokeTest && !preview ? engineSupervisor.stop() : undefined).then(finishExit, error => {
+    console.error(error); finishExit();
+  });
 });
 
-function position() {
-  const { x, y, width, height } = screen.getPrimaryDisplay().workArea;
-  return { x: x + width - WINDOW_SIZE - MARGIN, y: y + height - WINDOW_SIZE - MARGIN };
+function sendSettings() {
+  if (panelWindow && !panelWindow.isDestroyed()) panelWindow.webContents.send('voice:visual-settings', { indicator, paused });
+  tray?.setContextMenu(menu());
 }
 
-function sendSettings() {
-  if (orbWindow && !orbWindow.isDestroyed()) {
-    orbWindow.webContents.send('orb:settings', { state, paused });
+function selectIndicator(value) {
+  indicator = value;
+  sendSettings();
+  try { saveVisualPreferences(visualPreferencesFile, indicator); }
+  catch (error) {
+    console.error('Cannot save visual preferences:', error);
+    void dialog.showMessageBox(panelWindow, { type: 'error', message: 'Nie zapisano wyboru efektu.',
+      detail: 'Efekt działa w tej sesji. Sprawdź dostęp do folderu danych aplikacji i wybierz go ponownie, aby zapamiętać go po restarcie.', buttons: ['Zamknij'] });
   }
-  tray?.setContextMenu(menu());
-  updateVisibility();
+}
+
+function setPreviewState(state) {
+  sendVoice({ state, ready: true });
+  overlay.open(false);
 }
 
 function menu() {
@@ -220,10 +199,17 @@ function menu() {
       { label: 'Nowa rozmowa', enabled: voice.ready, click: () => engine?.connected && engine.send({ command: 'reset' }) },
       { label: 'Zapisz rozmowę…', enabled: voice.ready && Boolean(voice.answer) && ['idle', 'error'].includes(voice.state) && !savingConversation,
         click: () => { void saveCurrentConversation(); } },
-    ] : [['idle', 'Spoczynek'], ['listening', 'Słuchanie (test)'], ['speaking', 'Mówienie (test)']].map(([value, label]) => ({
-      label, type: 'radio', checked: state === value,
-      click: () => { state = value; sendSettings(); },
-    }))),
+    ] : [
+      { label: 'Stan podglądu', submenu: ['idle', 'listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking', 'error'].map((value, index) => ({
+        label: ['Gotowość', 'Słuchanie', 'Rozpoznawanie mowy', 'Przygotowanie odpowiedzi', 'Przygotowanie głosu', 'Odczytywanie', 'Błąd'][index],
+        type: 'radio', checked: voice.state === value, click: () => setPreviewState(value),
+      })) },
+      { label: 'Poziom audio (podgląd)', submenu: [0, .25, .5, 1].map(value => ({
+        label: String(value * 100) + '%', type: 'radio', checked: previewLevel === value,
+        click: () => { previewLevel = value; tray?.setContextMenu(menu()); },
+      })) },
+    ]),
+    { label: 'Efekty wizualne', submenu: visualIndicatorMenu(indicator, selectIndicator) },
     { type: 'separator' },
     { label: 'Wstrzymaj animację', type: 'checkbox', checked: paused,
       click: item => { paused = item.checked; sendSettings(); } },
@@ -254,22 +240,21 @@ if (!smokeTest && !app.requestSingleInstanceLock()) {
     if (exitStarted) return;
     if (!smokeTest) {
       pointerPoll = setInterval(() => {
-        if (exitStarted || orbWindow.isDestroyed() || panelWindow.isDestroyed()) return;
+        if (exitStarted || !panelWindow || panelWindow.isDestroyed()) return;
         samplePointer();
       }, 50);
     }
     if (smokeTest) {
       try {
         await require('../tests/native/desktop-smoke.cjs').verifyDesktop({
-          app, orbWindow, panelWindow, clipboard, dialog, nativeImage, profileDirectory, sessionDirectory,
-          WINDOW_SIZE, WINDOW_HEIGHT, PANEL_MAX_HEIGHT, position, imageDirectory, outputDirectory,
-          sendVoice, sendSettings, updateVisibility, onEngineMessage, openPanel, hidePanel,
+          app, panelWindow, clipboard, dialog, nativeImage, screen, profileDirectory, sessionDirectory,
+          PANEL_MAX_HEIGHT, imageDirectory, outputDirectory, visualPreferencesFile,
+          sendVoice, sendSettings, onEngineMessage, openPanel, hidePanel,
           samplePointer, overlay, positionPanel, menu, saveCurrentConversation,
           get voice() { return voice; }, get panelHeight() { return windows.height; },
-          get state() { return state; }, set state(value) { state = value; },
+          get indicator() { return indicator; }, set indicator(value) { indicator = value; },
           get paused() { return paused; }, set paused(value) { paused = value; },
           get engine() { return engine; }, set engine(value) { engine = value; },
-          set testLiveVisibility(value) { testLiveVisibility = value; },
           set testNativePointer(value) { testNativePointer = value; },
         });
         app.quit();
@@ -277,12 +262,12 @@ if (!smokeTest && !app.requestSingleInstanceLock()) {
       catch (error) { console.error(error); app.exit(1); }
     } else {
       tray = new Tray(trayImage());
-      tray.setToolTip('Kulka głosowa');
+      tray.setToolTip('Voice Line');
       tray.setContextMenu(menu());
       tray.on('click', openPanel);
       if (!preview) { startEngine(); }
       else {
-        sendVoice({ state: 'idle', ready: false, conversation: {
+        sendVoice({ state: 'idle', ready: true, mode: 'local', conversation: {
           id: 'preview', revision: 1, pending: null, completed: [
             { id: 'preview-1', revision: 1, question: 'Mam dziś dużo do zrobienia. Od czego zacząć?',
               answer: 'Zapisz zadania i wybierz te, które mają największe znaczenie. Nie musisz zrobić wszystkiego naraz.' },
@@ -290,6 +275,10 @@ if (!smokeTest && !app.requestSingleInstanceLock()) {
               answer: 'Wybierz trzy najważniejsze zadania. Zacznij od jednego i zostaw trochę miejsca na przerwy.' },
           ],
         } });
+        overlay.open(false);
+        previewPoll = setInterval(() => {
+          if (panelWindow?.isVisible() && ['listening', 'speaking'].includes(voice.state)) onEngineMessage({ type: 'level', source: voice.state, level: previewLevel });
+        }, 50);
       }
     }
   }).catch(error => { console.error(error); app.exit(1); });

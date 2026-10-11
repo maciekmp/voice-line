@@ -4,9 +4,9 @@ const path = require('node:path');
 const { createDesktopFixture } = require('../helpers/desktop-fixture.cjs');
 
 async function verifyDesktop(host) {
-  const { app, orbWindow, panelWindow, clipboard, dialog, nativeImage, profileDirectory, sessionDirectory,
-    WINDOW_SIZE, WINDOW_HEIGHT, PANEL_MAX_HEIGHT, position, imageDirectory, outputDirectory,
-    sendSettings, updateVisibility, openPanel, hidePanel,
+  const { app, panelWindow, clipboard, dialog, nativeImage, profileDirectory, sessionDirectory,
+    PANEL_MAX_HEIGHT, imageDirectory, outputDirectory,
+    sendSettings, openPanel, hidePanel,
     samplePointer, overlay, positionPanel, menu, saveCurrentConversation } = host;
   const fixture = createDesktopFixture();
   const { previousConversations } = fixture;
@@ -19,136 +19,109 @@ async function verifyDesktop(host) {
       threadId: snapshot.conversation.id, revision: snapshot.conversation.revision,
       operationId: null, canRestorePrevious: Boolean(snapshot.canRestorePrevious) });
   };
-  await orbWindow.webContents.executeJavaScript("customElements.whenDefined('voice-orb').then(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))");
-  const inspect = () => orbWindow.webContents.executeJavaScript(`(() => {
-    const orb = document.querySelector('voice-orb');
-    const canvas = orb.shadowRoot.querySelector('canvas');
-    return { size: orb.clientWidth, buffer: canvas.width, ready: canvas.parentElement.classList.contains('rendered'),
-      state: orb.state, paused: orb.hasAttribute('paused'), background: getComputedStyle(document.body).backgroundColor,
-      presence: document.body.dataset.presence,
-      animation: getComputedStyle(canvas.parentElement).animationName };
-  })()`);
-  const initial = await inspect();
-  assert.equal(initial.size, 45);
-  assert.equal(initial.buffer, 9);
-  assert.equal(initial.ready, true, 'WebGL should compile and render');
-  assert.equal(initial.background, 'rgba(0, 0, 0, 0)');
-  assert.equal(initial.presence, 'visible');
-  await orbWindow.webContents.executeJavaScript(`new Promise(resolve => {
-    const orb = document.querySelector('voice-orb');
-    if (Number(getComputedStyle(orb).opacity) >= .999) { resolve(); return; }
-    const done = event => {
-      if (event.target === orb && event.propertyName === 'opacity') {
-        orb.removeEventListener('transitionend', done); resolve();
-      }
-    };
-    orb.addEventListener('transitionend', done);
-    setTimeout(resolve, 500);
-  })`);
-  orbWindow.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 });
-  await new Promise(resolve => setTimeout(resolve, 400));
-  assert.equal(await orbWindow.webContents.executeJavaScript("Number(getComputedStyle(document.querySelector('voice-orb')).opacity)"), .9);
-  orbWindow.webContents.sendInputEvent({ type: 'mouseMove', x: 32, y: 32 });
-  await new Promise(resolve => setTimeout(resolve, 400));
-  assert.equal(await orbWindow.webContents.executeJavaScript("Number(getComputedStyle(document.querySelector('voice-orb')).opacity)"), 1, 'Hover restores full orb opacity');
-  assert.equal(await orbWindow.webContents.executeJavaScript("getComputedStyle(document.querySelector('button')).backgroundColor"), 'rgba(0, 0, 0, 0)', 'Hover has no background highlight');
-  orbWindow.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 });
-  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerleave'))");
-  hidePanel();
+  const wait = (ms = 150) => new Promise(resolve => setTimeout(resolve, ms));
+  const evaluate = code => panelWindow.webContents.executeJavaScript(code);
   assert.equal(app.getPath('userData'), profileDirectory);
   assert.equal(app.getPath('sessionData'), sessionDirectory);
-  assert.equal(orbWindow.webContents.session.getStoragePath(), sessionDirectory);
-  assert.equal(orbWindow.isAlwaysOnTop(), true);
-  assert.deepEqual(orbWindow.getBounds(), { ...position(), width: WINDOW_SIZE, height: WINDOW_HEIGHT });
-  for (const [mode, label] of [['realtime', 'API'], ['local', 'LOCAL']]) {
-    sendVoice({ mode });
-    await orbWindow.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(resolve))');
-    const indicator = await orbWindow.webContents.executeJavaScript(`(() => {
-      const label = document.querySelector('#voice-mode');
-      const bounds = label.getBoundingClientRect();
-      const orbBounds = document.querySelector('voice-orb').getBoundingClientRect();
-      return { text: label.textContent, hidden: label.hidden, bottom: bounds.bottom,
-        overlaps: bounds.left < orbBounds.right && bounds.top < orbBounds.bottom && bounds.bottom > orbBounds.top,
-        right: bounds.right, orbRight: orbBounds.right, opacity: Number(getComputedStyle(label).opacity),
-        insideOrb: label.parentElement === document.querySelector('voice-orb'),
-        slotted: label.assignedSlot?.name === 'overlay',
-        buttonTop: document.querySelector('button').getBoundingClientRect().top };
-    })()`);
-    assert.equal(indicator.text, label);
-    assert.equal(indicator.hidden, false);
-    assert.equal(indicator.overlaps, true, 'Mode label overlaps the lower-right edge of the orb');
-    assert.ok(indicator.right >= indicator.orbRight);
-    assert.equal(indicator.opacity, .9, 'Label remains readable while sharing its orb parent hover effect');
-    assert.equal(indicator.insideOrb && indicator.slotted, true, 'Label belongs to the orb structure');
-    assert.ok(indicator.bottom <= WINDOW_HEIGHT);
-    assert.equal(indicator.buttonTop, 5);
-  }
+  assert.equal(panelWindow.webContents.session.getStoragePath(), sessionDirectory);
+  assert.equal(require('electron').BrowserWindow.getAllWindows().length, 1);
+  assert.equal(panelWindow.isAlwaysOnTop(), true);
   assert.equal(panelWindow.isVisible(), false, 'Conversation starts hidden');
-  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerenter'))");
-  await new Promise(resolve => setTimeout(resolve, 350));
-  assert.equal(panelWindow.isVisible(), false, 'Hover cannot open hidden surfaces');
+  assert.equal(await evaluate('document.querySelector("#voice-mode").hidden'), true);
+  sendVoice({ state: 'idle', ready: true });
+  sendVoice({ state: 'listening', question: '', answer: '' });
+  await wait(350);
+  assert.equal(panelWindow.isVisible(), true, 'Recording reveals the panel');
+  assert.equal(panelWindow.isFocused(), false, 'Automatic display does not steal focus');
+  const area = host.screen.getPrimaryDisplay().workArea;
+  const bounds = panelWindow.getBounds();
+  assert.ok(Math.abs(bounds.x + bounds.width - (area.x + area.width - 20)) <= 2);
+  assert.ok(Math.abs(bounds.y + bounds.height - (area.y + area.height - 20)) <= 2);
+  for (const [mode, label] of [['realtime', 'API'], ['local', 'LOCAL']]) {
+    sendVoice({ mode }); await wait();
+    assert.equal(await evaluate('document.querySelector("#voice-mode").textContent'), label);
+  }
+  const audioLevel = () => evaluate('Number(document.querySelector("#audio-indicator").style.getPropertyValue("--audio-level"))');
+  const originalFocus = panelWindow.isFocused();
+  const originalOverlay = overlay.snapshot();
+  panelWindow.webContents.debugger.attach('1.3');
+  try {
+    for (const variant of ['bars', 'orb', 'glow', 'waves']) {
+      menu().items.find(item => item.label === 'Efekty wizualne').submenu.items.filter(item => item.type === 'radio')[['bars', 'orb', 'glow', 'waves'].indexOf(variant)].click();
+      assert.equal(require('../../electron/visual-preferences.cjs').loadVisualPreferences(host.visualPreferencesFile).indicator, variant,
+        'A fresh preferences read restores the choice made through the tray');
+      assert.equal(menu().items.find(item => item.label === 'Efekty wizualne').submenu.items.filter(item => item.type === 'radio' && item.checked).length, 1,
+        'Effects retain a single selected choice');
+      sendVoice({ state: 'listening', question: 'Test audio', answer: '' });
+      await panelWindow.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+      onEngineMessage({ type: 'level', source: 'listening', level: .12 });
+      assert.ok(await audioLevel() > .3, variant + ': quiet microphone syllables respond immediately');
+      onEngineMessage({ type: 'level', source: 'listening', level: 1 });
+      await wait(450);
+      assert.ok(await audioLevel() > .9, variant + ': measured audio drives feedback');
+      assert.equal(await evaluate('document.querySelector("#audio-indicator").dataset.variant'), variant);
+      assert.equal(panelWindow.isFocused(), originalFocus);
+      assert.deepEqual(overlay.snapshot(), originalOverlay);
+      if (variant === 'orb') {
+        assert.equal(await evaluate('document.querySelector("voice-orb").clientWidth'), 24);
+        assert.equal(await evaluate('document.querySelector("voice-orb").shadowRoot.querySelector(".sphere").classList.contains("rendered")'), true);
+        await evaluate('window.previousAudioOrb = document.querySelector("voice-orb"); window.previousAudioRenderer = window.previousAudioOrb.renderer; void 0');
+      } else assert.equal(await evaluate('document.querySelector("voice-orb") === null'), true);
+      if (variant === 'glow') {
+        assert.equal(await evaluate('window.previousAudioOrb.renderer === undefined && !window.previousAudioRenderer.program && !window.previousAudioRenderer.buffer && window.previousAudioRenderer.frame === 0'), true,
+          'Switching away from the mini orb releases GPU resources and its animation loop');
+      }
+      if (variant === 'waves') {
+        assert.equal(await evaluate('document.querySelector("voice-waves").shadowRoot.querySelector(".field").classList.contains("rendered")'), true,
+          'Background waves reuse the working orb shader');
+        assert.equal(await evaluate('(() => { const canvas = document.querySelector("voice-waves").shadowRoot.querySelector("canvas"); return canvas.width > canvas.height; })()'), true);
+        await evaluate('window.previousWaveRenderer = document.querySelector("voice-waves").renderer; void 0');
+      }
+      const layout = await evaluate('(() => { const h = document.querySelector("#panel-header").getBoundingClientRect(); const m = document.querySelector("main").getBoundingClientRect(); return { bottom: h.bottom, top: m.top }; })()');
+      assert.ok(layout.top >= layout.bottom);
+      await fs.writeFile(path.join(outputDirectory, 'indicator-' + variant + '.png'), (await panelWindow.webContents.capturePage()).toPNG());
+      onEngineMessage({ type: 'level', source: 'speaking', level: 0 }); await wait();
+      assert.ok(await audioLevel() > .9, 'Foreign audio source is ignored');
+      sendVoice({ state: 'speaking', answer: 'Test answer' }); await wait(100);
+      assert.equal(await audioLevel(), 0, 'State transition resets the level');
+      onEngineMessage({ type: 'level', source: 'speaking', level: .8 }); await wait(400);
+      assert.ok(await audioLevel() > .7, 'Playback drives feedback');
+      onEngineMessage({ type: 'level', source: 'speaking', level: 0 }); await wait(600);
+      assert.ok(await audioLevel() < .01, 'Measured silence returns feedback to rest');
+      host.paused = true; sendSettings(); await wait();
+      assert.equal(await audioLevel(), 0);
+      if (variant === 'waves') assert.equal(await evaluate('document.querySelector("voice-waves").renderer.frame'), 0);
+      host.paused = false; sendSettings();
+      await panelWindow.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
+      onEngineMessage({ type: 'level', source: 'speaking', level: 1 }); await wait();
+      assert.equal(await audioLevel(), 0, 'Reduced motion keeps feedback static');
+      if (variant === 'waves') assert.equal(await evaluate('document.querySelector("voice-waves").renderer.frame'), 0);
+      await fs.writeFile(path.join(outputDirectory, 'indicator-' + variant + '-reduced.png'), (await panelWindow.webContents.capturePage()).toPNG());
+      await panelWindow.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+      onEngineMessage({ type: 'level', source: 'speaking', level: 1 }); await wait(400);
+      hidePanel(); await wait();
+      assert.equal(await audioLevel(), 0, 'Hiding resets the level');
+      onEngineMessage({ type: 'level', source: 'speaking', level: 1 });
+      openPanel(false); await wait();
+      assert.equal(await audioLevel(), 0, 'Hidden audio cannot leak into the next display');
+      sendVoice({ state: 'idle' });
+      onEngineMessage({ type: 'level', source: 'speaking', level: 1 }); await wait();
+      assert.equal(await audioLevel(), 0, 'Late audio cannot animate an idle panel');
+    }
+  } finally {
+    await panelWindow.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
+    panelWindow.webContents.debugger.detach();
+  }
+  host.indicator = 'bars'; sendSettings();
+  await wait();
+  assert.equal(await evaluate('!window.previousWaveRenderer.program && !window.previousWaveRenderer.buffer && window.previousWaveRenderer.frame === 0'), true,
+    'Switching away from waves releases GPU resources');
+  sendVoice({ state: 'idle' }); hidePanel();
   openPanel(false);
-  await new Promise(resolve => setTimeout(resolve, 350));
-  assert.equal(panelWindow.isFocused(), false, 'Hover does not steal focus');
-  const popupBounds = panelWindow.getBounds();
-  // Windows rounds native window bounds at fractional display scaling.
-  assert.ok(Math.abs(popupBounds.y + popupBounds.height + 8 - orbWindow.getBounds().y) <= 2,
-    JSON.stringify({ popupBounds, orb: orbWindow.getBounds() }));
-  assert.ok(Math.abs(popupBounds.x + popupBounds.width - orbWindow.getBounds().x - WINDOW_SIZE) <= 2,
-    JSON.stringify({ popupBounds, orb: orbWindow.getBounds() }));
-  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerleave'))");
-  await panelWindow.webContents.executeJavaScript("document.documentElement.dispatchEvent(new PointerEvent('pointerenter'))");
-  await new Promise(resolve => setTimeout(resolve, 400));
-  assert.equal(panelWindow.isVisible(), true, 'Moving into the popup keeps it open');
-  await panelWindow.webContents.executeJavaScript("document.documentElement.dispatchEvent(new PointerEvent('pointerleave'))");
-  await new Promise(resolve => setTimeout(resolve, 1100));
-  assert.equal(panelWindow.isVisible(), true, 'Departure alone never closes the popup');
-  hidePanel();
-  openPanel(false);
-  await panelWindow.webContents.executeJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
-  await new Promise(resolve => setTimeout(resolve, 50));
-  assert.equal(panelWindow.isVisible(), false, 'Escape closes the popup');
-  host.state = 'listening'; sendSettings();
-  console.log('Popup hover checks: passed');
-  await orbWindow.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(resolve))');
-  const listening = await inspect();
-  assert.equal(listening.state, 'listening');
-  const reducedMotion = await orbWindow.webContents.executeJavaScript("matchMedia('(prefers-reduced-motion: reduce)').matches");
-  assert.equal(listening.animation, 'none', 'Desktop uses the measured audio envelope');
-  host.state = 'speaking'; host.paused = true; sendSettings();
-  await orbWindow.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(resolve))');
-  const changed = await inspect();
-  assert.equal(changed.state, 'speaking');
-  assert.equal(changed.paused, true);
-  assert.equal(changed.animation, 'none');
-  // Exercise real snapshots in both sandboxed renderers without opening a microphone.
-  sendVoice({ state: 'idle', ready: true }); updateVisibility(true);
-  await new Promise(resolve => setTimeout(resolve, 300));
-  assert.equal(orbWindow.isVisible(), false, 'Orb stays hidden while idle');
-  sendVoice({ state: 'listening', question: '', answer: '' }); updateVisibility(true);
-  assert.equal(orbWindow.isVisible(), true, 'Recording reveals the orb');
-  const audioScale = () => orbWindow.webContents.executeJavaScript("Number(getComputedStyle(document.querySelector('voice-orb').shadowRoot.querySelector('.sphere')).scale)");
-  host.paused = false; sendSettings();
-  onEngineMessage({ type: 'level', source: 'listening', level: .12 });
-  await new Promise(resolve => setTimeout(resolve, 180));
-  assert.ok(reducedMotion ? await audioScale() === 1 : await audioScale() > 1.05, 'Quiet syllables visibly grow the orb quickly');
-  onEngineMessage({ type: 'level', source: 'listening', level: 1 });
-  await new Promise(resolve => setTimeout(resolve, 400));
-  assert.ok(reducedMotion ? await audioScale() === 1 : await audioScale() > 1.15, 'Loud speech grows the orb');
-  assert.ok(await audioScale() <= 1.201, 'Loud speech stays inside the fixed desktop hit area');
-  onEngineMessage({ type: 'level', source: 'listening', level: 0 });
-  await new Promise(resolve => setTimeout(resolve, 700));
-  assert.ok(await audioScale() < 1.01, 'Silence returns the orb to its base size');
-  sendVoice({ state: 'speaking' });
-  onEngineMessage({ type: 'level', source: 'speaking', level: .8 });
-  await new Promise(resolve => setTimeout(resolve, 400));
-  assert.ok(reducedMotion ? await audioScale() === 1 : await audioScale() > 1.1, 'Playback also drives scale');
-  sendVoice({ state: 'idle' });
-  onEngineMessage({ type: 'level', source: 'speaking', level: 1 });
-  await new Promise(resolve => setTimeout(resolve, 700));
-  assert.ok(await audioScale() < 1.01, 'Late playback levels cannot animate an idle orb');
-  console.log('Audio reactive scale checks: passed');
-  sendVoice({ state: 'thinking', question: 'Test <script>unsafe</script>' }); updateVisibility(true);
+  await evaluate('document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))'); await wait();
+  assert.equal(panelWindow.isVisible(), false);
+  console.log('Single panel, audio variants and reduced motion: passed');
+  sendVoice({ state: 'thinking', question: 'Test <script>unsafe</script>' });
   const status = () => panelWindow.webContents.executeJavaScript(`(() => {
     const element = document.querySelector('#status');
     return { text: element.textContent, hidden: element.hidden, role: element.getAttribute('role') };
@@ -157,53 +130,7 @@ async function verifyDesktop(host) {
   sendVoice({ answer: 'Początek odpowiedzi…' });
   assert.equal((await status()).hidden, false, 'Partial answer does not hide generation feedback');
   sendVoice({ answer: '' });
-  assert.equal(orbWindow.isVisible(), true, 'Processing keeps the orb visible');
-  await orbWindow.webContents.executeJavaScript('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
-  const ring = () => orbWindow.webContents.executeJavaScript(`(() => {
-    const style = getComputedStyle(document.querySelector('button'), '::after');
-    return { content: style.content, animation: style.animationName, paused: style.animationPlayState,
-      direction: style.animationDirection, duration: style.animationDuration,
-      border: style.borderTopStyle, visibility: style.visibility };
-  })()`);
-  for (const waitingState of ['transcribing', 'thinking', 'preparing-speech']) {
-    sendVoice({ state: waitingState });
-    const waitingRing = await ring();
-    assert.equal(waitingRing.animation, reducedMotion ? 'none' : 'wait-spin');
-    assert.equal(waitingRing.border, 'solid');
-    assert.equal(waitingRing.visibility, 'visible');
-  }
-  host.paused = true; sendSettings();
-  assert.equal((await ring()).paused, 'paused');
-  host.paused = false; sendSettings();
-  orbWindow.webContents.debugger.attach('1.3');
-  try {
-    await orbWindow.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
-      features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }],
-    });
-    assert.equal((await ring()).animation, 'wait-spin');
-    for (const waitingState of ['transcribing', 'thinking', 'preparing-speech']) {
-      sendVoice({ state: waitingState });
-      const waitingRing = await ring();
-      assert.equal(waitingRing.direction, waitingState === 'transcribing' ? 'normal' : 'reverse');
-      assert.equal(waitingRing.duration, waitingState === 'transcribing' ? '1s' : '0.5s');
-    }
-    const rotation = () => orbWindow.webContents.executeJavaScript("getComputedStyle(document.querySelector('button'), '::after').transform");
-    const firstRotation = await rotation();
-    await new Promise(resolve => setTimeout(resolve, 100));
-    assert.notEqual(await rotation(), firstRotation, 'Waiting ring actually rotates');
-    await orbWindow.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', {
-      features: [{ name: 'prefers-reduced-motion', value: 'reduce' }],
-    });
-    assert.equal((await ring()).animation, 'none', 'Reduced motion stops the waiting ring');
-  } finally {
-    await orbWindow.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [] });
-    orbWindow.webContents.debugger.detach();
-  }
-  const waitingOutput = path.join(outputDirectory, 'electron-orb-waiting.png');
-  console.log('Voice state checks: passed');
-  await fs.writeFile(waitingOutput, (await orbWindow.webContents.capturePage()).toPNG());
-  sendVoice({ state: 'speaking', answer: 'Odpowiedź testowa.' }); updateVisibility(true);
-  assert.equal((await ring()).content, 'none', 'Playback removes the waiting ring');
+  sendVoice({ state: 'speaking', answer: 'Odpowiedź testowa.' });
   const panel = await panelWindow.webContents.executeJavaScript(`(() => ({
     status: document.querySelector('#status').textContent,
     question: document.querySelector('#question').textContent,
@@ -303,7 +230,7 @@ async function verifyDesktop(host) {
   assert.equal(imagePanel.width, 256); assert.equal(imagePanel.alt, 'Testowy kwadrat'); assert.ok(imagePanel.fits);
   assert.ok(imagePanel.icon && imagePanel.corner); assert.equal(imagePanel.size, 24); assert.equal(imagePanel.text, '');
   assert.match(imagePanel.label, /Zapisz obraz/); assert.match(imagePanel.background, /0\.75/);
-  assert.equal(await panelWindow.webContents.executeJavaScript("window.orbDesktop.imagePreview('../../.env')"), null);
+  assert.equal(await panelWindow.webContents.executeJavaScript("window.voiceDesktop.imagePreview('../../.env')"), null);
   const originalSaveDialog = dialog.showSaveDialog;
   const savedImage = path.join(profileDirectory, 'image-save-test.png');
   const clickSaveImage = () => panelWindow.webContents.executeJavaScript(`(async () => {
@@ -349,48 +276,24 @@ async function verifyDesktop(host) {
   sendVoice({ images: [] });
   console.log('Image preview and native save checks: passed');
   hidePanel();
-  sendVoice({ state: 'idle' }); updateVisibility(true);
+  sendVoice({ state: 'idle' });
   console.log('Conversation capture: passed');
   await new Promise(resolve => setTimeout(resolve, 300));
-  assert.equal(orbWindow.isVisible(), false, 'Orb disappears when playback finishes');
+  assert.equal(panelWindow.isVisible(), false);
   openPanel(false);
-  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerenter'))");
-  sendVoice({ state: 'idle' }); updateVisibility(true);
-  await new Promise(resolve => setTimeout(resolve, 300));
-  assert.equal(orbWindow.isVisible(), true, 'Hover keeps the orb visible after playback');
-  await panelWindow.webContents.executeJavaScript("document.documentElement.dispatchEvent(new PointerEvent('pointerenter'))");
-  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerleave'))");
-  updateVisibility(true);
-  await new Promise(resolve => setTimeout(resolve, 300));
-  assert.equal(orbWindow.isVisible(), true, 'Hovering the popup also keeps the orb visible');
-  await panelWindow.webContents.executeJavaScript("document.documentElement.dispatchEvent(new PointerEvent('pointerleave'))");
-  updateVisibility(true);
-  assert.equal(orbWindow.isVisible(), true, 'Crossing grace period preserves orb visibility');
-  await new Promise(resolve => setTimeout(resolve, 1100));
-  updateVisibility(true);
-  await new Promise(resolve => setTimeout(resolve, 300));
-  assert.equal(orbWindow.isVisible(), true, 'Departure alone keeps both surfaces visible');
+  overlay.hover('panel', true); overlay.hover('panel', false);
+  await wait(1100);
+  assert.equal(panelWindow.isVisible(), true, 'Departure alone keeps the panel visible');
   hidePanel();
-  updateVisibility(true);
-  await new Promise(resolve => setTimeout(resolve, 300));
-  assert.equal(orbWindow.isVisible(), false, 'Explicit dismissal hides both surfaces');
-  for (const activeState of ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking']) {
-    sendVoice({ state: activeState }); updateVisibility(true);
-    await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerenter')); document.querySelector('button').dispatchEvent(new PointerEvent('pointerleave'))");
-    await new Promise(resolve => setTimeout(resolve, 1400));
-    updateVisibility(true);
-    assert.equal(panelWindow.isVisible(), true, `${activeState}: departure preserves popup`);
-    assert.equal(orbWindow.isVisible(), true, `${activeState}: departure cannot hide active orb`);
+  sendVoice({ state: 'idle' });
+  for (const state of ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking']) {
+    sendVoice({ state }); await wait();
+    assert.equal(panelWindow.isVisible(), true, state + ': active panel stays visible');
   }
-  sendVoice({ state: 'idle' }); updateVisibility(true);
-  await new Promise(resolve => setTimeout(resolve, 300));
-  assert.equal(panelWindow.isVisible(), true, 'Completion retains popup briefly after playback');
-  await new Promise(resolve => setTimeout(resolve, 5100));
-  assert.equal(panelWindow.isVisible(), false, 'Completion hides popup after five seconds');
-  updateVisibility(true);
-  await new Promise(resolve => setTimeout(resolve, 300));
-  assert.equal(orbWindow.isVisible(), false, 'Completion hides orb after grace and exit animation');
-  console.log('Active voice departure checks: passed');
+  sendVoice({ state: 'idle' }); await wait(300);
+  assert.equal(panelWindow.isVisible(), true);
+  await wait(5100);
+  assert.equal(panelWindow.isVisible(), false, 'Completion hides the panel after five seconds');
   sendVoice({ state: 'error', ready: false, message: 'Sprawdź mikrofon.' });
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#retry').hidden"), false);
   sendVoice({ state: 'idle', ready: true, reset: true });
@@ -410,7 +313,7 @@ async function verifyDesktop(host) {
   for (const state of ['listening', 'transcribing', 'thinking']) {
     sendVoice({ state, question: '', answer: '' });
     await new Promise(resolve => setTimeout(resolve, 350));
-    const measured = await panelWindow.webContents.executeJavaScript('Math.ceil(document.querySelector("main").getBoundingClientRect().height)');
+    const measured = await panelWindow.webContents.executeJavaScript('Math.ceil(document.querySelector("main").getBoundingClientRect().height + document.querySelector("#panel-header").getBoundingClientRect().height)');
     assert.ok(Math.abs(panelWindow.getBounds().height - Math.max(64, measured + 2)) <= 2,
       `${state}: compact popup follows current content`);
     assert.ok(panelWindow.getBounds().height < previousAnswerHeight, `${state}: old answer leaves no empty space`);
@@ -418,53 +321,19 @@ async function verifyDesktop(host) {
   }
   sendVoice({ state: 'idle', question: 'Jak zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania i zacznij od jednego.' });
   await new Promise(resolve => setTimeout(resolve, 350));
-  host.testLiveVisibility = true;
-  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerenter'))");
-  orbWindow.webContents.sendInputEvent({ type: 'mouseMove', x: 32, y: 32 });
-  orbWindow.webContents.sendInputEvent({ type: 'mouseDown', x: 32, y: 32, button: 'left', clickCount: 1 });
-  orbWindow.webContents.sendInputEvent({ type: 'mouseUp', x: 32, y: 32, button: 'left', clickCount: 1 });
-  sendVoice({ state: 'speaking' });
-  assert.equal(await orbWindow.webContents.executeJavaScript("document.querySelector('button').hasAttribute('title')"), false, 'Orb has no native tooltip');
-  await new Promise(resolve => setTimeout(resolve, 80));
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), false);
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.activeElement.id"), 'message');
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.documentElement.scrollHeight <= innerHeight || document.documentElement.dataset.resizing === 'true'"), true, 'Expansion does not expose a scrollbar');
-  await new Promise(resolve => setTimeout(resolve, 250));
-  assert.ok(panelWindow.getBounds().height > peekHeight, 'Click expands the native popup');
-  assert.equal(await panelWindow.webContents.executeJavaScript('document.documentElement.scrollHeight <= innerHeight'), true, 'Short conversation and composer fit without scrolling');
-  assert.equal(panelWindow.isVisible(), true, 'Live voice snapshots do not dismiss the expanded popup');
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'compact');
-  await panelWindow.webContents.executeJavaScript("document.querySelector('#message').value = 'Zachowany szkic'");
-  orbWindow.webContents.sendInputEvent({ type: 'mouseDown', x: 32, y: 32, button: 'left', clickCount: 1 });
-  orbWindow.webContents.sendInputEvent({ type: 'mouseUp', x: 32, y: 32, button: 'left', clickCount: 1 });
-  await new Promise(resolve => setTimeout(resolve, 350));
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'chat', 'Second orb click exposes history');
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), false);
-  assert.ok(panelWindow.getBounds().height > peekHeight, 'Expanded writing keeps the composer available');
-  assert.equal(panelWindow.isVisible() && orbWindow.isVisible(), true, 'Collapse keeps both hovered surfaces visible');
-  await orbWindow.webContents.executeJavaScript("document.querySelector('button').click()");
-  await new Promise(resolve => setTimeout(resolve, 350));
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'compact', 'Keyboard activation returns to compact writing');
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#message').value"), 'Zachowany szkic', 'Toggle preserves the draft');
+  onEngineMessage({ type: 'ui', action: 'compose' });
+  await wait(350);
+  assert.equal(await evaluate('document.body.dataset.mode'), 'compact');
+  assert.equal(await evaluate('document.querySelector("#composer").hidden'), false);
+  onEngineMessage({ type: 'ui', action: 'compose' });
+  await wait(350);
+  assert.equal(await evaluate('document.body.dataset.mode'), 'chat');
+  const pointerBounds = panelWindow.getBounds();
   host.testNativePointer = true;
-  const hoveredPanel = panelWindow.getBounds();
-  samplePointer({ x: hoveredPanel.x + 20, y: hoveredPanel.y + hoveredPanel.height - 20 });
-  overlay.hover('orb', false);
-  for (const nextState of ['listening', 'transcribing', 'thinking', 'speaking', 'idle']) {
-    sendVoice({ state: nextState, ...(nextState === 'listening' ? { question: '', answer: '' } : {}) });
-    await new Promise(resolve => setTimeout(resolve, 100));
-    samplePointer({ x: hoveredPanel.x + 20, y: hoveredPanel.y + hoveredPanel.height - 20 });
-  }
-  await new Promise(resolve => setTimeout(resolve, 1100));
-  assert.equal(orbWindow.isVisible(), true, 'Native pointer keeps orb visible across a second question');
-  assert.equal(panelWindow.isVisible(), true, 'Second voice cycle preserves popup');
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), false);
+  samplePointer({ x: pointerBounds.x + 10, y: pointerBounds.y + 10 });
+  samplePointer({ x: pointerBounds.x - 10, y: pointerBounds.y - 10 });
   host.testNativePointer = false;
   overlay.hover('panel', false);
-  openPanel();
-  sendVoice({ question: 'Jak zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania i zacznij od jednego.' });
-  host.testLiveVisibility = false;
-  await orbWindow.webContents.executeJavaScript("document.querySelector('button').dispatchEvent(new PointerEvent('pointerleave'))");
   sendVoice({ state: 'idle' });
   const commands = [];
   console.log('Conversation mode checks: passed');
@@ -520,37 +389,32 @@ async function verifyDesktop(host) {
   commands.length = 0;
   console.log('Previous conversation undo checks: passed');
   sendVoice({ question: 'Jak zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania i zacznij od jednego.' });
-  host.testLiveVisibility = true;
   sendVoice({ state: 'speaking' });
   sendVoice({ state: 'idle' });
   hidePanel();
   onEngineMessage({ type: 'ui', action: 'compose' });
   await new Promise(resolve => setTimeout(resolve, 350));
-  assert.equal(orbWindow.isVisible(), true, 'Copilot tap shows the idle orb');
   assert.equal(panelWindow.isVisible(), true, 'Copilot tap opens the popup');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'compose');
   assert.equal(await panelWindow.webContents.executeJavaScript("getComputedStyle(document.querySelector('main')).display"), 'none', 'Input-only mode hides the old conversation');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), false);
   assert.equal(await panelWindow.webContents.executeJavaScript("document.activeElement.id"), 'message');
-  assert.ok(panelWindow.getBounds().height <= 72, 'Input-only popup stays compact; pin occupies no layout space');
+  assert.ok(panelWindow.getBounds().height <= 106, 'Input-only popup includes its compact header');
   assert.equal(await panelWindow.webContents.executeJavaScript('document.documentElement.scrollHeight <= innerHeight'), true);
   await fs.writeFile(path.join(outputDirectory, 'electron-conversation-compose.png'), (await panelWindow.webContents.capturePage()).toPNG());
-  overlay.hover('orb', false);
   overlay.hover('panel', true);
   overlay.hover('panel', false);
   await new Promise(resolve => setTimeout(resolve, 2300));
   assert.equal(await panelWindow.webContents.executeJavaScript("document.hasFocus() && document.activeElement.id === 'message'"), true);
-  assert.equal(panelWindow.isVisible() && orbWindow.isVisible(), true, 'Focused typing survives interrupted playback completion and pointer departure');
-  panelWindow.blur();
+  assert.equal(panelWindow.isVisible(), true, 'Focused typing survives interrupted playback completion and pointer departure');
+  await panelWindow.webContents.executeJavaScript("document.querySelector('#message').blur()");
   await new Promise(resolve => setTimeout(resolve, 50));
-  assert.equal(panelWindow.isFocused(), false, 'Native popup releases keyboard focus');
-  assert.equal(await panelWindow.webContents.executeJavaScript('document.hasFocus()'), false, 'Renderer observes native blur');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.activeElement.id === 'message'"), false, 'Leaving the composer releases typing protection');
   await new Promise(resolve => setTimeout(resolve, 1600));
-  assert.equal(panelWindow.isVisible() && orbWindow.isVisible(), true, 'Window blur alone does not hide surfaces');
+  assert.equal(panelWindow.isVisible(), true, 'Leaving the composer alone does not hide the panel');
   hidePanel();
   overlay.compose();
   await new Promise(resolve => setTimeout(resolve, 350));
-  host.testLiveVisibility = false;
   console.log('Copilot input-only mode checks: passed');
   await panelWindow.webContents.executeJavaScript("document.querySelector('#pin').click()");
   await new Promise(resolve => setTimeout(resolve, 50));
@@ -559,35 +423,32 @@ async function verifyDesktop(host) {
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#pin').getAttribute('aria-label')"), 'Odepnij popup');
   assert.equal(await panelWindow.webContents.executeJavaScript("getComputedStyle(document.querySelector('#pin')).position"), 'fixed');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#pin svg') !== null"), true);
-  overlay.hover('orb', false);
   overlay.hover('panel', true);
   overlay.hover('panel', false);
-  orbWindow.focus();
+  panelWindow.blur();
   await new Promise(resolve => setTimeout(resolve, 1100));
   assert.equal(panelWindow.isVisible(), true, 'Pin preserves popup after blur and departure');
   await panelWindow.webContents.executeJavaScript("document.querySelector('#pin').click()");
   await new Promise(resolve => setTimeout(resolve, 1100));
-  assert.equal(panelWindow.isVisible(), true, 'Unpin alone does not hide surfaces');
+  assert.equal(panelWindow.isVisible(), true, 'Unpin alone does not hide the panel');
   hidePanel();
   overlay.compose();
   await new Promise(resolve => setTimeout(resolve, 350));
   console.log('Popup pin checks: passed');
-  host.testLiveVisibility = true;
-  for (const window of [orbWindow, panelWindow]) {
+  for (const window of [panelWindow]) {
     overlay.open(); overlay.togglePin();
     await new Promise(resolve => setTimeout(resolve, 350));
-    assert.equal(panelWindow.isVisible() && orbWindow.isVisible(), true);
+    assert.equal(panelWindow.isVisible(), true);
     window.close();
     await new Promise(resolve => setTimeout(resolve, 350));
-    assert.equal(orbWindow.isDestroyed() || panelWindow.isDestroyed(), false, 'Native close must preserve both windows');
-    assert.equal(orbWindow.isVisible() || panelWindow.isVisible(), false, 'Native close dismisses both pinned surfaces');
-    assert.deepEqual(overlay.snapshot(), { mode: 'hidden', pinned: false, orbVisible: false });
+    assert.equal(panelWindow.isDestroyed(), false, 'Native close must preserve the panel');
+    assert.equal(panelWindow.isVisible(), false, 'Native close dismisses the pinned panel');
+    assert.deepEqual(overlay.snapshot(), { mode: 'hidden', pinned: false });
   }
   overlay.compose();
   await new Promise(resolve => setTimeout(resolve, 350));
-  assert.equal(panelWindow.isVisible() && orbWindow.isVisible(), true, 'Dismissed windows can reopen');
-  host.testLiveVisibility = false;
-  console.log('Paired native close checks: passed');
+  assert.equal(panelWindow.isVisible(), true, 'Dismissed windows can reopen');
+  console.log('Panel native close checks: passed');
   const fill = text => panelWindow.webContents.executeJavaScript(`(() => {
     const input = document.querySelector('#message');
     input.value = ${JSON.stringify(text)};
@@ -599,6 +460,18 @@ async function verifyDesktop(host) {
   assert.equal(commands.length, 0, 'Blank messages are not sent');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#send') === null"), true);
   await fill('Kontynuuj rozmowę');
+  const beforeVariantSwitch = structuredClone(host.voice);
+  const beforeVariantOverlay = overlay.snapshot();
+  for (const [index, variant] of ['bars', 'orb', 'glow', 'waves'].entries()) {
+    menu().items.find(item => item.label === 'Efekty wizualne').submenu.items.filter(item => item.type === 'radio')[index].click();
+    await wait();
+    assert.equal(await evaluate('document.querySelector("#audio-indicator").dataset.variant'), variant);
+    assert.equal(await evaluate('document.querySelector("#message").value'), 'Kontynuuj rozmowę');
+    assert.equal(await evaluate('document.activeElement.id'), 'message');
+    assert.deepEqual(host.voice, beforeVariantSwitch);
+    assert.deepEqual(overlay.snapshot(), beforeVariantOverlay);
+  }
+  host.indicator = 'bars'; sendSettings();
   await panelWindow.webContents.executeJavaScript("document.querySelector('#message').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true }))");
   assert.equal(commands.length, 0, 'IME confirmation does not submit');
   await panelWindow.webContents.executeJavaScript("document.querySelector('#message').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' })); document.querySelector('#composer').requestSubmit()");
@@ -611,7 +484,7 @@ async function verifyDesktop(host) {
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#status').textContent"), 'Codex przygotowuje odpowiedź…');
   assert.equal(host.voice.history.at(-1).question, 'Jak zaplanować dzień?', 'Previous exchange is retained');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#message').value"), '');
-  await panelWindow.webContents.executeJavaScript("window.orbDesktop.command('cancel')");
+  await panelWindow.webContents.executeJavaScript("window.voiceDesktop.command('cancel')");
   await new Promise(resolve => setTimeout(resolve, 50));
   assert.equal(commands.at(-1).command, 'cancel');
   host.engine = undefined;
@@ -727,16 +600,10 @@ async function verifyDesktop(host) {
   hidePanel();
   sendVoice({ state: 'idle', ready: true });
   console.log('Copilot draft, correction and unavailable-state checks: passed');
-  orbWindow.showInactive();
-  orbWindow.webContents.send('orb:presence', 'visible');
-  await new Promise(resolve => setTimeout(resolve, 150));
-  const output = path.join(outputDirectory, 'electron-orb.png');
-  await fs.mkdir(path.dirname(output), { recursive: true });
-  await fs.writeFile(output, (await orbWindow.webContents.capturePage()).toPNG());
   openPanel();
   await require('./history-scale.cjs').verifyHistoryScale({ panelWindow, outputDirectory, imageId });
-  console.log(JSON.stringify({ result: 'passed', ...initial, profile: profileDirectory,
-    cache: sessionDirectory, bounds: orbWindow.getBounds(), screenshot: output }));
+  console.log(JSON.stringify({ result: 'passed', profile: profileDirectory,
+    cache: sessionDirectory, bounds: panelWindow.getBounds(), captures: outputDirectory }));
 }
 
 module.exports = { verifyDesktop };

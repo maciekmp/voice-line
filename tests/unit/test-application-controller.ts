@@ -116,7 +116,7 @@ test('desktop correction interrupts at key-down and reports correction instead o
   response.resolve(f.reply); await work;
 });
 
-test('orb tap interrupts playback without recording and preserves received text', async t => {
+test('tap interrupts playback without recording and preserves received text', async t => {
   const f = fixture(true); t.after(() => f.controller.shutdown()); await f.controller.start();
   const response = deferred<VoiceReply>(); let callbacks!: VoiceCallbacks;
   f.engine.respondAudio = async (_wav, _signal, updates = {}) => { callbacks = updates; return response.promise; };

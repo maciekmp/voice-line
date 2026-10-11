@@ -6,13 +6,13 @@ Configuration uses `VOICE`, `TTS_RATE` and `APP_DATA_DIR`. The default data root
 is `%LOCALAPPDATA%\VoiceLine`; project previews and diagnostics use `.app-data/`.
 Previous prototype settings and data paths are not read or migrated.
 
-Hold the Copilot key to record. Release it to transcribe locally with whisper.cpp, then send the transcript to Codex app-server. A single Codex turn cleans the question and generates an answer in a persistent conversation. Hear the reply through Windows SAPI or local Piper TTS. Press the key again while the reply is playing to interrupt it. `npm start` runs the voice loop together with an Electron conversation panel and desktop orb, using the signed-in Codex account without an `OPENAI_API_KEY`. `npm run start:cli` runs the terminal-only voice loop with the same default app-server backend. The assistant is currently instructed to clean questions and answer in Polish.
+Hold the Copilot key to record. Release it to transcribe locally with whisper.cpp, then send the transcript to Codex app-server. A single Codex turn cleans the question and generates an answer in a persistent conversation. Hear the reply through Windows SAPI or local Piper TTS. Press the key again while the reply is playing to interrupt it. `npm start` runs the voice loop together with an Electron conversation panel, using the signed-in Codex account without an `OPENAI_API_KEY`. `npm run start:cli` runs the terminal-only voice loop with the same default app-server backend. The assistant is currently instructed to clean questions and answer in Polish.
 
 ## Requirements
 
 The default `VOICE_MODE=local` uses the ChatGPT subscription. An optional experimental `VOICE_MODE=realtime` sends microphone audio directly to Codex app-server and plays its streamed audio reply. See **Codex realtime audio** below for its separate API-key requirements.
 
-The orb displays **LOCAL** for local Whisper/TTS or **API** for Codex realtime. The engine is selected once at startup from `.env`; restart the application after changing `VOICE_MODE`. LOCAL refers to speech processing, while Codex still generates the answer. Each mode retains its own conversation history and authentication configuration.
+The panel header displays **LOCAL** for local Whisper/TTS or **API** for Codex realtime. The engine is selected once at startup from `.env`; restart the application after changing `VOICE_MODE`. LOCAL refers to speech processing, while Codex still generates the answer. Each mode retains its own conversation history and authentication configuration.
 
 Voice orchestration lives in `src/voice/local-engine.ts` and `src/voice/realtime-engine.ts`, behind the contract in `src/voice-engine.ts`. `src/voice/create-engine.ts` constructs and validates the selected services. `src/main.ts` handles the microphone, gestures, conversation controls and UI events through that shared contract. `npm test -- test-voice-engine.ts` checks stage ordering, cancellation, partial transcripts, lifecycle and startup selection without inference requests.
 
@@ -86,7 +86,7 @@ Expired image links and PNGs without another retained reference are also removed
 Deletion is limited to IDs in the private home's `history-index.json`; it never
 lists or deletes standard Codex/VS Code history.
 
-Use **Zapisz rozmowę…** in the tray/orb context menu to keep the selected conversation
+Use **Zapisz rozmowę…** in the tray menu to keep the selected conversation
 as a Markdown file. The export embeds generated PNGs and survives automatic cleanup;
 some Markdown viewers do not render embedded data-URL images. It is a readable export,
 not an importable Codex session. Saving is unavailable while a response is running.
@@ -189,21 +189,13 @@ FFplay process exits, and uses a dummy audio device without microphone or Codex 
 
 To compare Whisper CPU thread counts on exactly the same speech, add `SAVE_AUDIO=1` to `.env`, record one question, and use the printed WAV path with `npm run bench:stt -- "C:\path\to\recording.wav"`. The script loads the configured model with 4 and 8 threads and transcribes the WAV twice per setting. Compare the second run and its text; model loading is shown separately. Set `WHISPER_THREADS` in `.env` to the faster value, then remove `SAVE_AUDIO=1` when finished. Results vary with the machine, audio length, and system load; `.env.example` leaves the thread count unset.
 
-## Blue orb visual prototype
+## Desktop panel (Electron)
 
-Run `npm run preview:web` and open http://127.0.0.1:4173 to preview a ChatGPT-inspired blue orb. The Polish demo switches between idle, listening, and speaking animations and includes a pause control. It is a standalone visual simulation with no microphone or voice-loop connection, no new dependencies, and reduced-motion support.
 
-Import `preview/voice-orb.js` as a browser module (keep `orb-renderer.js` beside it) and use `<voice-orb state="idle"></voice-orb>`. Set `state` to `idle`, `listening`, or `speaking`, add `paused` to freeze the animation, and customize size with `--orb-size`. WebGL renders flowing blue and white clouds using domain-warped noise, with simulated speech activity and smooth state changes. Reduced motion renders a still frame; unsupported WebGL or context loss displays a static CSS fallback. Animation stops while hidden or offscreen and GPU resources are released when the component is removed.
 
-The orb defaults to 45 CSS px with a 9 × 9 drawing buffer, independent of screen pixel density; the browser scales the interior smoothly. Set `render-scale="0.5"` or `render-scale="1"` for more detail (accepted range 0.1–1, default 0.2, maximum buffer size 256 × 256). Color transitions have asymmetric, varying widths, and speaking gradually blends them into wider flowing currents; activity is still simulated.
+`npm start` starts the real voice services with the panel hidden.
 
-Only the orb's color field is rendered at reduced resolution. The circular edge is clipped by CSS at the full display resolution, so lowering `render-scale` softens the interior without pixelating the outline.
-
-### Desktop orb (Electron)
-
-`npm start` starts the real voice services with both desktop surfaces hidden.
-
-The desktop orb and popup always appear and disappear together. A short Copilot
+The popup is the only desktop window. A short Copilot
 press from hidden opens only the focused text input. A second tap opens history;
 subsequent taps alternate history with the latest exchange and input. A voice
 view shows the latest exchange without input; tapping adds input, and another
@@ -215,13 +207,12 @@ and opens correction without also toggling views. Once playback has started,
 LOCAL keeps its full answer and API saves the received fragment marked interrupted.
 A tap then clears the draft and allows continuing by text. Holding at least 250 ms
 selects voice recording while preserving an unsent draft; release submits it.
-Audio is captured from key-down and discarded for taps. Orb clicks perform the
-same action as a tap without recording. CLI retains its existing press-to-record flow.
+Audio is captured from key-down and discarded for taps. CLI retains its existing press-to-record flow.
 
-Escape hides both surfaces without stopping work and preserves the draft; updates
-from the same operation do not reopen them. Hover cannot open hidden surfaces.
-After completion/interruption, a five-second timer hides both unless hover, input
-focus or pin protects them at expiry. If protected then, they remain until explicit
+Escape hides the panel without stopping work and preserves the draft; updates
+from the same operation do not reopen it. Hover cannot open the hidden panel.
+After completion/interruption, a five-second timer hides the panel unless hover, input
+focus or pin protects it at expiry. If protected then, it remains until explicit
 dismissal or another operation. Departure, blur and unpin never start another timer.
 Errors stay visible until dismissal or another action. During startup/service failure,
 Copilot displays status and allows drafting, but recording and sending are unavailable.
@@ -232,7 +223,7 @@ including LOCAL voice questions and typed questions in either voice mode. The
 assistant checks current information and includes source links in its answer.
 This does not require a separate search API key. Native realtime audio sessions
 retain their existing tool-free prompt; use LOCAL or a typed question for web research.
-The tray opens history with a text composer; orb clicks follow the tap flow: Enter sends,
+The tray opens history with a text composer. Enter sends,
 Shift+Enter adds a newline. Typed questions continue the same Codex conversation
 and receive a text reply without speech playback. The composer has no send or cancel button.
 Recording uses Copilot; **Nowa rozmowa** remains in the tray menu.
@@ -245,98 +236,38 @@ While the voice application runs, its keyboard hook consumes the configured
 `COPILOT_VK` press and release, preventing the corresponding Windows action.
 Other keys pass through. Exiting releases the hook, including after an unexpected
 Node process exit. `npm run diagnose:keys` starts only a passive keyboard observer and does not suppress keys;
-the isolated orb preview does not install a keyboard hook.
-Closing the panel hides both surfaces without stopping services; **Zakończ** in the tray
+the isolated desktop preview does not install a keyboard hook.
+Closing the panel hides the panel without stopping services; **Zakończ** in the tray
 menu quits and shuts down the microphone, keyboard hook and voice workers.
 The microphone remains active between questions, as in terminal mode; only
 question recording retains samples. Conversation text is held in memory in the
 main process and renderers for display; the session file contains only metadata,
 while Codex retains its own history.
 
-The following `npm run preview:desktop` mode remains an isolated animation preview:
+### Audio feedback and preview
 
-Run `npm run preview:desktop` to show the 45 px orb in a transparent, frameless, always-on-top window, 20 px from the bottom-right corner of the primary display's work area (above the taskbar). Its position updates when monitor/work-area settings change. The window does not take keyboard focus or appear in the taskbar.
+The popup is anchored 20 px from the right and bottom edges of the primary display's work area. It grows upward, with a width of 380 px and maximum height of 500 px, constrained to the available work area. Monitor changes reposition the panel. Automatic voice activity shows it without taking keyboard focus.
 
-Right-click the orb or its system-tray icon to choose a test state, pause animation, or select **Zakończ** to exit. This remains a separate visual prototype; it is not connected to the Copilot recording/TTS loop. It loads local files and shares the same `voice-orb` component with the browser preview. The renderer is sandboxed with Node integration disabled and a narrow IPC bridge for visual settings.
+The fixed header contains LOCAL/API and the existing pin/previous-conversation controls. The tray's **Efekty wizualne** submenu lists **Słupki**, **Mini orb** (24 px), **Podświetlenie** (a blue edge glow) and **Fale** (the orb's flowing clouds over the bottom of the panel). Selection takes effect immediately and is saved automatically, without changing the conversation, draft, focus or visibility. The next launch restores it; bars are the default when no valid saved choice exists.
 
-The desktop orb fades/slides in over 380 ms. Its scale follows measured microphone levels while listening and measured synthesized audio levels during playback. Color mixing remains a visual animation; the browser preview uses simulated breathing pulses. **Zakończ** fades/slides the orb out over 240 ms before quitting; a timeout still allows quitting if the renderer stops responding. Reduced-motion settings disable these animations, and the pause control freezes the color animation. Restart the desktop app or preview after changing the desktop files.
+The application saves the choice atomically in `desktop-settings.json` under its data root (normally `%LOCALAPPDATA%\VoiceLine`, or `APP_DATA_DIR`). Preview uses `.app-data/desktop-preview-settings.json` independently. A save failure leaves the effect active for the current session and displays an error; the previously saved choice remains intact. Pausing animation remains a session-only option.
 
-`npm run test:desktop` checks positioning, transparency, WebGL, state/pause IPC, audio-reactive scale, conversation snapshots and restoration, safe text rendering, code copying, pinning, error recovery labels, reset, keyboard focus, narrow layout, and orb visibility through a simulated voice cycle. It runs without microphone or Codex calls. It opens native windows and tests clipboard IPC with a mocked write sink; it does not change the system clipboard. Run it explicitly when the desktop is available.
+Indicators react to measured microphone or playback levels only during listening and speaking. State transitions and hiding reset the level. **Wstrzymaj animację** and reduced-motion preferences make feedback static. Hidden panels stop animation; changing away from the mini orb releases its GPU resources. Unsupported WebGL or context loss uses a static CSS fallback. The LOCAL/API label is hidden until the engine reports its mode.
 
-The desktop orb has its own profile and Chromium cache in `%LOCALAPPDATA%\VoiceLine\electron\desktop` (cache under `session/`). The desktop preview uses the ignored project-local `.app-data/electron/preview` directory. Desktop tests use temporary app data and a separate Chromium profile, so they can run while the desktop orb is open. Paths are configured before Electron starts Chromium. Test captures are retained under `.app-data/test-results/desktop-<id>/`; temporary profiles and data are removed after the run.
+Microphone capture requests a 40 ms DirectShow buffer and flushes PCM packets immediately. Recording uses 20 ms RMS windows and preserves syllable peaks within incoming pipe chunks. Quiet microphone levels receive visual gain, with an immediate attack and a 50 ms release time constant shared by all indicators; the orb and waves do not smooth the envelope a second time. Recorded PCM is unchanged. Playback metering retains its 40 ms windows. Restart the application after changing capture settings.
 
-## Image generation
+Run `npm run preview:desktop` to open the panel without voice services or a keyboard hook. The tray provides **Stan podglądu** and **Poziom audio (podgląd)** controls for comparing all four variants. Audio levels are simulated only in preview. Use **Zakończ** to quit; shutdown does not wait for a renderer animation. The standalone web preview has been removed.
 
-Type `/image kot w kosmosie` or say **„Wygeneruj obraz kota w kosmosie”**.
-In LOCAL mode, Codex can choose its built-in ImageGen from a natural-language
-request, such as "Chciałbym ilustrację kota w kosmosie. Stwórz ją dla mnie."
-This works for typed messages and Whisper transcripts, with both app-server and
-CLI backends. `/image` remains an explicit command. Automatic selection uses
-`CODEX_MODEL` or the Codex configuration, so that model must support ImageGen;
-`CODEX_IMAGE_MODEL` selects the model only for explicit generation commands.
-In API mode, explicit generation phrases still route requests using the existing
-text rule. Questions about images remain text/audio requests. Each request generates one PNG and shows
-it in the conversation with a **Zapisz obraz** button and a native save dialog.
+`npm run test:desktop` checks the single window, positioning, all audio variants, reduced motion, pause, visibility, snapshots, restoration, safe text rendering, copying, images, export, pinning, errors, drafting and native close. It runs without microphone or Codex calls and mocks clipboard writes. Captures are retained under `.app-data/test-results/desktop-<id>/`.
 
-Generation uses Codex's built-in ImageGen. Explicit generation uses
-`CODEX_IMAGE_MODEL=gpt-6.1-sol` by default; automatic LOCAL generation uses the
-normal conversation model. It uses the existing Codex ChatGPT login.
-In the tested Codex 0.161.0, API-key sessions do not expose the built-in tool
-even though provider capabilities advertise image generation. API mode therefore
-keeps API audio and generates images in a separate ChatGPT-authenticated Codex
-task. No separate Images API fallback is used. Account limits still apply.
+The desktop profile and Chromium cache live under `%LOCALAPPDATA%\VoiceLine\electron\desktop` (cache under `session/`). Preview uses `.app-data/electron/preview`. Tests use disposable isolated profiles, so they can run alongside a production instance.
 
-On a final voice transcription requesting an image, realtime audio stops and the
-image task starts. API mode shows the resulting confirmation as text; it does
-not synthesize another audio response for this task. Image generation is not
-streamed as voice. Editing existing images is not implemented.
-
-PNGs are kept in the app data root's `images/` directory. App-owned JSON retains
-ImageGen questions and answers; API conversations retain task IDs and positions in `image-links/`,
-so images can be restored with their conversation. The ImageGen worker has its
-own storage directory and `session.json`, with ephemeral Codex threads. New conversation clears the displayed images;
-the 24-hour retention policy cleans up old threads and unused artifacts. Follow-up
-voice/text requests receive image tasks' textual context without image pixels.
-Restart the app after updating the desktop files.
-
-`npm test -- test-images.ts` checks routing, wire results, artifact validation,
-metadata-only links, history restoration and voice cancellation.
-`npm run test:desktop` exercises actual previews, unavailable images and native saving.
-
-## Tests and type checking
-
-Run the default development check after installing dependencies:
-
-```powershell
-npm.cmd run check
-```
-
-`check` runs strict TypeScript checking followed by `npm test`. `npm test`
-runs 12 unit test files, including tooling checks, without starting voice services,
-native UI, keyboard hooks or inference. Each test run gets temporary
-`APP_DATA_DIR`, `CODEX_HOME` and `CODEX_SQLITE_HOME` directories.
-The runner does not load `.env`, removes inherited API credentials and cleans up
-its temporary data. Tests needing simulated authentication create their own dummy key.
-
-| Command | Scope and requirements |
-| --- | --- |
-| `check` | Typecheck plus unit tests; the default development and CI check. |
-| `test` | Unit tests using mocks and temporary fixtures; no external executables or inference. |
-| `test:integration` | Mock PowerShell speaker worker, installed Codex storage protocol, and simulated realtime provider with FFplay. Requires Windows PowerShell, Codex and FFplay; no paid inference. |
-| `test:desktop` | Real Electron windows, rendering and IPC with mocked clipboard writes and save dialogs; requires an interactive desktop. |
-| `test:keyboard` | Real Windows keyboard hooks and injected F24/F22 events; run explicitly on an interactive desktop. |
-| `typecheck` | Strict TypeScript checking in `src/`, `scripts/` and `tests/`, plus checkJs for desktop adapters, preload and conversation/answer/image/history renderers; emits no JavaScript. |
-
-`.github/workflows/check.yml` runs `npm ci` and `check` on Windows with Node
-22.18.0 for pushes and pull requests, and supports manual dispatch. It skips the
-Electron runtime download because this job checks types and isolated unit tests;
-native desktop/keyboard, integration and live inference remain explicit commands.
 The installation and check sequence has also passed in a fresh local Windows copy.
 
 Unit and integration files live in `tests/unit/` and `tests/integration/`;
 the keyboard test is in `tests/native/`, with support code in `tests/helpers/`.
 The Electron smoke lives in `tests/native/desktop-smoke.cjs`. The runner starts
-the production host `electron/orb-main.cjs` with `--smoke-test`, which passes its
+the production host `electron/desktop-main.cjs` with `--smoke-test`, which passes its
 windows and native adapters to the harness. The smoke also measures the production
 history renderer against the captured earlier algorithm at 100, 1000 and 3000
 exchanges, and saves `history-scale.json` beside the screenshots. Timing values
@@ -401,7 +332,6 @@ renderers. Orb component and preview JavaScript remain outside that gradual migr
 | `start:cli` | Terminal voice application. |
 | `start:debug` | Desktop application with service and overlay diagnostics. |
 | `preview:desktop` | Electron visual preview with sample conversation; no voice services. |
-| `preview:web` | Browser visual preview at localhost:4173. |
 | `diagnose:keys` | Passive keyboard-only observer; no microphone, STT or Codex startup. |
 | `diagnose:devices` | List DirectShow devices using configured FFmpeg. |
 | `bench:stt` | Compare local Whisper timings for a supplied WAV. |

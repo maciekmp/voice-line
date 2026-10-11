@@ -13,13 +13,13 @@ function setup(options = {}) {
   const updates = [];
   let retries = 0;
   const host = {
-    orbWindow: window(), panelWindow: window(), exitStarted: false,
+    panelWindow: window(), exitStarted: false,
     voice: { ready: true, state: 'idle', canRestorePrevious: true },
     engine: { connected: true, send: message => sent.push(message) },
     sendVoice: update => updates.push(update),
     engineSupervisor: { restart() { retries++; } },
     overlay: { intent() {}, compose() {}, open() {}, togglePin() {}, toggle() {}, hover() {}, snapshot: () => ({ pinned: false }) },
-    openPanel() {}, hidePanel() {}, finishExit() {},
+    openPanel() {}, hidePanel() {}, sendSettings() {},
     panelMode: 'chat', panelHeight: 100, panelHeights: { chat: 100 },
     PANEL_MAX_HEIGHT: 500, positionPanel() {},
     ...options,
@@ -36,7 +36,7 @@ test('composer focus accepts only boolean reports from the live conversation ren
   ipc.emit('voice:composer-focus', event(), true);
   ipc.emit('voice:composer-focus', event(), false);
   ipc.emit('voice:composer-focus', event(), 'true');
-  ipc.emit('voice:composer-focus', { sender: host.orbWindow.webContents }, true);
+  ipc.emit('voice:composer-focus', { sender: {} }, true);
   ipc.emit('voice:composer-focus', { sender: {} }, true);
   host.panelWindow.isDestroyed = () => true;
   ipc.emit('voice:composer-focus', event(), true);
@@ -46,17 +46,16 @@ test('composer focus accepts only boolean reports from the live conversation ren
   assert.deepEqual(reports, [true, false]);
 });
 
-test('orb activation sends a tap to the worker without recording and falls back to drafting when disconnected', () => {
-  const { ipc, host, sent } = setup(); let compose = 0;
-  host.overlay.compose = () => compose++;
-  const event = { sender: host.orbWindow.webContents };
-  ipc.emit('voice:open', event);
-  assert.deepEqual(sent, [{ command: 'tap' }]);
-  host.engine.connected = false;
-  ipc.emit('voice:open', event);
-  assert.equal(compose, 1);
+test('only the live panel can open the conversation or receive initial settings', () => {
+  let opened = 0, settings = 0;
+  const { ipc, event, updates } = setup({ openPanel: () => opened++, sendSettings: () => settings++ });
   ipc.emit('voice:open', { sender: {} });
-  assert.equal(compose, 1);
+  ipc.emit('voice:open', event());
+  assert.equal(opened, 1);
+  ipc.emit('voice:ready', { sender: {} });
+  assert.equal(settings, 0);
+  ipc.emit('voice:ready', event());
+  assert.equal(settings, 1); assert.equal(updates.length, 1);
 });
 
 test('desktop text boundary validates sender, readiness, size and worker connectivity', () => {
@@ -132,7 +131,7 @@ test('IPC disposal removes only the registered listeners and invocation handlers
   dispose();
   dispose();
   assert.deepEqual(ipc.listeners('voice:command'), [unrelated]);
-  assert.equal(ipc.listenerCount('orb:ready'), 0);
+  assert.equal(ipc.listenerCount('voice:ready'), 0);
   assert.equal(handlers.size, 0);
 });
 

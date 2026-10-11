@@ -34,10 +34,10 @@ export class Recorder {
   private readonly inputArgs: string[];
   private readonly binary: string;
   onLevel?: (level: number) => void;
-  private levels = new AudioLevels(16000);
+  private levels = new AudioLevels(16000, 20);
   constructor(device: string, directory: string, inputArgs?: string[], binary = loadRecorderConfig().ffmpeg) {
     this.directory = directory;
-    this.inputArgs = inputArgs ?? ['-f', 'dshow', '-i', `audio=${device}`];
+    this.inputArgs = inputArgs ?? ['-f', 'dshow', '-audio_buffer_size', '40', '-i', `audio=${device}`];
     this.binary = binary;
   }
 
@@ -45,9 +45,11 @@ export class Recorder {
   get lastRmsDbfs(): number { return this.audioRmsDbfs; }
   get lastPeakDbfs(): number { return this.audioPeakDbfs; }
 
+  protected launchCapture(args: string[]): ReturnType<typeof launch> { return launch(this.binary, args); }
+
   startCapture(): Promise<void> {
     if (this.ready) return this.ready;
-    const child = launch(this.binary, ['-hide_banner', '-loglevel', 'error', ...this.inputArgs, '-ac', '1', '-ar', '16000', '-f', 's16le', 'pipe:1']);
+    const child = this.launchCapture(['-hide_banner', '-loglevel', 'error', ...this.inputArgs, '-ac', '1', '-ar', '16000', '-f', 's16le', '-flush_packets', '1', 'pipe:1']);
     this.capture = child;
     this.error = '';
     this.ready = new Promise((resolve, reject) => {
@@ -64,7 +66,9 @@ export class Recorder {
         if (!settled) { settled = true; clearTimeout(timer); resolve(); }
         if (this.chunks) {
           this.chunks.push(Buffer.from(chunk));
-          for (const level of this.levels.push(chunk)) this.onLevel?.(level);
+          // Preserve brief syllable peaks when one pipe chunk contains several windows.
+          const levels = this.levels.push(chunk);
+          if (levels.length) this.onLevel?.(Math.max(...levels));
         }
       });
       child.stderr.setEncoding('utf8').on('data', chunk => this.error = (this.error + chunk).slice(-2000));
@@ -77,7 +81,7 @@ export class Recorder {
   start(): void {
     if (this.chunks) return;
     this.chunks = [];
-    this.levels = new AudioLevels(16000);
+    this.levels = new AudioLevels(16000, 20);
     if (!this.capture) void this.startCapture().catch(() => {});
   }
 

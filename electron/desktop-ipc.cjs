@@ -6,7 +6,7 @@ const { parseDesktopRequest } = require('../src/desktop-validation.cjs');
 // Window and worker getters stay current across shutdown and worker restarts.
 function registerDesktopIpc(ipcMain, host) {
   const { clipboard, dialog, overlay, openPanel, hidePanel, positionPanel, sendVoice,
-    finishExit, imageDirectory, panelHeights, PANEL_MAX_HEIGHT, smokeTest, preview, engineSupervisor } = host;
+    sendSettings, imageDirectory, panelHeights, PANEL_MAX_HEIGHT, smokeTest, preview, engineSupervisor } = host;
   const listeners = [];
   const handlers = [];
   const normalize = (channel, callback, invalidResult) => (event, payload) => {
@@ -22,16 +22,13 @@ function registerDesktopIpc(ipcMain, host) {
     ipcMain.handle(channel, normalize(channel, callback, invalidResult)); handlers.push(channel);
   };
   function trusted(event) {
-    return [host.orbWindow, host.panelWindow].some(window => window && !window.isDestroyed() && event.sender === window.webContents);
+    const window = host.panelWindow;
+    return Boolean(window && !window.isDestroyed() && event.sender === window.webContents);
   }
   on('voice:open', event => {
     if (!trusted(event) || host.exitStarted) return;
     if (process.argv.includes('--debug')) console.log('[overlay] open request');
-    if (event.sender === host.orbWindow.webContents) {
-      if (host.engine?.connected) host.engine.send({ command: 'tap' });
-      else overlay.compose();
-    }
-    else openPanel();
+    openPanel();
   });
   on('voice:resize', (event, size) => {
     if (!host.panelWindow || host.panelWindow.isDestroyed() || event.sender !== host.panelWindow.webContents || host.exitStarted
@@ -77,10 +74,10 @@ function registerDesktopIpc(ipcMain, host) {
   });
   on('voice:hover', (event, entered) => {
     if (!trusted(event) || host.exitStarted || typeof entered !== 'boolean') return;
-    // In production use one native cursor sample for both surfaces. Renderer
+    // In production use a native cursor sample for the panel. Renderer
     // pointerleave can be caused by window resizing, not actual cursor movement.
     if (!smokeTest || host.testNativePointer) return;
-    overlay.hover(event.sender === host.orbWindow.webContents ? 'orb' : 'panel', entered);
+    overlay.hover('panel', entered);
   });
   on('voice:composer-focus', (event, focused) => {
     if (!host.panelWindow || host.panelWindow.isDestroyed() || event.sender !== host.panelWindow.webContents || host.exitStarted) return;
@@ -104,24 +101,12 @@ function registerDesktopIpc(ipcMain, host) {
     }
     if (['record', 'release', 'cancel', 'reset'].includes(command) && host.engine?.connected) host.engine.send({ command });
   });
-  on('orb:ready', event => {
+  on('voice:ready', event => {
     if (!trusted(event) || host.exitStarted) return;
-    if (host.panelWindow && event.sender === host.panelWindow.webContents) {
-      host.panelWindow.webContents.send('voice:pinned', overlay.snapshot().pinned);
-      sendVoice(); return;
-    }
-    if (!host.orbWindow || event.sender !== host.orbWindow.webContents) return;
-    if (smokeTest || preview) {
-      host.orbWindow.showInactive();
-      host.orbWindow.webContents.send('orb:presence', 'visible');
-    }
+    host.panelWindow.webContents.send('voice:pinned', overlay.snapshot().pinned);
     sendVoice();
-  });
-  on('orb:exit-complete', event => {
-    if (host.orbWindow && event.sender === host.orbWindow.webContents && host.exitStarted) {
-      host.exitAcknowledged = true;
-      finishExit();
-    }
+    sendSettings();
+    host.panelWindow.webContents.send('voice:visible', host.panelWindow.isVisible());
   });
 
   return () => {

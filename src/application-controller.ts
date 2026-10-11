@@ -142,7 +142,7 @@ export class ApplicationController {
   }
   inputError(error: unknown): void {
     this.log.error(error);
-    this.publish('error', { message: 'Skrót Copilot jest niedostępny. Uruchom aplikację ponownie lub kliknij orb, aby napisać wiadomość.' });
+    this.publish('error', { message: 'Skrót Copilot jest niedostępny. Uruchom aplikację ponownie lub otwórz rozmowę z ikony w zasobniku systemowym, aby napisać wiadomość.' });
   }
   private interrupt(): void {
     this.generation++;

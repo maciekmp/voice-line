@@ -22,3 +22,14 @@ test('quiet voice has lower activity than emphatic voice', () => {
   assert.equal(meter.values[0], 0);
   for (let i = 1; i < meter.values.length; i++) assert.ok(meter.values[i] > meter.values[i - 1]);
 });
+
+test('live windows are 20ms while playback retains its 40ms timing', () => {
+  const live = new AudioLevels(16000, 20);
+  const playback = new AudioLevels(16000);
+  const pcm = Buffer.alloc(640);
+  for (let i = 0; i < pcm.length; i += 2) pcm.writeInt16LE(1000, i);
+  assert.equal(live.push(pcm).length, 1);
+  assert.equal(playback.push(pcm).length, 0);
+  assert.equal(playback.push(pcm).length, 1);
+  assert.equal(playback.windowMs, 40);
+});

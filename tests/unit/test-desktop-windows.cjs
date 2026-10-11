@@ -30,19 +30,18 @@ function fixture(options = {}) {
   }
   const screen = new EventEmitter();
   screen.getCursorScreenPoint = () => ({ x: 1032, y: 732 });
-  screen.getDisplayMatching = () => ({ workArea: { x: 0, y: 0, width: 1200, height: 800 } });
+  screen.getPrimaryDisplay = () => ({ workArea: { x: 0, y: 0, width: 1200, height: 800 } });
   let dismissed = 0;
-  let location = { x: 1000, y: 700 };
-  const host = { screen, BrowserWindow: Window, root: '/fixture', position: () => location,
-    PANEL_MAX_HEIGHT: 500, hover: (...value) => hover.push(value), menu: () => ({ popup() {} }),
+  const host = { screen, BrowserWindow: Window, root: '/fixture',
+    PANEL_MAX_HEIGHT: 500, hover: (...value) => hover.push(value),
     exiting: () => false, dismiss: () => dismissed++ };
   const adapter = createWindowAdapter(host);
-  return { host, adapter, created, hover, dismissed: () => dismissed, relocate: value => { location = value; } };
+  return { host, adapter, created, hover, dismissed: () => dismissed };
 }
 
 test('native adapter preserves window isolation, blocks navigation and removes display listeners', async t => {
   const f = fixture(); t.after(() => f.adapter.dispose()); await f.adapter.create();
-  assert.equal(f.created.length, 2);
+  assert.equal(f.created.length, 1);
   for (const window of f.created) {
     assert.equal(window.settings.webPreferences.sandbox, true);
     assert.equal(window.settings.webPreferences.nodeIntegration, false);
@@ -65,23 +64,23 @@ test('native adapter preserves window isolation, blocks navigation and removes d
 
 test('native hover samples the current surface geometry after resize and display reposition', async t => {
   const f = fixture(); t.after(() => f.adapter.dispose()); await f.adapter.create();
-  f.host.orbWindow.showInactive(); f.host.panelWindow.showInactive();
+  f.host.panelWindow.showInactive();
   f.adapter.height = 200;
   f.adapter.positionPanel();
-  assert.deepEqual(f.host.panelWindow.getBounds(), { x: 684, y: 492, width: 380, height: 200 });
-  f.adapter.samplePointer({ x: 700, y: 600 });
+  assert.deepEqual(f.host.panelWindow.getBounds(), { x: 800, y: 580, width: 380, height: 200 });
+  f.adapter.samplePointer({ x: 900, y: 600 });
   assert.deepEqual(f.hover, [['panel', true]]);
   f.adapter.height = 80; f.adapter.positionPanel();
-  f.adapter.samplePointer({ x: 700, y: 600 });
+  f.adapter.samplePointer({ x: 900, y: 600 });
   assert.deepEqual(f.hover.at(-1), ['panel', false]);
-  f.relocate({ x: 500, y: 500 });
+  f.host.screen.getPrimaryDisplay = () => ({ workArea: { x: -800, y: -200, width: 320, height: 180 } });
+  f.adapter.height = 500;
   f.host.screen.emit('display-metrics-changed');
-  assert.deepEqual(f.host.orbWindow.getBounds(), { x: 500, y: 500, width: 64, height: 80 });
-  assert.deepEqual(f.host.panelWindow.getBounds(), { x: 184, y: 412, width: 380, height: 80 });
-  f.adapter.samplePointer({ x: 532, y: 532 });
-  assert.deepEqual(f.hover.at(-1), ['orb', true]);
-  f.host.orbWindow.hide(); f.adapter.samplePointer({ x: 532, y: 532 });
-  assert.deepEqual(f.hover.at(-1), ['orb', false]);
+  assert.deepEqual(f.host.panelWindow.getBounds(), { x: -780, y: -180, width: 280, height: 140 });
+  f.adapter.samplePointer({ x: -700, y: -100 });
+  assert.deepEqual(f.hover.at(-1), ['panel', true]);
+  f.host.panelWindow.hide(); f.adapter.samplePointer({ x: -700, y: -100 });
+  assert.deepEqual(f.hover.at(-1), ['panel', false]);
 });
 
 test('native adapter cancels hide and resize timers on disposal', async t => {
@@ -97,12 +96,12 @@ test('native adapter cancels hide and resize timers on disposal', async t => {
   assert.equal(f.adapter.mode, 'chat', 'Disposed hide timer cannot reset the popup contents');
 });
 
-test('native close of either surface dismisses a pinned pair and preserves windows for reopening', async t => {
-  for (const surface of ['orbWindow', 'panelWindow']) {
+test('native close dismisses a pinned panel and preserves windows for reopening', async t => {
+  for (const surface of ['panelWindow']) {
     const f = fixture(); t.after(() => f.adapter.dispose()); await f.adapter.create();
     const overlay = createOverlayController({ onChange(value) {
-      if (value.orbVisible) { f.host.orbWindow.showInactive(); f.adapter.openPanel(value.mode, false); }
-      else { f.host.orbWindow.hide(); f.adapter.hidePanel(); }
+      if (value.mode !== 'hidden') f.adapter.openPanel(value.mode, false);
+      else f.adapter.hidePanel();
     } });
     t.after(() => overlay.dispose());
     f.host.dismiss = () => overlay.dismiss();
@@ -111,17 +110,16 @@ test('native close of either surface dismisses a pinned pair and preserves windo
     let prevented = false;
     f.host[surface].emit('close', { preventDefault() { prevented = true; } });
     assert.equal(prevented, true, `${surface}: native destruction must be prevented`);
-    assert.deepEqual(overlay.snapshot(), { mode: 'hidden', pinned: false, orbVisible: false });
-    assert.equal(f.host.orbWindow.isVisible(), false);
+    assert.deepEqual(overlay.snapshot(), { mode: 'hidden', pinned: false });
     assert.equal(f.host.panelWindow.isVisible(), false);
     overlay.open();
-    assert.equal(f.host.orbWindow.isVisible() && f.host.panelWindow.isVisible(), true);
+    assert.equal(f.host.panelWindow.isVisible(), true);
     f.host.exiting = () => true;
     f.host[surface].emit('close', { preventDefault() { assert.fail('Application exit must allow window destruction'); } });
   }
 });
 
-test('shutdown during orb loading prevents creation of a late panel', async () => {
+test('shutdown during panel loading removes display listeners', async () => {
   let release;
   const gate = new Promise(resolve => { release = resolve; });
   const f = fixture({ load: () => gate });

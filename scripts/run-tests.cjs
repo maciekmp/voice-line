@@ -61,7 +61,7 @@ async function runSuite(selection) {
   try {
     if (selection.group === 'desktop') {
       console.log(`Desktop captures: ${environment.outputDirectory}`);
-      code = await runProcess(require('electron'), [path.join(projectRoot, 'electron', 'orb-main.cjs'), '--smoke-test'], environment.env);
+      code = await runProcess(require('electron'), [path.join(projectRoot, 'electron', 'desktop-main.cjs'), '--smoke-test'], environment.env);
     } else if (selection.group === 'keyboard') {
       code = await runProcess(process.execPath, ['--experimental-strip-types', '--test',
         path.join(projectRoot, 'tests/native/test-keyboard.ts')], environment.env);

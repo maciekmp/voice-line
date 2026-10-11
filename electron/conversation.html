@@ -9,12 +9,17 @@
 <script type="module" src="conversation.js"></script>
 </head>
 <body data-mode="peek">
+<div id="audio-glow" aria-hidden="true"></div>
+<div id="audio-waves" aria-hidden="true"></div>
+<header id="panel-header">
+<div class="audio-feedback"><div id="audio-indicator" aria-hidden="true"></div><span id="voice-mode" hidden></span></div>
 <button id="previous" class="popup-action" type="button" aria-label="Wróć do poprzedniej rozmowy" title="Brak poprzedniej rozmowy" disabled>
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9a9 9 0 0 0-6 2.3L3 13"/></g></svg>
 </button>
 <button id="pin" class="popup-action" type="button" aria-label="Przypnij popup" aria-pressed="false" title="Przypnij popup">
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 17v5M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4a1 1 0 0 1 1 1z"/></svg>
 </button>
+</header>
 <main>
 <section id="history" aria-label="Poprzednie wiadomości" hidden></section>
 <section id="transcript" aria-label="Ostatnie pytanie i odpowiedź" tabindex="0">

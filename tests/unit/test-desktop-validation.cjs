@@ -21,7 +21,7 @@ test('desktop requests reject malformed payloads and preserve exact clipboard co
     ['voice:resize', { mode: 'unknown', height: 100, reducedMotion: false }],
     ['voice:resize', { mode: 'chat', height: Infinity, reducedMotion: false }],
     ['voice:image-save', '../secret'], ['voice:image-preview', 'A'.repeat(64)],
-    ['orb:ready', {}], ['voice:open', true], ['unknown', undefined],
+    ['voice:ready', {}], ['voice:open', true], ['unknown', undefined],
   ]) assert.equal(parseDesktopRequest(channel, value), null, channel);
   assert.deepEqual(parseDesktopRequest('voice:resize', { mode: 'chat', height: 100.5, reducedMotion: true, extra: 'discard' }),
     { channel: 'voice:resize', value: { mode: 'chat', height: 100.5, reducedMotion: true } });

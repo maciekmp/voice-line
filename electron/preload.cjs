@@ -10,7 +10,7 @@ function listen(channel, callback) {
 
 /** @type {import('../src/desktop-contract.ts').DesktopApi} */
 const desktopApi = {
-  ready() { ipcRenderer.send('orb:ready'); },
+  ready() { ipcRenderer.send('voice:ready'); },
   open() { ipcRenderer.send('voice:open'); },
   hover(entered) { ipcRenderer.send('voice:hover', entered); },
   composerFocus(focused) { ipcRenderer.send('voice:composer-focus', focused); },
@@ -20,14 +20,13 @@ const desktopApi = {
   saveImage(id) { return ipcRenderer.invoke('voice:image-save', id); },
   resize(size) { ipcRenderer.send('voice:resize', size); },
   command(command) { ipcRenderer.send('voice:command', command); },
-  exitComplete() { ipcRenderer.send('orb:exit-complete'); },
-  onLevel(callback) { return listen('orb:level', callback); },
+  onLevel(callback) { return listen('voice:level', callback); },
   onVoice(callback) { return listen('voice:snapshot', callback); },
   onClearDraft(callback) { return listen('voice:clear-draft', callback); },
   onMode(callback) { return listen('voice:mode', callback); },
   onPinned(callback) { return listen('voice:pinned', callback); },
   onResizing(callback) { return listen('voice:resizing', callback); },
-  onPresence(callback) { return listen('orb:presence', callback); },
-  onSettings(callback) { return listen('orb:settings', callback); },
+  onVisible(callback) { return listen('voice:visible', callback); },
+  onSettings(callback) { return listen('voice:visual-settings', callback); },
 };
-contextBridge.exposeInMainWorld('orbDesktop', desktopApi);
+contextBridge.exposeInMainWorld('voiceDesktop', desktopApi);

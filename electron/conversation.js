@@ -1,6 +1,7 @@
 import { renderAnswer } from './answer-renderer.js';
 import { renderImages, refreshImageVisibility } from './image-renderer.js';
 import { createHistoryRenderer } from './history-renderer.js';
+import { AudioIndicator } from './audio-indicator.js';
 import { decorateNotice, setMessageIcon, setQuestionIcon } from './message-icons.js';
 
 /** @typedef {{pin: HTMLButtonElement, previous: HTMLButtonElement, retry: HTMLButtonElement,
@@ -18,6 +19,16 @@ const main = (() => {
   if (!element) throw new Error('Missing conversation main');
   return element;
 })();
+const header = document.getElementById('panel-header');
+const audioSlot = document.getElementById('audio-indicator');
+const modeLabel = document.getElementById('voice-mode');
+const audioGlow = document.getElementById('audio-glow');
+const audioWaves = document.getElementById('audio-waves');
+if (!header || !audioSlot || !modeLabel || !audioGlow || !audioWaves) throw new Error('Missing audio feedback elements');
+const audioIndicator = new AudioIndicator(audioSlot, modeLabel, audioGlow, audioWaves);
+window.voiceDesktop.onLevel(level => audioIndicator.audio(level));
+window.voiceDesktop.onSettings(settings => audioIndicator.settings(settings));
+window.voiceDesktop.onVisible(visible => audioIndicator.visibility(visible));
 /** @type {Partial<import('../src/desktop-contract.ts').DesktopVoice>} */
 let snapshot = { state: 'starting', ready: false };
 let pending = false;
@@ -32,36 +43,37 @@ const errorText = decorateNotice(get('error'), 'error');
 decorateNotice(get('empty'), 'info');
 setMessageIcon(get('answer-block'), 'answer');
 function reportComposerFocus() {
-  window.orbDesktop.composerFocus(document.hasFocus() && document.activeElement === get('message') && !get('composer').hidden);
+  window.voiceDesktop.composerFocus(document.hasFocus() && document.activeElement === get('message') && !get('composer').hidden);
 }
 get('message').addEventListener('focus', reportComposerFocus);
 get('message').addEventListener('blur', reportComposerFocus);
 window.addEventListener('focus', reportComposerFocus);
-window.addEventListener('blur', () => window.orbDesktop.composerFocus(false));
+window.addEventListener('blur', () => window.voiceDesktop.composerFocus(false));
 /** @type {string | undefined} */
 let renderedAnswer;
 let renderedImages = '';
 function reportSize() {
   clearTimeout(resizeFrame);
-  resizeFrame = setTimeout(() => window.orbDesktop.resize({
-    height: Math.ceil(main.getBoundingClientRect().height + (get('composer').hidden ? 0 : get('composer').offsetHeight)),
+  resizeFrame = setTimeout(() => window.voiceDesktop.resize({
+    height: (document.getElementById('panel-header')?.offsetHeight || 32) + Math.ceil(main.getBoundingClientRect().height + (get('composer').hidden ? 0 : get('composer').offsetHeight)),
     mode: panelMode(),
     reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches,
   }), 0);
 }
 const sizeObserver = new ResizeObserver(reportSize);
 sizeObserver.observe(main);
+sizeObserver.observe(header);
 sizeObserver.observe(get('composer'));
-get('pin').addEventListener('click', () => window.orbDesktop.command('pin'));
+get('pin').addEventListener('click', () => window.voiceDesktop.command('pin'));
 get('previous').addEventListener('click', () => {
-  if (!get('previous').disabled) window.orbDesktop.command('previous');
+  if (!get('previous').disabled) window.voiceDesktop.command('previous');
 });
-window.orbDesktop.onPinned(pinned => {
+window.voiceDesktop.onPinned(pinned => {
   get('pin').setAttribute('aria-pressed', String(pinned));
   get('pin').setAttribute('aria-label', pinned ? 'Odepnij popup' : 'Przypnij popup');
   get('pin').title = pinned ? 'Odepnij popup' : 'Przypnij popup';
 });
-window.orbDesktop.onResizing(resizing => {
+window.voiceDesktop.onResizing(resizing => {
   document.documentElement.dataset.resizing = String(resizing);
   if (!resizing && scrollToLatest && document.body.dataset.mode === 'chat') {
     scrollToLatest = false;
@@ -86,15 +98,15 @@ function resizeMessage() {
   get('message').style.height = `${minimum}px`;
   get('message').style.height = `${Math.min(140, Math.max(minimum, get('message').scrollHeight))}px`;
 }
-document.documentElement.addEventListener('pointerenter', () => window.orbDesktop.hover(true));
-document.documentElement.addEventListener('pointerleave', () => window.orbDesktop.hover(false));
+document.documentElement.addEventListener('pointerenter', () => window.voiceDesktop.hover(true));
+document.documentElement.addEventListener('pointerleave', () => window.voiceDesktop.hover(false));
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && !event.isComposing) window.orbDesktop.command('hide');
+  if (event.key === 'Escape' && !event.isComposing) window.voiceDesktop.command('hide');
 });
-window.orbDesktop.onClearDraft(() => {
+window.voiceDesktop.onClearDraft(() => {
   draftRevision++; get('message').value = ''; resizeMessage(); updateComposer();
 });
-window.orbDesktop.onMode(mode => {
+window.voiceDesktop.onMode(mode => {
   const changed = document.body.dataset.mode !== mode;
   if (changed) document.documentElement.dataset.resizing = 'true';
   document.body.dataset.mode = mode;
@@ -116,9 +128,10 @@ const labels = {
   transcribing: 'Rozpoznaję mowę…', thinking: 'Codex przygotowuje odpowiedź…',
   'preparing-speech': 'Przygotowuję głos…', speaking: 'Odczytuję odpowiedź…', error: '',
 };
-window.orbDesktop.onVoice(value => {
+window.voiceDesktop.onVoice(value => {
   const nearBottom = innerHeight + scrollY >= document.documentElement.scrollHeight - 32;
   snapshot = value;
+  audioIndicator.voice(value);
   const history = value.history || [];
   historyRenderer.update(history, { conversationId: value.conversation?.id, revision: value.conversation?.revision });
   get('history').hidden = document.body.dataset.mode !== 'chat' || !history.length;
@@ -163,7 +176,7 @@ get('composer').addEventListener('submit', async event => {
   pending = true;
   updateComposer();
   try {
-    if (await window.orbDesktop.text(text)) {
+    if (await window.voiceDesktop.text(text)) {
       if (revision !== draftRevision) return;
       get('message').value = '';
       resizeMessage();
@@ -176,5 +189,5 @@ get('composer').addEventListener('submit', async event => {
     get('error').hidden = false;
   } finally { pending = false; updateComposer(); }
 });
-get('retry').addEventListener('click', () => window.orbDesktop.command('retry'));
-window.orbDesktop.ready();
+get('retry').addEventListener('click', () => window.voiceDesktop.command('retry'));
+window.voiceDesktop.ready();

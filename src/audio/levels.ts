@@ -1,12 +1,13 @@
-// Fixed 40 ms windows keep IPC bounded and independent of pipe chunk sizes.
+// Playback defaults to 40 ms; live recording uses shorter windows.
 export class AudioLevels {
   private pending = Buffer.alloc(0);
   readonly values: number[] = [];
+  readonly windowMs: number;
   private sampleRate: number;
-  constructor(sampleRate: number) { this.sampleRate = sampleRate; }
+  constructor(sampleRate: number, windowMs = 40) { this.sampleRate = sampleRate; this.windowMs = windowMs; }
   push(chunk: Buffer): number[] {
     this.pending = Buffer.concat([this.pending, chunk]);
-    const bytes = Math.round(this.sampleRate * .04) * 2;
+    const bytes = Math.round(this.sampleRate * this.windowMs / 1000) * 2;
     const added: number[] = [];
     while (this.pending.length >= bytes) {
       let energy = 0;
@@ -22,8 +23,8 @@ export class AudioLevels {
 
 export function followPlayback(levels: AudioLevels, callback?: (level: number) => void): () => void {
   const started = performance.now();
-  const update = () => callback?.(levels.values[Math.floor((performance.now() - started) / 40)] ?? 0);
+  const update = () => callback?.(levels.values[Math.floor((performance.now() - started) / levels.windowMs)] ?? 0);
   update();
-  const timer = setInterval(update, 40);
+  const timer = setInterval(update, levels.windowMs);
   return () => { clearInterval(timer); callback?.(0); };
 }

@@ -1,7 +1,7 @@
 ---
 version: alpha
 name: Voice Line
-description: Dyskretny asystent głosowy Windows z kulką i czytelną odpowiedzią.
+description: Dyskretny asystent głosowy Windows z panelem rozmowy i wskaźnikiem audio.
 colors:
   primary: '#d4c6b6'
   background: '#242220'
@@ -29,8 +29,8 @@ components:
 ## Product and visual intent
 
 A Polish-language Windows voice tool, grounded in README.md and the existing
-Copilot recording loop. The blue flowing orb is the recognizable signature.
-Keep everything around it quiet: warm brown-grey surfaces, left-aligned 12 px text, native
+Copilot recording loop. The conversation panel is the only desktop surface.
+Keep audio feedback quiet: warm brown-grey surfaces, left-aligned 12 px text, native
 Windows typography, no decorative motion or additional icon vocabulary.
 No Japan-market scope is established.
 
@@ -39,18 +39,19 @@ No Japan-market scope is established.
 Model B: `electron/conversation.css` owns the panel's semantic CSS variables.
 Frontmatter mirrors their values: colors map to `--color-*`, `rounded.DEFAULT`
 to `--radius-control`, `spacing.panel` to `--space`, and typography to
-`--font-body`. Scrollbar hover uses the muted token. `preview/voice-orb.js`
-and `orb-renderer.js` remain the single visual orb primitive for browser,
-desktop indicator. The conversation popup does not duplicate the orb. The transparent desktop shell has
-its own geometry; it does not adopt the panel background.
+`--font-body`. Scrollbar hover uses the muted token. `electron/audio-indicator.js`
+owns the shared audio envelope, state, visibility and motion policy. Separate modules in
+`electron/audio-effects/` implement bars, mini orb, edge glow and bottom waves through
+the same `update(frame)` / `dispose()` interface. `electron/voice-orb.js` and `orb-renderer.js`
+provide the reusable mini orb with a static CSS fallback. There is no separate orb window or web preview.
 
 ## Copilot: kontrakt interakcji
 
-Stan pracy i widok są niezależne. Orb i popup pojawiają się i znikają razem.
+Stan pracy i widok są niezależne. Popup jest jedynym oknem interfejsu.
 
 | Tryb | Zawartość | Krótki Copilot przy gotowej aplikacji |
 | --- | --- | --- |
-| hidden | Obie powierzchnie ukryte | compose |
+| hidden | Panel ukryty | compose |
 | compose | Samo pole, ewentualnie status lub błąd | chat |
 | peek | Najnowsza tura/status, bez pola | compact |
 | compact | Najnowsza tura i pole | chat |
@@ -59,7 +60,7 @@ Stan pracy i widok są niezależne. Orb i popup pojawiają się i znikają razem
 Wciśnięcie Copilota natychmiast przerywa pracę. Tap (<250 ms) odrzuca audio;
 hold (>=250 ms) pokazuje peek, zachowuje szkic i nagrywa od key-down.
 Puszczenie po hold wysyła nagranie. Repeats nie uruchamiają kolejnych działań.
-Klik orba wykonuje tap bez nagrywania. Tray otwiera chat.
+Tray otwiera chat; mini orb jest wyłącznie wskaźnikiem, bez akcji kliknięcia.
 
 Przed rzeczywistym rozpoczęciem playbacku przerwanie usuwa bieżącą turę
 z historii, zapisu i kontekstu. Tap czyści szkic i zachowuje zakres chat/compact;
@@ -73,7 +74,7 @@ Enter wysyła, Shift+Enter dodaje linię, IME nie wysyła. Błędne wysłanie za
 szkic. Podczas startu/awarii tap otwiera pole ze statusem, wysyłanie jest zablokowane;
 hold pokazuje stan bez nagrywania. Gotowość w trakcie gestu nie rozpoczyna nagrania.
 
-Escape ukrywa oba elementy, usuwa pin i fokus, zachowuje szkic i nie przerywa pracy.
+Escape ukrywa panel, usuwa pin i fokus, zachowuje szkic i nie przerywa pracy.
 Aktualizacje tej samej pracy nie otwierają interfejsu. Nowe pytanie lub jawne otwarcie
 może go pokazać. Hover nie otwiera ukrytego interfejsu.
 
@@ -89,9 +90,21 @@ zmieniają się atomowo; stare wątki pozostają zarejestrowane do czyszczenia.
 
 ## Layout and states
 
-Popup pozostaje szeroki na 380 px, maksymalnie 500 px, 8 px nad orbem.
-Shell ma 64 × 80 px, a hit target pozostaje stały. LOCAL/API jest etykietą
-silnika bez akcji. Wszystkie widoki korzystają ze wspólnych tokenów.
+Popup pozostaje szeroki na 380 px, maksymalnie 500 px, 20 px od prawej i dolnej
+krawędzi obszaru roboczego głównego monitora. Rośnie w górę i mieści się w dostępnym obszarze.
+Stały pasek wysokości 32 px zawiera wskaźnik, LOCAL/API i dotychczasowe kontrolki.
+Tray przełącza słupki, mini orb 24 px, poświatę krawędzi i delikatne fale u dołu panelu. Domyślnie słupki,
+przy braku poprawnego zapisu. Menu „Efekty wizualne” zawiera cztery warianty bez grupowania.
+Wybór zapisuje się automatycznie w desktop-settings.json i wraca po restarcie; preview ma osobny plik.
+Zmiana wariantu nie zmienia rozmowy, szkicu, fokusu ani widoczności.
+Reakcja audio działa tylko w listening/speaking; zmiana stanu i ukrycie zerują poziom.
+Nagrywanie używa bufora DirectShow 40 ms i okien pomiaru 20 ms. Ciche poziomy mikrofonu
+są wzmacniane tylko wizualnie; wzrost działa natychmiast, wygaszanie ma stałą 50 ms.
+Orb i fale korzystają z tej samej obwiedni bez dodatkowego wygładzania. Próbki nagrania
+i okna pomiaru odczytu (40 ms) pozostają bez zmian.
+Pause i reduced motion zatrzymują ruch. Zmiana wariantu zwalnia zasoby mini orba.
+LOCAL/API jest etykietą silnika bez akcji; do poznania trybu pozostaje ukryta.
+Wszystkie widoki korzystają ze wspólnych tokenów.
 Sticky composer nie ma przycisków wysyłania i anulowania. Status i błąd są
 dostępne także w compose. Reduced motion wyłącza animację rozszerzania 220 ms.
 Ukrycie resetuje renderer po schowaniu natywnego okna, zachowując szkic.
@@ -101,7 +114,7 @@ Ukrycie resetuje renderer po schowaniu natywnego okna, zachowując szkic.
 | Capability | Canonical owner | Source | Verification |
 | --- | --- | --- | --- |
 | Voice lifecycle | src/application-controller.ts; src/main.ts adapters | Injected controller for Copilot/text, cancellation, reset, previous and shutdown | typecheck; controller public API tests; Electron snapshots |
-| State fan-out and visibility | electron/orb-main.cjs | User request: hide until listening, hide after speech | `npm run test:desktop` |
+| State fan-out and visibility | electron/desktop-main.cjs | User request: hide until listening, hide after speech | `npm run test:desktop` |
 | Overlay behavior | electron/overlay-controller.cjs | hidden/peek/compose/compact/chat; one 5-second completion timer | `npm test -- test-overlay.cjs`; `npm run test:desktop` |
 | Copilot gestures | src/keyboard/copilot-gesture.ts | tap opens input; hold records; repeat and cancellation handling | `npm test -- test-copilot.ts`; typecheck |
 | Keyboard delivery | src/keyboard/bridge.ps1; src/keyboard/copilot-key.ts | configured key consumed while voice app runs; other keys pass; parent-exit cleanup | `npm run test:keyboard` |
@@ -109,7 +122,7 @@ Ukrycie resetuje renderer po schowaniu natywnego okna, zachowując szkic.
 | Feedback | electron/conversation.js | Lifecycle IPC snapshots | `npm run test:desktop` |
 | Code answers | electron/answer-format.js; electron/answer-renderer.js | Shared parsing for latest reply, history and speech | `npm test -- test-answers.js`; `npm run test:desktop` |
 | Scrollbar | electron/conversation.css | Global semantic tokens | static audit; runtime inspection |
-| Voice visual | preview/voice-orb.js | Existing browser preview | `npm run test:desktop` |
+| Voice visual | electron/voice-orb.js | Panel audio feedback | `npm run test:desktop` |
 
 ## Motion and platform
 

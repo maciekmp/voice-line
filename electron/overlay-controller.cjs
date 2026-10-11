@@ -1,11 +1,11 @@
-﻿// One owner for paired visibility, popup mode and completion retention.
+﻿// One owner for panel visibility, popup mode and completion retention.
 const ACTIVE = new Set(['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking']);
 const EDITABLE = new Set(['compose', 'compact', 'chat']);
 function createOverlayController({ onChange, completionDelay = 5000, timers = globalThis }) {
   let voiceState = 'starting', mode = 'hidden', pinned = false, composerFocused = false;
   let completionExpiry, revision = 0, last = '';
   const hovered = new Set();
-  function snapshot() { return { mode, pinned, orbVisible: mode !== 'hidden' }; }
+  function snapshot() { return { mode, pinned }; }
   function publish(focus = false) {
     const value = snapshot(), key = JSON.stringify(value);
     if (key !== last || focus) { last = key; onChange(value, { focus }); }
@@ -43,7 +43,7 @@ function createOverlayController({ onChange, completionDelay = 5000, timers = gl
     togglePin() { if (mode !== 'hidden') { pinned = !pinned; publish(); } },
     composerFocus(focused) { composerFocused = focused && EDITABLE.has(mode); },
     hover(surface, entered) {
-      if (mode === 'hidden') return;
+      if (mode === 'hidden' || surface !== 'panel') return;
       if (entered) hovered.add(surface); else hovered.delete(surface);
     },
     voice(state) {

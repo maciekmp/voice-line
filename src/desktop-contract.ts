@@ -3,10 +3,10 @@ import type { ConversationExchange, GeneratedImage } from './conversation-contra
 
 export type DesktopCommand = 'record' | 'release' | 'cancel' | 'reset' | 'previous' | 'pin' | 'hide' | 'retry';
 export type PanelMode = 'peek' | 'chat' | 'compose' | 'compact';
-export type Presence = 'visible' | 'hidden' | 'leaving';
 export type SaveResult = 'saved' | 'cancelled' | 'error';
 export type PanelMeasurement = { height: number; mode: PanelMode; reducedMotion: boolean };
-export type DesktopSettings = { state: 'idle' | 'listening' | 'speaking'; paused: boolean };
+export type AudioIndicator = 'bars' | 'orb' | 'glow' | 'waves';
+export type DesktopSettings = { indicator: AudioIndicator; paused: boolean };
 export type DesktopVoice = {
   state: ApplicationState; ready: boolean; health?: ServiceHealth; mode?: 'local' | 'realtime';
   threadId?: string | null; canRestorePrevious?: boolean; revision?: number; operationId?: number | null;
@@ -17,17 +17,16 @@ export type DesktopVoice = {
 export type DesktopEvent =
   | { channel: 'voice:snapshot'; value: DesktopVoice }
   | { channel: 'voice:mode'; value: PanelMode }
-  | { channel: 'voice:pinned' | 'voice:resizing'; value: boolean }
-  | { channel: 'orb:level'; value: number }
-  | { channel: 'orb:presence'; value: Presence }
-  | { channel: 'orb:settings'; value: DesktopSettings };
+  | { channel: 'voice:pinned' | 'voice:resizing' | 'voice:visible'; value: boolean }
+  | { channel: 'voice:level'; value: number }
+  | { channel: 'voice:visual-settings'; value: DesktopSettings };
 export type DesktopRequest =
   | { channel: 'voice:command'; value: DesktopCommand }
   | { channel: 'voice:text' | 'voice:copy-code'; value: string }
   | { channel: 'voice:image-preview' | 'voice:image-save'; value: string }
   | { channel: 'voice:resize'; value: PanelMeasurement }
   | { channel: 'voice:hover' | 'voice:composer-focus'; value: boolean }
-  | { channel: 'voice:open' | 'orb:ready' | 'orb:exit-complete' };
+  | { channel: 'voice:open' | 'voice:ready' };
 export interface DesktopApi {
   ready(): void;
   open(): void;
@@ -39,14 +38,13 @@ export interface DesktopApi {
   saveImage(id: string): Promise<SaveResult>;
   resize(size: PanelMeasurement): void;
   command(command: DesktopCommand): void;
-  exitComplete(): void;
   onLevel(callback: (level: number) => void): () => void;
   onVoice(callback: (snapshot: DesktopVoice) => void): () => void;
   onMode(callback: (mode: PanelMode) => void): () => void;
   onClearDraft(callback: () => void): () => void;
   onPinned(callback: (pinned: boolean) => void): () => void;
   onResizing(callback: (resizing: boolean) => void): () => void;
-  onPresence(callback: (presence: Presence) => void): () => void;
+  onVisible(callback: (visible: boolean) => void): () => void;
   onSettings(callback: (settings: DesktopSettings) => void): () => void;
 }
-declare global { interface Window { orbDesktop: DesktopApi } }
+declare global { interface Window { voiceDesktop: DesktopApi } }

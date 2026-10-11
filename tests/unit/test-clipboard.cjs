@@ -54,7 +54,7 @@ test('preload exposes only the copy command and returns its result', async () =>
     require(name) {
       assert.equal(name, 'electron');
       return {
-        contextBridge: { exposeInMainWorld(name, api) { assert.equal(name, 'orbDesktop'); bridge = api; } },
+        contextBridge: { exposeInMainWorld(name, api) { assert.equal(name, 'voiceDesktop'); bridge = api; } },
         ipcRenderer: { invoke(channel, text) { calls.push([channel, text]); return Promise.resolve(true); } },
       };
     },

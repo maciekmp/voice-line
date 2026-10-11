@@ -1,6 +1,6 @@
 import { createImagePreviewCache } from './image-preview-cache.js';
 
-export const imagePreviewCache = createImagePreviewCache({ load: id => window.orbDesktop.imagePreview(id) });
+export const imagePreviewCache = createImagePreviewCache({ load: id => window.voiceDesktop.imagePreview(id) });
 /** @type {WeakMap<HTMLElement, () => void>} */
 const cleanups = new WeakMap();
 /** @type {Map<Element, (visible: boolean) => void>} */
@@ -120,7 +120,7 @@ export function renderImages(container, images = [], { lazy = false } = {}) {
       save.disabled = true;
       save.setAttribute('aria-busy', 'true');
       try {
-        const result = await window.orbDesktop.saveImage(image.id);
+        const result = await window.voiceDesktop.saveImage(image.id);
         feedback.textContent = result === 'saved' ? 'Zapisano obraz.' : result === 'cancelled' ? '' : 'Nie udało się zapisać obrazu. Spróbuj ponownie.';
       } catch { feedback.textContent = 'Nie udało się zapisać obrazu. Spróbuj ponownie.'; }
       finally { save.disabled = false; save.removeAttribute('aria-busy'); }

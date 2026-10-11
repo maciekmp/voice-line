@@ -1,7 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { createOverlayController } = require('../../electron/overlay-controller.cjs');
-const { createPointerTracker } = require('../../electron/overlay-pointer.cjs');
 
 function setup() {
   let time = 0, id = 0;
@@ -26,15 +25,15 @@ for (const [before, after] of [['hidden','compose'], ['compose','chat'], ['peek'
     if(before==='chat') c.open();
     if(before==='compact') c.intent('text-input');
     c.compose(); assert.equal(c.snapshot().mode, after);
-    assert.equal(c.snapshot().orbVisible, true);
+    assert.notEqual(c.snapshot().mode, 'hidden');
   });
 }
 for (const state of ['listening','transcribing','thinking','preparing-speech','speaking']) {
-  test('Escape hides both surfaces throughout '+state, () => {
+  test('Escape hides the panel throughout '+state, () => {
     const {controller:c,advance}=setup(); c.intent('voice-input'); c.voice(state);
     c.hover('panel',true); c.togglePin(); c.dismiss();
-    assert.deepEqual(c.snapshot(),{mode:'hidden',pinned:false,orbVisible:false});
-    c.hover('orb',true); c.voice(state); c.voice('speaking'); c.voice('idle'); advance(10000);
+    assert.deepEqual(c.snapshot(),{mode:'hidden',pinned:false});
+    c.hover('panel',true); c.voice(state); c.voice('speaking'); c.voice('idle'); advance(10000);
     assert.equal(c.snapshot().mode,'hidden');
   });
 }
@@ -56,11 +55,11 @@ test('correction and continuation retain expanded scope, otherwise add a compact
 });
 test('completion lasts exactly five seconds and repeated idle does not renew it', () => {
   const {controller:c,advance}=setup(); c.voice('speaking'); c.voice('idle');
-  advance(4999); c.voice('idle'); assert.equal(c.snapshot().orbVisible,true);
-  advance(1); assert.deepEqual(c.snapshot(),{mode:'hidden',pinned:false,orbVisible:false});
+  advance(4999); c.voice('idle'); assert.notEqual(c.snapshot().mode,'hidden');
+  advance(1); assert.deepEqual(c.snapshot(),{mode:'hidden',pinned:false});
 });
 for(const protection of ['hover','focus','pin']) {
-  test(protection+' at expiry retains surfaces even after protection is removed', () => {
+  test(protection+' at expiry retains the panel even after protection is removed', () => {
     const {controller:c,advance}=setup(); c.intent('text-input'); c.voice('thinking'); c.voice('idle');
     if(protection==='hover') c.hover('panel',true);
     if(protection==='focus') c.composerFocus(true);
@@ -68,7 +67,7 @@ for(const protection of ['hover','focus','pin']) {
     advance(5000);
     c.hover('panel',false); c.composerFocus(false); if(protection==='pin') c.togglePin();
     advance(10000); assert.equal(c.snapshot().mode,'compact');
-    c.dismiss(); assert.equal(c.snapshot().orbVisible,false);
+    c.dismiss(); assert.equal(c.snapshot().mode,'hidden');
   });
 }
 test('departure never starts a timer and a new operation cancels previous completion', () => {

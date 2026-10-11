@@ -57,7 +57,7 @@ export function renderAnswer(container, answer) {
       feedback.className = 'code-feedback';
       feedback.textContent = '';
       try {
-        if (!await window.orbDesktop.copyCode(part.text)) throw new Error('Clipboard write failed');
+        if (!await window.voiceDesktop.copyCode(part.text)) throw new Error('Clipboard write failed');
         svg.replaceChildren(check);
         copy.dataset.copied = 'true';
         copy.setAttribute('aria-label', 'Skopiowano kod');

@@ -1,28 +1,21 @@
 const path = require('node:path');
 const { createPointerTracker } = require('./overlay-pointer.cjs');
-const orbGeometry = require('./orb-geometry.cjs');
 
 // Native surfaces, measurements, animation timers and display listeners.
 // OverlayController decides visibility/mode; this adapter only applies it.
 /** @param {{screen: Electron.Screen, BrowserWindow: typeof import('electron').BrowserWindow,
- * root: string, position: () => {x: number, y: number}, PANEL_MAX_HEIGHT: number,
- * orbWindow?: Electron.BrowserWindow, panelWindow?: Electron.BrowserWindow,
- * hover: (surface: 'orb' | 'panel', entered: boolean) => void,
- * menu: () => Electron.Menu, exiting: () => boolean, dismiss: () => void}} host */
+ * root: string, PANEL_MAX_HEIGHT: number, panelWindow?: Electron.BrowserWindow,
+ * hover: (surface: 'panel', entered: boolean) => void,
+ * exiting: () => boolean, dismiss: () => void}} host */
 function createWindowAdapter(host) {
-  const { screen, BrowserWindow, root, position, PANEL_MAX_HEIGHT } = host;
-  const WINDOW_SIZE = orbGeometry.windowWidth;
-  const WINDOW_HEIGHT = orbGeometry.windowHeight;
+  const { screen, BrowserWindow, root, PANEL_MAX_HEIGHT } = host;
   let disposed = false;
   let removeDisplayListeners = () => {};
   const trackPointer = createPointerTracker((surface, entered) => host.hover(surface, entered));
   function samplePointer(cursor = screen.getCursorScreenPoint()) {
-    const { orbWindow, panelWindow } = host;
-    if (!orbWindow || !panelWindow || orbWindow.isDestroyed() || panelWindow.isDestroyed()) return;
-    trackPointer(cursor, {
-      orb: orbWindow.isVisible() ? orbWindow.getBounds() : null,
-      panel: panelWindow.isVisible() ? panelWindow.getBounds() : null,
-    });
+    const { panelWindow } = host;
+    if (!panelWindow || panelWindow.isDestroyed()) return;
+    trackPointer(cursor, { panel: panelWindow.isVisible() ? panelWindow.getBounds() : null });
   }
 
 
@@ -35,17 +28,17 @@ function createWindowAdapter(host) {
   /** @type {ReturnType<typeof setInterval> | undefined} */
   let panelResizeTimer;
   function positionPanel(animate = false) {
-    const { orbWindow, panelWindow } = host;
+    const { panelWindow } = host;
     if (!panelWindow || panelWindow.isDestroyed()) return;
-    if (!orbWindow || orbWindow.isDestroyed()) return;
-    const orb = orbWindow.getBounds();
-    const area = screen.getDisplayMatching(orb).workArea;
-    const width = Math.min(380, area.width);
-    const height = Math.min(panelHeight, PANEL_MAX_HEIGHT, Math.max(1, orb.y - area.y - 8));
-    const target = {
-      x: Math.max(area.x, Math.min(orb.x + orb.width - width, area.x + area.width - width)),
-      y: Math.max(area.y, orb.y - height - 8), width, height,
-    };
+    const area = screen.getPrimaryDisplay().workArea;
+    const marginX = Math.min(20, Math.max(0, (area.width - 1) / 2));
+    const marginY = Math.min(20, Math.max(0, (area.height - 1) / 2));
+    const width = Math.max(1, Math.min(380, area.width - marginX * 2));
+    const availableHeight = Math.max(1, area.height - marginY * 2);
+    const height = Math.max(1, Math.min(panelHeight, PANEL_MAX_HEIGHT, availableHeight));
+    const bottom = area.y + area.height - marginY;
+    const target = { x: Math.round(area.x + area.width - marginX - width),
+      y: Math.round(bottom - height), width: Math.round(width), height: Math.round(height) };
     clearInterval(panelResizeTimer);
     const initial = panelWindow.getBounds();
     const done = () => {
@@ -59,8 +52,8 @@ function createWindowAdapter(host) {
       if (panelWindow.isDestroyed()) { clearInterval(panelResizeTimer); return; }
       const progress = Math.min(1, (Date.now() - startedAt) / 220);
       const eased = 1 - (1 - progress) ** 3;
-      const currentHeight = Math.round(initial.height + (height - initial.height) * eased);
-      panelWindow.setBounds({ ...target, y: orb.y - currentHeight - 8, height: currentHeight });
+      const currentHeight = Math.min(availableHeight, Math.max(1, Math.round(initial.height + (height - initial.height) * eased)));
+      panelWindow.setBounds({ ...target, y: Math.round(bottom - currentHeight), height: currentHeight });
       if (progress === 1) { clearInterval(panelResizeTimer); done(); }
     }, 16);
   }
@@ -101,43 +94,6 @@ function createWindowAdapter(host) {
   return {
     create: async () => {
       if (disposed) return;
-      host.orbWindow = new BrowserWindow({
-        ...position(), width: WINDOW_SIZE, height: WINDOW_HEIGHT,
-        title: 'Kulka głosowa', frame: false, transparent: true,
-        backgroundColor: '#00000000', hasShadow: false, alwaysOnTop: true,
-        resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
-        skipTaskbar: true, focusable: true, show: false,
-        webPreferences: {
-          preload: path.join(root, 'preload.cjs'),
-          nodeIntegration: false, contextIsolation: true, sandbox: true,
-          backgroundThrottling: false,
-        },
-      });
-      const orbWindow = host.orbWindow;
-      // Keep the overlay above other windows, including full-screen applications.
-      orbWindow.setAlwaysOnTop(true, 'screen-saver');
-      orbWindow.on('show', () => orbWindow.setAlwaysOnTop(true, 'screen-saver'));
-      // A native close (e.g. Alt+F4) dismisses the pair without destroying the orb.
-      orbWindow.on('close', event => { if (!host.exiting()) { event.preventDefault(); host.dismiss(); } });
-      orbWindow.setMenu(null);
-      orbWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-      orbWindow.webContents.on('will-navigate', event => event.preventDefault());
-      orbWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
-      orbWindow.webContents.on('context-menu', () => host.menu().popup({ window: orbWindow }));
-      const reposition = () => {
-        if (!orbWindow.isDestroyed()) { const { x, y } = position(); orbWindow.setPosition(x, y); }
-        positionPanel();
-      };
-      screen.on('display-metrics-changed', reposition);
-      screen.on('display-added', reposition);
-      screen.on('display-removed', reposition);
-      removeDisplayListeners = () => {
-        screen.removeListener('display-metrics-changed', reposition);
-        screen.removeListener('display-added', reposition);
-        screen.removeListener('display-removed', reposition);
-      };
-      await orbWindow.loadFile(path.join(root, 'orb.html'));
-      if (disposed) return;
       host.panelWindow = new BrowserWindow({
         width: 380, height: 80, frame: false, skipTaskbar: true,
         resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
@@ -148,6 +104,22 @@ function createWindowAdapter(host) {
       const panelWindow = host.panelWindow;
       panelWindow.setMenu(null);
       panelWindow.setAlwaysOnTop(true, 'screen-saver');
+      panelWindow.on('show', () => {
+        panelWindow.setAlwaysOnTop(true, 'screen-saver');
+        panelWindow.webContents.send('voice:visible', true);
+      });
+      panelWindow.on('hide', () => panelWindow.webContents.send('voice:visible', false));
+      panelWindow.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
+      const reposition = () => positionPanel();
+      screen.on('display-metrics-changed', reposition);
+      screen.on('display-added', reposition);
+      screen.on('display-removed', reposition);
+      removeDisplayListeners = () => {
+        screen.removeListener('display-metrics-changed', reposition);
+        screen.removeListener('display-added', reposition);
+        screen.removeListener('display-removed', reposition);
+      };
+      positionPanel();
       panelWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
       panelWindow.webContents.on('will-navigate', event => event.preventDefault());
       panelWindow.on('close', event => { if (!host.exiting()) { event.preventDefault(); host.dismiss(); } });

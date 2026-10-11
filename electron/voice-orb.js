@@ -1,4 +1,5 @@
-// Visual prototype; no microphone access. Import as a browser module.
+// @ts-nocheck
+// Reusable mini orb; audio comes from the panel's measured envelope.
 import { OrbRenderer } from './orb-renderer.js';
 const states = new Set(['idle', 'listening', 'speaking']);
 
@@ -35,7 +36,7 @@ class VoiceOrb extends HTMLElement {
         :host([paused]) .sphere { animation-play-state: paused; }
         :host([audio-reactive]) .sphere {
           animation: none; scale: var(--audio-scale, 1);
-          transition: scale 40ms ease-out;
+          transition: none; /* The shared envelope already smooths the release. */
         }
         @keyframes listen-breathe { 0%, 100% { transform: scale(.94); } 50% { transform: scale(1); } }
         @keyframes speak-breathe { 0%, 100% { transform: scale(.97); } 45% { transform: scale(1); } }
@@ -74,3 +75,26 @@ class VoiceOrb extends HTMLElement {
 }
 
 customElements.define('voice-orb', VoiceOrb);
+
+// The same cloud shader, unwrapped into a rectangular background instead of a sphere.
+class VoiceWaves extends VoiceOrb {
+  constructor() {
+    super();
+    this.shadowRoot.innerHTML = `
+      <style>
+        :host { display: block; width: 100%; height: 100%; }
+        .field { position: relative; width: 100%; height: 100%; overflow: hidden;
+          background: linear-gradient(to top, #b3c2fa, #f7fbff 50%, #3361e8); }
+        .field.rendered { background: transparent; }
+        canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+      </style>
+      <div class="field"><canvas></canvas></div>`;
+  }
+
+  connectedCallback() {
+    this.renderer = new OrbRenderer(this, this.shadowRoot.querySelector('canvas'), true);
+  }
+
+  updateLabel() {} // Decorative; the parent is hidden from assistive technologies.
+}
+customElements.define('voice-waves', VoiceWaves);

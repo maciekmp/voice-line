@@ -1,3 +1,4 @@
+// @ts-nocheck
 const vertexSource = `
 attribute vec2 position;
 varying vec2 uv;
@@ -74,9 +75,10 @@ export class OrbRenderer {
   inView = true;
   motion = matchMedia('(prefers-reduced-motion: reduce)');
 
-  constructor(host, canvas) {
+  constructor(host, canvas, rectangular = false) {
     this.host = host;
     this.canvas = canvas;
+    this.rectangular = rectangular;
     this.gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: false, antialias: false });
     if (!this.gl) return;
     this.onLost = event => { event.preventDefault(); this.stop(); this.markReady(false); };
@@ -130,14 +132,16 @@ export class OrbRenderer {
   stop() { cancelAnimationFrame(this.frame); this.frame = 0; this.last = 0; }
   refresh = () => {
     this.stop();
+    if (this.host.state === 'idle' || this.host.hasAttribute('paused') || this.motion.matches || document.hidden) this.envelope = 0;
     if (!this.program || this.gl.isContextLost()) return;
     // One-fifth CSS resolution, independent of display DPR; cap large instances.
     // Resize only on layout/attribute changes rather than reading layout every frame.
     const requestedScale = Number(this.host.getAttribute('render-scale') ?? .2);
     const scale = Number.isFinite(requestedScale) ? Math.min(1, Math.max(.1, requestedScale)) : .2;
     this.renderSize = Math.min(256, Math.max(1, Math.round(this.host.clientWidth * scale)));
+    this.renderHeight = this.rectangular ? Math.min(256, Math.max(1, Math.round(this.host.clientHeight * scale))) : this.renderSize;
     this.draw(0);
-    if (!this.host.hasAttribute('paused') && !this.motion.matches && !document.hidden && this.inView) {
+    if (!this.host.hasAttribute('paused') && this.host.state !== 'idle' && !this.motion.matches && !document.hidden && this.inView) {
       this.frame = requestAnimationFrame(this.tick);
     }
   };
@@ -151,22 +155,30 @@ export class OrbRenderer {
     const reactive = this.host.hasAttribute('audio-reactive');
     const rawLevel = reactive && ['listening', 'speaking'].includes(this.host.state) ? this.host.level : 0;
     // Lift quiet syllables without exceeding the desktop's fixed 54 px hit area.
-    const level = Number.isFinite(rawLevel) ? Math.min(1, Math.pow(Math.max(0, rawLevel), .65) * 1.25) : 0;
-    this.envelope += (level - this.envelope) * (1 - Math.exp(-delta * (level > this.envelope ? 48 : 12)));
-    if (reactive) this.host.style.setProperty('--audio-scale', String(1 + this.envelope * .2));
+    const metered = this.host.hasAttribute('metered-envelope');
+    const level = Number.isFinite(rawLevel) ? Math.min(1, metered ? Math.max(0, rawLevel) : Math.pow(Math.max(0, rawLevel), .65) * 1.25) : 0;
+    if (metered) this.envelope = level; // The panel already applied gain and release smoothing.
+    else this.envelope += (level - this.envelope) * (1 - Math.exp(-delta * (level > this.envelope ? 48 : 12)));
+    if (reactive && !this.rectangular) this.host.style.setProperty('--audio-scale', String(1 + this.envelope * .2));
     const target = this.host.state === 'speaking' ? .65 + .25 * Math.sin(this.time * 7.3)
       : this.host.state === 'listening' ? .28 : .06;
-    this.activity += ((reactive ? .06 + this.envelope * .94 : target) - this.activity) * (1 - Math.exp(-delta * 18));
-    this.speaking += ((this.host.state === 'speaking' ? 1 : 0) - this.speaking)
+    const activity = reactive ? .06 + this.envelope * .94 : target;
+    if (metered) this.activity = activity;
+    else this.activity += (activity - this.activity) * (1 - Math.exp(-delta * 18));
+    // Background waves use the richer currents for microphone input too.
+    // Follow the shared envelope immediately, rather than adding another slow blend.
+    if (this.rectangular && this.host.state === 'listening') this.speaking = this.envelope;
+    else this.speaking += ((this.host.state === 'speaking' ? 1 : 0) - this.speaking)
       * (1 - Math.exp(-delta * 3));
     // Speech accelerates the cloud flow fourfold, easing with the speaking blend.
     this.time += delta * (.9 + this.activity * 2.5) * (1 + this.speaking * 3);
     const gl = this.gl;
     const size = this.renderSize;
-    if (this.canvas.width !== size || this.canvas.height !== size) {
-      this.canvas.width = size; this.canvas.height = size;
+    const height = this.renderHeight;
+    if (this.canvas.width !== size || this.canvas.height !== height) {
+      this.canvas.width = size; this.canvas.height = height;
     }
-    gl.viewport(0, 0, size, size);
+    gl.viewport(0, 0, size, height);
     gl.uniform1f(this.uniforms.time, this.time);
     gl.uniform1f(this.uniforms.activity, this.activity);
     gl.uniform1f(this.uniforms.speaking, this.speaking);
