@@ -3,8 +3,12 @@
 .realtime-session.json
 .imagegen-session.json
 .env
+.env.*
+!.env.example
 *.wav
 node_modules/
+output/
+preview/
 
 # Archived prototype artifacts; never include their credentials or recordings in Git.
 .chatgpt-button/
