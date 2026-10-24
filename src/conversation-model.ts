@@ -1,5 +1,6 @@
 import type { ConversationExchange, VoiceReply } from './conversation-contract.ts';
 import { createHash } from 'node:crypto';
+import { exchangeSchema } from './conversation-schemas.cjs';
 
 export const CONTEXT_TTL_MS = 2 * 60 * 1000;
 export type SessionState = {
@@ -28,17 +29,8 @@ export function copyExchange(exchange: ConversationExchange): ConversationExchan
   return { ...exchange, ...(exchange.images && { images: exchange.images.map(image => ({ ...image })) }),
     ...(exchange.imageTask && { imageTask: { ...exchange.imageTask } }) };
 }
-export function validExchange(item: any): item is ConversationExchange {
-  return !!item && typeof item.question === 'string' && typeof item.answer === 'string'
-    && (item.questionSource === undefined || item.questionSource === 'voice' || item.questionSource === 'text')
-    && (item.interrupted === undefined || typeof item.interrupted === 'boolean')
-    && (item.id === undefined || (typeof item.id === 'string' && /^[a-z\d_-]{1,128}$/i.test(item.id)))
-    && (item.revision === undefined || (Number.isSafeInteger(item.revision) && item.revision >= 1))
-    && (item.images === undefined || (Array.isArray(item.images) && item.images.every((image: any) =>
-      image && typeof image.id === 'string' && /^[a-f0-9]{64}$/.test(image.id) && typeof image.alt === 'string')))
-    && (item.imageTask === undefined || (item.imageTask && typeof item.imageTask.threadId === 'string'
-      && /^[a-f\d-]{36}$/i.test(item.imageTask.threadId) && typeof item.imageTask.turnId === 'string'
-      && /^[a-z\d_-]{1,128}$/i.test(item.imageTask.turnId)));
+export function validExchange(item: unknown): item is ConversationExchange {
+  return exchangeSchema.safeParse(item).success;
 }
 export function answerSession(state: SessionState, reply: VoiceReply, now: number): SessionState {
   if (!state.threadId) return state;

@@ -1,35 +1,21 @@
+const { z } = require('zod');
+const { imageIdSchema, conversationViewSchema, revisionSchema, identifierSchema } = require('./conversation-schemas.cjs');
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 function record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
-/** @param {unknown} value @returns {value is number} */
-function revision(value) { return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0; }
 /** @param {unknown} value @returns {value is string} */
-function identifier(value) { return typeof value === 'string' && value.length > 0; }
-/** @param {unknown} value @returns {value is string} */
-function imageId(value) { return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value); }
-/** @param {unknown} value */
-function images(value) {
-  return Array.isArray(value) && value.every(item => record(item) && imageId(item.id) && typeof item.alt === 'string');
-}
-/** @param {unknown} value */
-function exchange(value) {
-  return record(value) && typeof value.question === 'string' && typeof value.answer === 'string'
-    && (value.questionSource === undefined || value.questionSource === 'voice' || value.questionSource === 'text')
-    && (value.interrupted === undefined || typeof value.interrupted === 'boolean')
-    && (value.id === undefined || identifier(value.id)) && (value.revision === undefined || revision(value.revision))
-    && (value.images === undefined || images(value.images))
-    && (value.imageTask === undefined || (record(value.imageTask) && identifier(value.imageTask.threadId) && identifier(value.imageTask.turnId)));
-}
-/** @param {unknown} value @returns {value is import('./application-contract.ts').ConversationView} */
-function conversation(value) {
-  if (!record(value) || !(value.id === null || identifier(value.id)) || !revision(value.revision)
-    || !Array.isArray(value.completed) || !value.completed.every(exchange)) return false;
-  const ids = value.completed.map(item => item.id).filter(id => id !== undefined);
-  if (new Set(ids).size !== ids.length) return false;
-  const pending = value.pending;
-  return pending === null || (record(pending) && identifier(pending.id) && revision(pending.revision)
-    && typeof pending.question === 'string' && typeof pending.answer === 'string'
-    && (pending.questionSource === undefined || pending.questionSource === 'voice' || pending.questionSource === 'text'));
-}
+function imageId(value) { return imageIdSchema.safeParse(value).success; }
+const workerEventSchema = z.union([
+  z.object({ type: z.literal('level'), source: z.enum(['listening', 'speaking']),
+    level: z.number().transform(value => Math.min(1, Math.max(0, value))) }),
+  z.object({ type: z.literal('ui'), action: z.enum(['compose', 'correct', 'continue', 'voice-input', 'text-input']) }),
+  z.object({ type: z.literal('voice'),
+    state: z.enum(['starting', 'idle', 'listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking', 'error']),
+    health: z.enum(['starting', 'ready', 'error', 'stopped']), mode: z.enum(['local', 'realtime']),
+    ready: z.boolean(), canRestorePrevious: z.boolean(), revision: revisionSchema,
+    operationId: revisionSchema.nullable(), threadId: identifierSchema.nullable(),
+    conversation: conversationViewSchema, message: z.string().optional(), generatingImage: z.boolean().optional(),
+  }).refine(value => value.ready === (value.health === 'ready') && value.threadId === value.conversation.id),
+]);
 /** @param {import('./application-contract.ts').ConversationView} value */
 function copyConversation(value) {
   return { id: value.id, revision: value.revision,
@@ -69,28 +55,9 @@ function parseDesktopRequest(channel, value) {
 
 /** @param {unknown} value @returns {import('./application-contract.ts').ApplicationEvent | null} */
 function parseWorkerEvent(value) {
-  if (!record(value)) return null;
-  if (value.type === 'level') {
-    if ((value.source !== 'listening' && value.source !== 'speaking') || typeof value.level !== 'number' || !Number.isFinite(value.level)) return null;
-    return { type: 'level', source: value.source, level: Math.min(1, Math.max(0, value.level)) };
-  }
-  if (value.type === 'ui') return ['compose', 'correct', 'continue', 'voice-input', 'text-input'].includes(/** @type {string} */ (value.action))
-    ? { type: 'ui', action: /** @type {import('./application-contract.ts').UiIntent} */ (value.action) } : null;
-  if (value.type !== 'voice' || typeof value.state !== 'string'
-    || !['starting', 'idle', 'listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking', 'error'].includes(value.state)
-    || !['starting', 'ready', 'error', 'stopped'].includes(/** @type {string} */ (value.health))
-    || (value.mode !== 'local' && value.mode !== 'realtime') || typeof value.ready !== 'boolean' || value.ready !== (value.health === 'ready')
-    || typeof value.canRestorePrevious !== 'boolean' || !revision(value.revision)
-    || !(value.operationId === null || revision(value.operationId)) || !conversation(value.conversation)
-    || value.threadId !== value.conversation.id || (value.message !== undefined && typeof value.message !== 'string')
-    || (value.generatingImage !== undefined && typeof value.generatingImage !== 'boolean')) return null;
-  return {
-    type: 'voice', state: /** @type {import('./application-contract.ts').ApplicationState} */ (value.state),
-    ready: value.ready, health: /** @type {import('./application-contract.ts').ServiceHealth} */ (value.health),
-    mode: value.mode, threadId: value.conversation.id, canRestorePrevious: value.canRestorePrevious,
-    revision: value.revision, operationId: value.operationId, conversation: copyConversation(value.conversation),
-    ...(value.message !== undefined && { message: value.message }),
-    ...(value.generatingImage !== undefined && { generatingImage: value.generatingImage }),
-  };
+  const parsed = workerEventSchema.safeParse(value);
+  if (!parsed.success) return null;
+  if (parsed.data.type !== 'voice') return parsed.data;
+  return { ...parsed.data, conversation: copyConversation(parsed.data.conversation) };
 }
 module.exports = { parseDesktopRequest, parseWorkerEvent };

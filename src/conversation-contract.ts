@@ -1,10 +1,13 @@
-export type QuestionSource = 'voice' | 'text';
-export type GeneratedImage = { id: string; alt: string };
+import type { z } from 'zod';
+import type { questionSourceSchema, generatedImageSchema, imageTaskSchema, exchangeSchema } from './conversation-schemas.cjs';
+
+export type QuestionSource = z.infer<typeof questionSourceSchema>;
+export type GeneratedImage = z.infer<typeof generatedImageSchema>;
 // Serialized legacy field `threadId` identifies the application image conversation.
 // Providers resolve CodexThreadId separately; turnId is the remote generation turn.
-export type ImageTask = { threadId: string; turnId: string };
+export type ImageTask = z.infer<typeof imageTaskSchema>;
 
-export type ConversationExchange = { id?: string; revision?: number; interrupted?: boolean; questionSource?: QuestionSource; question: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask };
+export type ConversationExchange = z.infer<typeof exchangeSchema>;
 export type VoiceReply = { exchangeId?: string; interrupted?: boolean; questionSource?: QuestionSource; prompt: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask; startupMs?: number; turnMs?: number };
 export type ConversationCheckpoint = { id: string | null; exchanges: ConversationExchange[] };
 

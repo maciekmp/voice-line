@@ -3,6 +3,7 @@
     "target": "ESNext",
     "module": "NodeNext",
     "strict": true,
+    "allowJs": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
