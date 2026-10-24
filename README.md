@@ -250,6 +250,13 @@ subsequent taps alternate history with the latest exchange and input. A voice
 view shows the latest exchange without input; tapping adds input, and another
 tap opens history. Sending text always selects the latest-exchange input view.
 
+Click the pencil button next to an image's save button in the latest reply or
+history, then type your changes or hold Copilot and dictate them. The selected image
+appears above the input; use **Usuń** to clear it. Selection applies to the next
+text or voice message and clears after a completed response or switching
+conversations. The app attaches the selected PNG and uses the explicit ImageGen
+path for the edit.
+
 Copilot interrupts immediately on key-down. Before actual playback starts it
 removes the current exchange from history and context; a tap clears the draft
 and opens correction without also toggling views. Once playback has started,
@@ -424,6 +431,15 @@ accumulating recordings.
 Debug mode also prints captured WAV duration and sound levels (RMS and peak in dBFS). Compare WAV duration with the key-hold time to spot missing audio. Codex timing is split into request acceptance and turn completion. The Whisper server is bound to `127.0.0.1` and loads the model once.
 
 ## Known limitations
+
+### Intermittent image-generation failures
+
+Requests such as `Możesz wygenerować obraz z kamieniami?` may return an empty
+answer (`Codex returned an incomplete voice reply`) or claim success without
+generating an image. This remains unresolved. Use `/image <description>` as a
+workaround to select the explicit image-generation path.
+
+### Other limitations
 
 - The keyboard hook suppresses only the configured `COPILOT_VK` while the voice application runs. Some keyboards may emit a different shortcut or may not expose a held F23 event; check `npm.cmd run diagnose:keys` first and configure the virtual key your keyboard reports.
 - Windows SAPI voice quality depends on installed voices. Piper requires a separate executable and voice download; neither is bundled in Git.

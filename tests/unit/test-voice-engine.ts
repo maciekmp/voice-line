@@ -27,6 +27,46 @@ function fixture() {
   return { calls, client, stt, speaker, engine: new LocalVoiceEngine(client, stt, speaker) };
 }
 
+test('manual image selection routes a natural followup to ImageGen in both modes', async () => {
+  const f = fixture();
+  const received: unknown[][] = [];
+  f.client.generateImage = async (...args) => { received.push(args); return { prompt: args[0], answer: 'Gotowe' }; };
+  const imageId = 'a'.repeat(64);
+  const realtime = new RealtimeVoiceEngine({ ...f.client, respondAudio: async () => ({ prompt: '', answer: '' }) });
+  for (const engine of [f.engine, realtime]) {
+    await engine.respond('Zmień tło', undefined, 'text', imageId);
+    assert.deepEqual(received.at(-1), ['Zmień tło', undefined, 'text', imageId]);
+  }
+});
+
+test('local voice edits the selected image using the recognized instruction', async () => {
+  const f = fixture();
+  const imageId = 'a'.repeat(64);
+  const received: unknown[][] = [];
+  f.client.generateImage = async (...args) => { received.push(args); return { prompt: args[0], answer: 'Gotowe' }; };
+  await f.engine.respondAudio('voice.wav', undefined, {}, { playback: false, imageId });
+  assert.deepEqual(received, [['Raw', undefined, 'voice', imageId]]);
+  assert.ok(!f.calls.some(call => call.startsWith('respond:') || call.startsWith('speak:')));
+});
+
+test('realtime voice hands the final transcript and selected image to ImageGen', async () => {
+  const f = fixture();
+  const imageId = 'a'.repeat(64);
+  let received: unknown[] | undefined;
+  const engine = new RealtimeVoiceEngine({ ...f.client,
+    generateImage: async (...args) => { received = args; return { prompt: args[0], answer: 'Gotowe' }; },
+    respondAudio: async (_wav, signal, callbacks) => {
+      callbacks?.onTranscript?.('user', 'Zmień', false);
+      assert.equal(signal?.aborted, false);
+      callbacks?.onTranscript?.('user', 'Zmień tło', true);
+      assert.equal(signal?.aborted, true);
+      throw new Error('Cancelled');
+    },
+  });
+  await engine.respondAudio('voice.wav', undefined, {}, { playback: true, imageId });
+  assert.deepEqual(received, ['Zmień tło', undefined, 'voice', imageId]);
+});
+
 test('factory selects one engine at startup and validates only the selected services', t => {
   const directory = mkdtempSync(join(tmpdir(), 'voice-engine-'));
   const keys = ['VOICE_MODE', 'TTS_MODE', 'CODEX_MODE', 'WHISPER_MODEL'];

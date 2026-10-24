@@ -96,6 +96,31 @@ class FakeImageServer extends CodexAppServer {
 
 const falseFailure = 'Nie udało się wygenerować obrazu — narzędzie nie zwróciło wyniku.';
 
+test('selected image is sent as a verified localImage for editing, and never leaks into the next turn', async t => {
+  const cwd = await directory(t);
+  const selected = await storeGeneratedImage(cwd, item);
+  const client = new FakeImageServer(cwd, true);
+  const reply = await client.respond('Zmień tło', undefined, 'text', selected.id);
+  assert.equal(reply.images?.length, 1);
+  const edit = client.calls.filter(call => call.method === 'turn/start').at(-1)!.params;
+  assert.deepEqual(edit.input[1], { type: 'localImage', path: join(cwd, '.app-data', 'images', `${selected.id}.png`) });
+  assert.match(edit.input[0].text, /Edytuj załączony obraz/);
+  await client.respond('Zwykłe pytanie');
+  assert.equal(client.calls.filter(call => call.method === 'turn/start').at(-1)!.params.input.length, 1);
+});
+
+test('missing, invalid and malformed image attachments fail before inference', async t => {
+  const cwd = await directory(t);
+  const selected = await storeGeneratedImage(cwd, item);
+  const client = new FakeImageServer(cwd);
+  for (const id of ['../secret', 'f'.repeat(64)]) {
+    await assert.rejects(client.generateImage('Zmień tło', undefined, 'text', id), /Wybrany obraz jest niedostępny/);
+  }
+  await writeFile(join(cwd, '.app-data', 'images', `${selected.id}.png`), 'not a PNG');
+  await assert.rejects(client.generateImage('Zmień tło', undefined, 'text', selected.id), /Wybrany obraz jest niedostępny/);
+  assert.equal(client.calls.filter(call => call.method === 'turn/start').length, 0);
+});
+
 test('verified image overrides a false failure in explicit and ordinary turns and persisted history', async t => {
   for (const explicit of [false, true]) {
     const cwd = await directory(t);

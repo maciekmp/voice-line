@@ -36,6 +36,11 @@
 </div>
 </main>
 <form id="composer" novalidate hidden>
+<div id="image-attachment" hidden>
+<img id="attachment-preview" alt="Wybrany obraz do edycji">
+<span id="attachment-label">Obraz do edycji<small>Wpisz zmiany lub przytrzymaj Copilot i powiedz.</small></span>
+<button id="remove-attachment" type="button" aria-label="Usuń obraz z wiadomości">Usuń</button>
+</div>
 <label class="sr-only" for="message">Kontynuuj rozmowę</label>
 <textarea id="message" rows="1" maxlength="12000" placeholder="Napisz wiadomość…" enterkeyhint="send" aria-describedby="message-help status error"></textarea>
 <span id="message-help" class="sr-only">Enter wysyła wiadomość. Shift+Enter dodaje nową linię.</span>

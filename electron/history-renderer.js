@@ -16,8 +16,8 @@ function unchanged(a, b) {
   return a.question === b.question && a.answer === b.answer && a.interrupted === b.interrupted && sameImages(a, b);
 }
 
-/** @param {HTMLElement} container */
-export function createHistoryRenderer(container) {
+/** @param {HTMLElement} container @param {{onSelect?: (image: import('../src/conversation-contract.ts').GeneratedImage) => void}} [options] */
+export function createHistoryRenderer(container, { onSelect } = {}) {
   /** @type {Map<string, {node: HTMLElement, question: HTMLElement, answer: HTMLElement, attachments: HTMLElement, exchange: Exchange, disposeImages: () => void}>} */
   const rows = new Map();
   /** @type {string | null | undefined} */
@@ -55,7 +55,7 @@ export function createHistoryRenderer(container) {
           renderAnswer(answer, exchange.answer);
           node.append(questionRow, answerRow, attachments);
           node.dataset.interrupted = String(!!exchange.interrupted);
-          row = { node, question, answer, attachments, exchange, disposeImages: renderImages(attachments, exchange.images, { lazy: true }) };
+          row = { node, question, answer, attachments, exchange, disposeImages: renderImages(attachments, exchange.images, { lazy: true, onSelect }) };
           rows.set(key, row); stats.created++;
         } else if (!unchanged(row.exchange, exchange)) {
           setQuestionIcon(/** @type {HTMLElement} */ (row.question.parentElement), exchange.questionSource);
@@ -63,7 +63,7 @@ export function createHistoryRenderer(container) {
           if (row.exchange.answer !== exchange.answer) renderAnswer(row.answer, exchange.answer);
           if (!sameImages(row.exchange, exchange)) {
             row.disposeImages();
-            row.disposeImages = renderImages(row.attachments, exchange.images, { lazy: true });
+            row.disposeImages = renderImages(row.attachments, exchange.images, { lazy: true, onSelect });
           }
           row.exchange = exchange; stats.updated++;
         }

@@ -41,6 +41,7 @@ export class ApplicationController {
   private phase: ApplicationState = 'starting';
   private message = '';
   private generatingImage = false;
+  private selectedImageId: string | null = null;
   private held = false;
   private generation = 0;
   private revision = 0;
@@ -67,9 +68,11 @@ export class ApplicationController {
 
   snapshot(): ApplicationSnapshot {
     const engine = this.options.engine;
+    if (this.selectedImageId && !engine.currentExchanges.some(exchange => exchange.images?.some(image => image.id === this.selectedImageId))) this.selectedImageId = null;
     return { type: 'voice', state: this.phase, ready: this.health === 'ready', health: this.health, capabilities: structuredClone(this.capabilities),
       mode: engine.mode, threadId: engine.currentThreadId, canRestorePrevious: engine.canRestorePrevious,
       revision: this.revision, operationId: this.current?.id ?? null, message: this.message, generatingImage: this.generatingImage,
+      selectedImageId: this.selectedImageId,
       conversation: { id: engine.currentThreadId, revision: this.conversationRevision,
         completed: this.completedExchanges, pending: this.pendingExchange } };
   }
@@ -249,6 +252,7 @@ export class ApplicationController {
     this.held = false;
     const releasedAt = this.clock.now(); this.timing('Key hold', releasedAt - this.recordingStartedAt);
     const operation = this.operation();
+    const imageId = this.selectedImageId ?? undefined;
     // Detach the recorded buffer before another press can start capturing the next utterance.
     let recording: Promise<string>;
     try { recording = recorder.stop(); }
@@ -264,7 +268,7 @@ export class ApplicationController {
         onUpdate: (state, text) => {
           if (!this.live(operation)) return;
           if (state === 'thinking' && !prepared) { this.prepareConversation(); prepared = true; }
-          this.publish(state, { ...text, generatingImage: state === 'thinking' && Boolean(text?.question && imageRequest(text.question)) });
+          this.publish(state, { ...text, generatingImage: state === 'thinking' && Boolean(imageId || (text?.question && imageRequest(text.question))) });
         },
         onPlaybackStart: () => {
           if (!this.live(operation) || playbackStartedAt !== undefined) return;
@@ -275,7 +279,7 @@ export class ApplicationController {
         onLevel: level => { if (this.live(operation)) this.level('speaking', level); },
         onTiming: (label, ms) => { if (this.live(operation)) this.timing(label, ms); },
       };
-      await this.options.engine.respondAudio(wav, operation.controller.signal, callbacks, { playback: this.capabilities.playback.state === 'ready' });
+      await this.options.engine.respondAudio(wav, operation.controller.signal, callbacks, { playback: this.capabilities.playback.state === 'ready', imageId });
       if (!this.live(operation)) return;
       this.completed();
       this.timing('Recording finalization', recordingDoneAt - releasedAt);
@@ -290,6 +294,7 @@ export class ApplicationController {
     else await this.options.removeAudio(wav).catch(() => {});
   }
   private completed(): void {
+    this.selectedImageId = null;
     this.current = null;
     this.revision++;
     this.publish('idle', { exchanges: this.options.engine.currentExchanges, generatingImage: false });
@@ -310,7 +315,7 @@ export class ApplicationController {
       if (!interrupted) this.interrupt();
       this.options.recorder?.cancel(); this.held = false;
       try {
-        if (message.command === 'reset') { this.options.engine.reset(); this.revision++; }
+        if (message.command === 'reset') { this.selectedImageId = null; this.options.engine.reset(); this.revision++; }
         this.publish(this.health === 'ready' ? 'idle' : this.health === 'error' ? 'error' : 'starting',
           { exchanges: this.options.engine.currentExchanges, ...(message.command === 'reset' && { reset: true }), generatingImage: false });
       } catch (error) { this.log.error(error); this.publish('error', { message: 'Nie udało się rozpocząć nowej rozmowy. Spróbuj ponownie.' }); }
@@ -318,15 +323,25 @@ export class ApplicationController {
     }
     if (this.health !== 'ready') return reject('unavailable');
     if (this.current || this.held) return reject('busy');
+    if (message.command === 'select-image') {
+      if (message.imageId && !this.options.engine.currentExchanges.some(exchange => exchange.images?.some(image => image.id === message.imageId))) return reject('invalid');
+      this.selectedImageId = message.imageId;
+      this.publish(this.phase);
+      return accept();
+    }
     if (message.command === 'previous' && !this.options.engine.canRestorePrevious) return reject('no-previous');
+    if (message.command === 'text' && message.imageId && !this.options.engine.currentExchanges.some(
+      exchange => exchange.images?.some(image => image.id === message.imageId))) return reject('invalid');
     const operation = this.operation();
     if (message.command === 'text') {
-      this.publish('thinking', { question: message.text, answer: '', questionSource: 'text', generatingImage: Boolean(imageRequest(message.text)) });
+      const imageId = message.imageId ?? this.selectedImageId ?? undefined;
+      this.publish('thinking', { question: message.text, answer: '', questionSource: 'text', generatingImage: Boolean(imageId || imageRequest(message.text)) });
       return accept(this.queue(operation, async () => {
-        this.prepareConversation(); await this.options.engine.respond(message.text, operation.controller.signal);
+        this.prepareConversation(); await this.options.engine.respond(message.text, operation.controller.signal, 'text', imageId);
         if (this.live(operation)) this.completed();
       }, 'Nie udało się przygotować odpowiedzi. Wyślij wiadomość ponownie.'));
     }
+    this.selectedImageId = null;
     this.publish('thinking');
     return accept(this.queue(operation, async () => {
       const restored = await this.options.engine.restorePrevious(operation.controller.signal);

@@ -221,7 +221,7 @@ async function verifyDesktop(host) {
   const imagePanel = await panelWindow.webContents.executeJavaScript(`(async () => {
     const image = document.querySelector('#images img');
     for (let i = 0; i < 100 && !image.naturalWidth; i++) await new Promise(resolve => setTimeout(resolve, 20));
-    const button = document.querySelector('#images button');
+    const button = document.querySelector('#images .image-save');
     const imageRect = image.getBoundingClientRect(), buttonRect = button.getBoundingClientRect();
     return { width: image.naturalWidth, alt: image.alt, fits: document.documentElement.scrollWidth <= innerWidth,
       icon: button.querySelector('svg') !== null, label: button.getAttribute('aria-label'), text: button.textContent,
@@ -236,7 +236,7 @@ async function verifyDesktop(host) {
   const originalSaveDialog = dialog.showSaveDialog;
   const savedImage = path.join(profileDirectory, 'image-save-test.png');
   const clickSaveImage = () => panelWindow.webContents.executeJavaScript(`(async () => {
-    const button = document.querySelector('#images button'); button.focus(); button.click();
+    const button = document.querySelector('#images .image-save'); button.focus(); button.click();
     for (let i = 0; i < 100 && button.disabled; i++) await new Promise(resolve => setTimeout(resolve, 20));
     return document.querySelector('#images [role=status]').textContent;
   })()`);
@@ -694,6 +694,71 @@ async function verifyDesktop(host) {
   sendVoice({ state: 'idle', ready: true });
   console.log('Copilot draft, correction and unavailable-state checks: passed');
   openPanel();
+  // Select current and earlier images through the real preload/IPC boundary.
+  host.engine = { connected: true, request: async () => ({ accepted: true, operationId: null }) };
+  const secondBytes = nativeImage.createFromBitmap(Buffer.alloc(128 * 128 * 4, 180), { width: 128, height: 128 }).toPNG();
+  const secondImageId = require('node:crypto').createHash('sha256').update(secondBytes).digest('hex');
+  await fs.writeFile(path.join(imageDirectory, `${secondImageId}.png`), secondBytes);
+  sendVoice({ state: 'idle', ready: true, threadId: 'image-selection', exchanges: [
+    { question: 'Pierwszy obraz', answer: 'Gotowe', images: [{ id: imageId, alt: 'Pierwszy obraz' }] },
+    { question: 'Drugi obraz', answer: 'Gotowe', images: [{ id: secondImageId, alt: 'Drugi obraz' }] },
+  ] });
+  await wait(300);
+  await evaluate('document.querySelector("#images .image-select").click()');
+  await wait();
+  assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), false);
+  assert.equal(await evaluate('document.querySelector("#images .image-select").getAttribute("aria-pressed")'), 'true');
+  assert.equal(await evaluate('document.querySelector("#attachment-preview").naturalWidth'), 128);
+  const imageActions = await evaluate(`(() => {
+    const edit = document.querySelector('#images .image-select');
+    const save = document.querySelector('#images .image-save');
+    const left = edit.getBoundingClientRect(), right = save.getBoundingClientRect();
+    return { icon: !!edit.querySelector('svg'), text: edit.textContent, adjacent: Math.abs(left.top - right.top) < 1 && right.left - left.right >= 3 && right.left - left.right <= 5 };
+  })()`);
+  assert.deepEqual(imageActions, { icon: true, text: '', adjacent: true });
+  assert.equal(await evaluate('document.activeElement.id'), 'message');
+  await evaluate('document.querySelector("#remove-attachment").click()');
+  await wait();
+  assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), true);
+  await evaluate('document.querySelector("#history .image-select").click()');
+  await wait();
+  assert.equal(await evaluate('document.querySelector("#attachment-preview").naturalWidth'), 256);
+  assert.equal(await evaluate('document.querySelector("#images .image-select").getAttribute("aria-pressed")'), 'false');
+  await fs.writeFile(path.join(outputDirectory, 'electron-image-selection.png'), (await panelWindow.webContents.capturePage()).toPNG());
+  const imageCommands = [];
+  let admitImage = false;
+  host.engine = { connected: true, request: async message => {
+    imageCommands.push(message);
+    if (message.command === 'select-image') return { accepted: true, operationId: null };
+    if (admitImage) sendVoice({ state: 'thinking', question: message.text, answer: '' });
+    return { accepted: admitImage, operationId: admitImage ? 1 : null };
+  } };
+  await fill('Zmień tło');
+  await evaluate('document.querySelector("#composer").requestSubmit()'); await wait();
+  assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), false, 'Rejected sends retain the selection');
+  assert.equal(await evaluate('document.querySelector("#message").value'), 'Zmień tło');
+  admitImage = true;
+  await evaluate('document.querySelector("#composer").requestSubmit()'); await wait();
+  assert.deepEqual(imageCommands.at(-1), { command: 'text', text: 'Zmień tło', imageId });
+  assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), true, 'Accepted sends clear the selection');
+  assert.equal(await evaluate('document.querySelector("#message").value'), '');
+  sendVoice({ state: 'idle', answer: 'Gotowe' });
+  await fill('Zwykłe pytanie');
+  await evaluate('document.querySelector("#composer").requestSubmit()'); await wait();
+  assert.deepEqual(imageCommands.at(-1), { command: 'text', text: 'Zwykłe pytanie' });
+  sendVoice({ state: 'idle', answer: 'Odpowiedź' });
+  await evaluate('document.querySelector("#history .image-select").click()');
+  await wait();
+  assert.equal(imageCommands.at(-1).command, 'select-image');
+  assert.equal(imageCommands.at(-1).imageId, imageId);
+  sendVoice({ state: 'listening', question: '', answer: '', selectedImageId: imageId }); await wait();
+  assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), false, 'Voice recording retains the selected image');
+  sendVoice({ state: 'idle', answer: 'Gotowe', selectedImageId: null }); await wait();
+  assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), true, 'Completed voice edit clears the selected image');
+  await evaluate('document.querySelector("#history .image-select").click()'); await wait();
+  sendVoice({ reset: true, threadId: 'after-image-selection' }); await wait();
+  assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), true, 'Changing conversations clears the selection');
+  console.log('Manual image selection checks: passed');
   await require('./history-scale.cjs').verifyHistoryScale({ panelWindow, outputDirectory, imageId });
   console.log(JSON.stringify({ result: 'passed', profile: profileDirectory,
     cache: sessionDirectory, bounds: panelWindow.getBounds(), captures: outputDirectory }));

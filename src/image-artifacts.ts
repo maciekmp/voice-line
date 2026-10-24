@@ -1,9 +1,22 @@
 import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { ArtifactStore } from './artifact-store.ts';
 export type { GeneratedImage, ImageTask } from './conversation-contract.ts';
 export type { ImageLink } from './artifact-store.ts';
 import type { GeneratedImage } from './conversation-contract.ts';
 import type { ImageLink } from './artifact-store.ts';
+const { readImage, imagePath } = createRequire(import.meta.url)('./image-files.cjs') as {
+  readImage(directory: string, id: string): Promise<Buffer>;
+  imagePath(directory: string, id: string): string;
+};
+
+export async function imageAttachmentPath(cwd: string, id: string, dataDirectory?: string): Promise<string> {
+  const directory = resolve(dataDirectory ?? resolve(cwd, '.app-data'), 'images');
+  try {
+    await readImage(directory, id);
+    return imagePath(directory, id);
+  } catch { throw new Error('Wybrany obraz jest niedostępny. Wybierz inny obraz lub usuń załącznik.'); }
+}
 
 // Verified artifacts determine generation success, rather than the model's prose.
 export function imageGenerationAnswer(answer: string, images?: GeneratedImage[]): string {

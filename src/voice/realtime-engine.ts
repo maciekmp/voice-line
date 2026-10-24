@@ -1,4 +1,4 @@
-import { BaseVoiceEngine, type VoiceCallbacks } from '../voice-engine.ts';
+import { BaseVoiceEngine, type VoiceCallbacks, type VoiceResponseOptions } from '../voice-engine.ts';
 import type { RealtimeConversationClient } from '../conversation-contract.ts';
 import { imageRequest } from '../image-artifacts.ts';
 
@@ -9,7 +9,7 @@ export class RealtimeVoiceEngine extends BaseVoiceEngine {
   constructor(client: RealtimeVoiceEngine['realtime']) { super(client); this.realtime = client; }
   override async startVoice(): Promise<void> { await this.realtime.startAudio?.(); }
   override async startPlayback(): Promise<void> { await this.realtime.startAudio?.(); }
-  async respondAudio(wav: string, signal?: AbortSignal, callbacks: VoiceCallbacks = {}) {
+  async respondAudio(wav: string, signal?: AbortSignal, callbacks: VoiceCallbacks = {}, options: VoiceResponseOptions = { playback: true }) {
     let question = '', answer = '', speaking = false;
     let requestedImage: string | null = null;
     const audioController = new AbortController();
@@ -23,7 +23,7 @@ export class RealtimeVoiceEngine extends BaseVoiceEngine {
         if (signal?.aborted) return;
         if (role === 'user') {
           question = text;
-          requestedImage = final ? imageRequest(text) : null;
+          requestedImage = final ? options.imageId ? text : imageRequest(text) : null;
           if (requestedImage) { audioController.abort(); return; }
         } else answer = text;
         callbacks.onUpdate?.(speaking ? 'speaking' : 'thinking', {
@@ -36,7 +36,7 @@ export class RealtimeVoiceEngine extends BaseVoiceEngine {
     } catch (error) {
       if (!requestedImage || signal?.aborted || !(error instanceof Error) || error.message !== 'Cancelled') throw error;
       callbacks.onUpdate?.('thinking', { question, answer: '' });
-      return await this.generateImage(requestedImage, signal, 'voice');
+      return await this.generateImage(requestedImage, signal, 'voice', options.imageId);
     } finally { signal?.removeEventListener('abort', abort); }
   }
 }

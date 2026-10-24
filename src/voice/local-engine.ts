@@ -1,4 +1,4 @@
-import { BaseVoiceEngine, type ConversationClient, type VoiceCallbacks } from '../voice-engine.ts';
+import { BaseVoiceEngine, type ConversationClient, type VoiceCallbacks, type VoiceResponseOptions } from '../voice-engine.ts';
 import type { Transcriber, SpeechPlayer } from '../conversation-contract.ts';
 import { speechText } from '../answer-format.js';
 
@@ -24,7 +24,7 @@ export class LocalVoiceEngine extends BaseVoiceEngine {
   }
   override cancel(): void { super.cancel(); this.speaker.stop(); }
   override stop(): void { this.cancel(); super.stop(); this.stt.stop(); this.speaker.shutdown(); }
-  async respondAudio(wav: string, signal?: AbortSignal, callbacks: VoiceCallbacks = {}, options = { playback: true }) {
+  async respondAudio(wav: string, signal?: AbortSignal, callbacks: VoiceCallbacks = {}, options: VoiceResponseOptions = { playback: true }) {
     const check = () => { if (signal?.aborted) throw new Error('Cancelled'); };
     check();
     callbacks.onUpdate?.('transcribing');
@@ -35,7 +35,7 @@ export class LocalVoiceEngine extends BaseVoiceEngine {
     if (!raw || !raw.replace(/\*[^*]+\*/g, '').trim()) throw new Error('Nie rozpoznano mowy. Sprawdź mikrofon i spróbuj ponownie.');
     callbacks.onUpdate?.('thinking', { question: raw });
     const turnStarted = performance.now();
-    const reply = await this.respond(raw, signal, 'voice');
+    const reply = await this.respond(raw, signal, 'voice', options.imageId);
     check();
     callbacks.onTiming?.('Codex (cleanup + answer)', performance.now() - turnStarted);
     if (reply.startupMs !== undefined) callbacks.onTiming?.('Codex: request accepted', reply.startupMs);

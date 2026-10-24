@@ -9,12 +9,13 @@ export type VoiceCallbacks = {
   onLevel?: (level: number) => void;
   onTiming?: (label: string, milliseconds: number) => void;
 };
+export type VoiceResponseOptions = { playback: boolean; imageId?: string };
 export interface VoiceEngine extends ConversationClient {
   readonly mode: 'local' | 'realtime';
   readonly startupDescription: string;
   startVoice(): Promise<void>;
   startPlayback(): Promise<void>;
-  respondAudio(wav: string, signal?: AbortSignal, callbacks?: VoiceCallbacks, options?: { playback: boolean }): Promise<VoiceReply>;
+  respondAudio(wav: string, signal?: AbortSignal, callbacks?: VoiceCallbacks, options?: VoiceResponseOptions): Promise<VoiceReply>;
 }
 
 // Conversation ownership remains with Codex; adapters only coordinate voice services.
@@ -36,13 +37,13 @@ export abstract class BaseVoiceEngine implements VoiceEngine {
   expireConversation() { this.client.expireConversation(); }
   async maintainHistory() { return await this.client.maintainHistory?.() ?? false; }
   restorePrevious(signal?: AbortSignal) { return this.client.restorePrevious(signal); }
-  respond(text: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text') {
+  respond(text: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string) {
     const image = this.mode === 'local' ? explicitImageRequest(text) : imageRequest(text);
-    return image ? this.generateImage(image, signal, questionSource) : this.client.respond(text, signal, questionSource);
+    return imageId || image ? this.generateImage(image ?? text, signal, questionSource, imageId) : this.client.respond(text, signal, questionSource);
   }
-  generateImage(text: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text') {
+  generateImage(text: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string) {
     if (!this.client.generateImage) return Promise.reject(new Error('ImageGen jest niedostępny.'));
-    return this.client.generateImage(text, signal, questionSource);
+    return this.client.generateImage(text, signal, questionSource, imageId);
   }
   abstract respondAudio(wav: string, signal?: AbortSignal, callbacks?: VoiceCallbacks): Promise<VoiceReply>;
 }

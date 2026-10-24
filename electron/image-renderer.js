@@ -48,8 +48,8 @@ function watch(element, update) {
 }
 
 /** @param {HTMLElement} container @param {import('../src/conversation-contract.ts').GeneratedImage[]} [images]
- * @param {{lazy?: boolean}} [options] @returns {() => void} */
-export function renderImages(container, images = [], { lazy = false } = {}) {
+ * @param {{lazy?: boolean, onSelect?: (image: import('../src/conversation-contract.ts').GeneratedImage) => void}} [options] @returns {() => void} */
+export function renderImages(container, images = [], { lazy = false, onSelect } = {}) {
   cleanups.get(container)?.();
   /** @type {(() => void)[]} */
   const dispose = [];
@@ -69,6 +69,20 @@ export function renderImages(container, images = [], { lazy = false } = {}) {
     else if (critical) preview.fetchPriority = 'high';
     const frame = document.createElement('div');
     frame.className = 'image-preview';
+    const select = document.createElement('button');
+    select.type = 'button'; select.className = 'popup-action image-select';
+    select.dataset.imageId = image.id;
+    select.setAttribute('aria-label', `Edytuj obraz: ${preview.alt.slice(0, 160)}`);
+    select.setAttribute('aria-pressed', 'false');
+    select.title = 'Wybierz obraz do edycji';
+    const editIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    editIcon.setAttribute('viewBox', '0 0 24 24'); editIcon.setAttribute('aria-hidden', 'true'); editIcon.setAttribute('focusable', 'false');
+    const editPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    editPath.setAttribute('fill', 'none'); editPath.setAttribute('stroke', 'currentColor'); editPath.setAttribute('stroke-width', '2');
+    editPath.setAttribute('stroke-linecap', 'round'); editPath.setAttribute('stroke-linejoin', 'round');
+    editPath.setAttribute('d', 'M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497zM15 5l4 4');
+    editIcon.append(editPath); select.append(editIcon);
+    select.addEventListener('click', () => onSelect?.(image));
     const save = document.createElement('button');
     save.type = 'button'; save.className = 'popup-action image-save'; save.title = 'Zapisz obraz';
     save.setAttribute('aria-label', `Zapisz obraz: ${preview.alt.slice(0, 160)}`);
@@ -84,7 +98,7 @@ export function renderImages(container, images = [], { lazy = false } = {}) {
     save.append(icon);
     const feedback = document.createElement('p');
     feedback.className = 'image-feedback'; feedback.setAttribute('role', 'status');
-    frame.append(preview, save);
+    frame.append(preview, ...(onSelect ? [select] : []), save);
     figure.append(frame, feedback);
     container.append(figure);
     preview.addEventListener('error', () => {
@@ -93,6 +107,7 @@ export function renderImages(container, images = [], { lazy = false } = {}) {
       feedback.textContent = 'Nie udało się wczytać obrazu. Wygeneruj go ponownie.';
       save.disabled = true;
       save.hidden = true;
+      select.disabled = true; select.dataset.unavailable = 'true';
     });
     let visible = !lazy;
     let loading = false;
@@ -102,9 +117,9 @@ export function renderImages(container, images = [], { lazy = false } = {}) {
       imagePreviewCache.get(image.id).then(url => {
         if (!active || !figure.isConnected || !visible) return;
         if (url) { preview.removeAttribute('fetchpriority'); if (critical) preview.fetchPriority = 'high'; preview.src = url; }
-        else { preview.hidden = true; feedback.textContent = 'Obraz jest niedostępny. Wygeneruj go ponownie.'; save.disabled = true; save.hidden = true; }
+        else { preview.hidden = true; feedback.textContent = 'Obraz jest niedostępny. Wygeneruj go ponownie.'; save.disabled = true; save.hidden = true; select.disabled = true; select.dataset.unavailable = 'true'; }
       }).catch(() => {
-        if (active && figure.isConnected && visible) { preview.hidden = true; feedback.textContent = 'Nie udało się wczytać obrazu.'; save.disabled = true; save.hidden = true; }
+        if (active && figure.isConnected && visible) { preview.hidden = true; feedback.textContent = 'Nie udało się wczytać obrazu.'; save.disabled = true; save.hidden = true; select.disabled = true; select.dataset.unavailable = 'true'; }
       }).finally(() => { loading = false; });
     };
     preview.addEventListener('load', () => {

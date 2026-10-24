@@ -1,5 +1,5 @@
 import { renderAnswer } from './answer-renderer.js';
-import { renderImages, refreshImageVisibility } from './image-renderer.js';
+import { renderImages, refreshImageVisibility, imagePreviewCache } from './image-renderer.js';
 import { createHistoryRenderer } from './history-renderer.js';
 import { AudioIndicator } from './audio-indicator.js';
 import { decorateNotice, setMessageIcon, setQuestionIcon } from './message-icons.js';
@@ -7,7 +7,8 @@ import { decorateNotice, setMessageIcon, setQuestionIcon } from './message-icons
 /** @typedef {{pin: HTMLButtonElement, previous: HTMLButtonElement, retry: HTMLButtonElement,
  * composer: HTMLFormElement, message: HTMLTextAreaElement, history: HTMLElement, status: HTMLElement,
  * error: HTMLElement, empty: HTMLElement, question: HTMLElement, answer: HTMLElement, images: HTMLElement,
- * 'question-block': HTMLElement, 'answer-block': HTMLElement}} Elements */
+ * 'question-block': HTMLElement, 'answer-block': HTMLElement, 'image-attachment': HTMLElement,
+ * 'attachment-preview': HTMLImageElement, 'remove-attachment': HTMLButtonElement}} Elements */
 /** @template {keyof Elements} K @param {K} id @returns {Elements[K]} */
 const get = id => {
   const element = document.getElementById(id);
@@ -41,7 +42,49 @@ let composing = false;
 let reportedSize = '';
 let followLatest = true;
 let resizing = false;
-const historyRenderer = createHistoryRenderer(get('history'));
+/** @type {import('../src/conversation-contract.ts').GeneratedImage | undefined} */
+let selectedImage;
+let selectingImage = false;
+/** @param {import('../src/conversation-contract.ts').GeneratedImage | undefined} image @param {boolean} [changeDraft] */
+function selectImage(image, changeDraft = true) {
+  selectedImage = image;
+  if (changeDraft) draftRevision++;
+  get('image-attachment').hidden = !image;
+  get('attachment-preview').removeAttribute('src');
+  get('message').placeholder = image ? 'Opisz zmiany w obrazie…' : 'Napisz wiadomość…';
+  if (image) imagePreviewCache.get(image.id).then(url => {
+    if (selectedImage !== image) return;
+    if (url) get('attachment-preview').src = url;
+    else { selectImage(undefined); errorText.textContent = 'Wybrany obraz jest niedostępny.'; get('error').hidden = false; }
+  }).catch(() => {
+    if (selectedImage === image) { selectImage(undefined); errorText.textContent = 'Nie udało się wczytać wybranego obrazu.'; get('error').hidden = false; }
+  });
+  updateComposer();
+  reportSize();
+}
+/** @param {import('../src/conversation-contract.ts').GeneratedImage} image */
+async function toggleImage(image) {
+  if (pending || selectingImage || busy() || !snapshot.ready) return;
+  if (get('composer').hidden) window.voiceDesktop.open();
+  await requestImageSelection(selectedImage?.id === image.id ? undefined : image);
+  get('message').focus({ preventScroll: true });
+}
+/** @param {import('../src/conversation-contract.ts').GeneratedImage | undefined} image */
+async function requestImageSelection(image) {
+  const conversationId = snapshot.conversation?.id ?? snapshot.threadId;
+  selectingImage = true; updateComposer();
+  try {
+    const accepted = await window.voiceDesktop.selectImage(image?.id ?? null);
+    if (conversationId !== (snapshot.conversation?.id ?? snapshot.threadId)) return;
+    if (!accepted) throw new Error('Image selection rejected');
+    selectImage(image);
+  } catch {
+    errorText.textContent = 'Nie zmieniono wyboru obrazu. Poczekaj na zakończenie odpowiedzi i spróbuj ponownie.';
+    get('error').hidden = false;
+  } finally { selectingImage = false; updateComposer(); }
+}
+get('remove-attachment').addEventListener('click', async () => { await requestImageSelection(undefined); get('message').focus({ preventScroll: true }); });
+const historyRenderer = createHistoryRenderer(get('history'), { onSelect: toggleImage });
 const statusText = decorateNotice(get('status'), 'info');
 const errorText = decorateNotice(get('error'), 'error');
 decorateNotice(get('empty'), 'info');
@@ -119,9 +162,15 @@ function panelMode() {
   return mode === 'chat' || mode === 'compose' || mode === 'compact' ? mode : 'peek';
 }
 const busy = () => ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking'].includes(snapshot.state || 'starting');
-const canSubmit = () => !pending && !busy() && snapshot.ready && Boolean(get('message').value.trim());
+const canSubmit = () => !pending && !selectingImage && !busy() && snapshot.ready && Boolean(get('message').value.trim());
 function updateComposer() {
   get('composer').setAttribute('aria-busy', String(pending || busy()));
+  get('remove-attachment').disabled = pending || selectingImage || busy();
+  for (const button of document.querySelectorAll('button.image-select')) {
+    const select = /** @type {HTMLButtonElement} */ (button);
+    select.setAttribute('aria-pressed', String(select.dataset.imageId === selectedImage?.id));
+    select.disabled = pending || selectingImage || busy() || !snapshot.ready || select.dataset.unavailable === 'true';
+  }
   get('previous').disabled = pending || busy() || !snapshot.ready || !snapshot.canRestorePrevious;
   get('previous').title = !snapshot.canRestorePrevious ? 'Brak poprzedniej rozmowy'
     : pending || busy() || !snapshot.ready ? 'Poczekaj na zakończenie odpowiedzi'
@@ -138,6 +187,8 @@ document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !event.isComposing) window.voiceDesktop.command('hide');
 });
 window.voiceDesktop.onClearDraft(() => {
+  if (selectedImage) void window.voiceDesktop.selectImage(null).catch(() => {});
+  selectImage(undefined);
   draftRevision++; get('message').value = ''; resizeMessage(); updateComposer();
 });
 window.voiceDesktop.onMode(mode => {
@@ -166,7 +217,10 @@ const labels = {
   'preparing-speech': 'Przygotowuję głos…', speaking: 'Odczytuję odpowiedź…', error: '',
 };
 window.voiceDesktop.onVoice(value => {
+  const changedConversation = (snapshot.conversation?.id ?? snapshot.threadId) !== (value.conversation?.id ?? value.threadId);
   snapshot = value;
+  if (selectedImage && (changedConversation || value.selectedImageId === null || !(value.conversation?.completed ?? []).some(
+    exchange => exchange.images?.some(image => image.id === selectedImage?.id)))) selectImage(undefined, false);
   audioIndicator.voice(value);
   const history = value.history || [];
   historyRenderer.update(history, { conversationId: value.conversation?.id, revision: value.conversation?.revision });
@@ -191,7 +245,7 @@ window.voiceDesktop.onVoice(value => {
   }
   get('empty').hidden = Boolean(value.question || value.answer || value.message || value.state !== 'idle');
   const imagesKey = JSON.stringify(value.images || []);
-  if (imagesKey !== renderedImages) { renderedImages = imagesKey; renderImages(get('images'), value.images); }
+  if (imagesKey !== renderedImages) { renderedImages = imagesKey; renderImages(get('images'), value.images, { onSelect: toggleImage }); }
   updateComposer();
   anchorLatest();
   reportSize();
@@ -217,9 +271,10 @@ get('composer').addEventListener('submit', async event => {
   pending = true;
   updateComposer();
   try {
-    if (await window.voiceDesktop.text(text)) {
+    if (await window.voiceDesktop.text(text, selectedImage?.id)) {
       if (revision !== draftRevision) return;
       get('message').value = '';
+      selectImage(undefined);
       resizeMessage();
     } else {
       errorText.textContent = 'Nie wysłano wiadomości. Poczekaj na gotowość usług i spróbuj ponownie.';

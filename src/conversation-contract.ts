@@ -23,8 +23,8 @@ export interface ConversationClient {
   readonly canRestorePrevious: boolean;
   expireConversation(): void;
   restorePrevious(signal?: AbortSignal): Promise<boolean>;
-  respond(text: string, signal?: AbortSignal, questionSource?: QuestionSource): Promise<VoiceReply>;
-  generateImage?(text: string, signal?: AbortSignal, questionSource?: QuestionSource): Promise<VoiceReply>;
+  respond(text: string, signal?: AbortSignal, questionSource?: QuestionSource, imageId?: string): Promise<VoiceReply>;
+  generateImage?(text: string, signal?: AbortSignal, questionSource?: QuestionSource, imageId?: string): Promise<VoiceReply>;
   maintainHistory?(): Promise<boolean>;
 }
 

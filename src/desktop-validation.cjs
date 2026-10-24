@@ -15,6 +15,7 @@ const workerEventSchema = z.union([
     ready: z.boolean(), canRestorePrevious: z.boolean(), revision: revisionSchema,
     operationId: revisionSchema.nullable(), threadId: identifierSchema.nullable(),
     conversation: conversationViewSchema, message: z.string().optional(), generatingImage: z.boolean().optional(),
+    selectedImageId: imageIdSchema.nullable().optional(),
     capabilities: z.object({
       text: z.object({ state: z.enum(['starting', 'ready', 'error', 'stopped']), message: z.string().optional() }),
       recording: z.object({ state: z.enum(['starting', 'ready', 'error', 'stopped', 'disabled']), message: z.string().optional() }),
@@ -40,7 +41,12 @@ function copyConversation(value) {
 
 /** @param {string} channel @param {unknown} value @returns {import('./desktop-contract.ts').DesktopRequest | null} */
 function parseDesktopRequest(channel, value) {
+  if (channel === 'voice:image-selection') return value === null || imageId(value) ? { channel, value } : null;
   if (channel === 'voice:text') {
+    if (record(value)) {
+      return typeof value.text === 'string' && value.text.trim() && value.text.length <= 12000 && imageId(value.imageId)
+        ? { channel, value: { text: value.text.trim(), imageId: value.imageId } } : null;
+    }
     return typeof value === 'string' && value.trim() && value.length <= 12000 ? { channel, value: value.trim() } : null;
   }
   if (channel === 'voice:copy-code') return typeof value === 'string' ? { channel, value } : null;

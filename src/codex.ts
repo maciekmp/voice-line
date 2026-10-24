@@ -61,12 +61,13 @@ export class CodexClient {
     await this.start();
     return this.historyServer!.restorePrevious(signal);
   }
-  async generateImage(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text'): Promise<VoiceReply> {
+  async generateImage(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string): Promise<VoiceReply> {
     await this.start();
-    return this.historyServer!.generateImage(raw, signal, questionSource);
+    return this.historyServer!.generateImage(raw, signal, questionSource, imageId);
   }
-  async respond(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text'): Promise<VoiceReply> {
+  async respond(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string): Promise<VoiceReply> {
     await this.start();
+    if (imageId) return this.historyServer!.generateImage(raw, signal, questionSource, imageId);
     // Ephemeral exec cannot be read by a separate process after it exits.
     // Route recognizable image requests to the live server, which supplies pixels.
     const image = this.storage?.ephemeral ? imageRequest(raw) : null;

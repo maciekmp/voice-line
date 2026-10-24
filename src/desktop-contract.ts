@@ -12,6 +12,7 @@ export type DesktopVoice = {
   capabilities?: ApplicationCapabilities;
   threadId?: string | null; canRestorePrevious?: boolean; revision?: number; operationId?: number | null;
   generatingImage?: boolean; question: string; answer: string; message: string;
+  selectedImageId?: string | null;
   inputMessage?: string;
   interrupted?: boolean; questionSource?: import('./conversation-contract.ts').QuestionSource;
   images: GeneratedImage[]; history: ConversationExchange[]; conversation: ConversationView;
@@ -24,7 +25,9 @@ export type DesktopEvent =
   | { channel: 'voice:visual-settings'; value: DesktopSettings };
 export type DesktopRequest =
   | { channel: 'voice:command'; value: DesktopCommand }
-  | { channel: 'voice:text' | 'voice:copy-code'; value: string }
+  | { channel: 'voice:text'; value: string | { text: string; imageId: string } }
+  | { channel: 'voice:image-selection'; value: string | null }
+  | { channel: 'voice:copy-code'; value: string }
   | { channel: 'voice:image-preview' | 'voice:image-save'; value: string }
   | { channel: 'voice:resize'; value: PanelMeasurement }
   | { channel: 'voice:hover' | 'voice:composer-focus'; value: boolean }
@@ -34,7 +37,8 @@ export interface DesktopApi {
   open(): void;
   hover(entered: boolean): void;
   composerFocus(focused: boolean): void;
-  text(text: string): Promise<boolean>;
+  text(text: string, imageId?: string): Promise<boolean>;
+  selectImage(id: string | null): Promise<boolean>;
   copyCode(text: string): Promise<boolean>;
   imagePreview(id: string): Promise<string | null>;
   saveImage(id: string): Promise<SaveResult>;

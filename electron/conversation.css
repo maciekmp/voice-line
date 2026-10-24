@@ -65,6 +65,14 @@ p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .generated-image { margin: 8px 0 0; }
 .generated-image img { display: block; width: 100%; aspect-ratio: auto 1; object-fit: contain; border-radius: var(--radius-control); background: var(--color-surface); }
 .image-preview { position: relative; }
+.image-select { right: 32px; background: color-mix(in srgb, var(--color-background) 75%, transparent); color: var(--color-text); }
+.image-select[aria-pressed="true"] { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.image-select[aria-pressed="true"] { color: var(--color-primary); }
+#image-attachment { display: flex; align-items: center; gap: 10px; padding: 8px var(--space); }
+#attachment-preview { width: 48px; height: 48px; object-fit: contain; border-radius: 4px; background: var(--color-surface); }
+#attachment-label { flex: 1; color: var(--color-muted); }
+#attachment-label small { display: block; margin-top: 3px; font-size: 11px; }
+#remove-attachment { min-height: 32px; padding: 4px 8px; }
 .image-save { position: absolute; background: color-mix(in srgb, var(--color-background) 75%, transparent); color: var(--color-text); }
 .image-save:hover:not(:disabled) { background: color-mix(in srgb, var(--color-background) 90%, transparent); }
 .image-save:active:not(:disabled) { background: var(--color-background); }

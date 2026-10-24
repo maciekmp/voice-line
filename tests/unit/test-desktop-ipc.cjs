@@ -94,6 +94,29 @@ test('desktop uses the current worker after restart and drops commands during sh
   assert.deepEqual(replacement, [{ command: 'cancel' }]);
 });
 
+test('desktop forwards selected image IDs but rejects paths and malformed attachment requests', async () => {
+  const { handlers, event, sent } = setup();
+  const send = handlers.get('voice:text');
+  const imageId = 'a'.repeat(64);
+  assert.equal(await send(event(), { text: '  Zmień tło  ', imageId }), true);
+  assert.deepEqual(sent, [{ command: 'text', text: 'Zmień tło', imageId }]);
+  for (const value of [{ text: 'edit', imageId: '../secret' }, { text: 'edit', imageId: 1 }, { text: '', imageId }]) {
+    assert.equal(await send(event(), value), false);
+  }
+  assert.equal(sent.length, 1);
+});
+
+test('image selection reaches the worker independently of text and validates its sender and ID', async () => {
+  const { handlers, event, sent } = setup();
+  const select = handlers.get('voice:image-selection');
+  const imageId = 'a'.repeat(64);
+  assert.equal(await select({ sender: {} }, imageId), false);
+  assert.equal(await select(event(), '../secret'), false);
+  assert.equal(await select(event(), imageId), true);
+  assert.equal(await select(event(), null), true);
+  assert.deepEqual(sent, [{ command: 'select-image', imageId }, { command: 'select-image', imageId: null }]);
+});
+
 test('retry restarts production services also when only audio is unavailable', () => {
   const { command, host, event, retries } = setup();
   command(event(), 'retry');

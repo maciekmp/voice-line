@@ -1,6 +1,7 @@
 import type { ConversationExchange } from './conversation-contract.ts';
 
-export type ApplicationCommand = { command: 'text'; text: string }
+export type ApplicationCommand = { command: 'text'; text: string; imageId?: string }
+  | { command: 'select-image'; imageId: string | null }
   | { command: 'cancel' | 'reset' | 'previous' | 'shutdown' };
 export type InputCommand = ApplicationCommand | { command: 'record' | 'release' | 'tap' };
 export type ServiceHealth = 'starting' | 'ready' | 'error' | 'stopped';
@@ -19,6 +20,7 @@ export type ApplicationSnapshot = {
   capabilities: ApplicationCapabilities;
   message?: string;
   generatingImage?: boolean;
+  selectedImageId?: string | null;
   question?: string;
   answer?: string;
   questionSource?: import('./conversation-contract.ts').QuestionSource;
@@ -40,13 +42,18 @@ export type WorkerResult = { type: 'command-result'; requestId: number; result: 
 
 export function parseInputCommand(value: unknown): InputCommand | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const message = value as { command?: unknown; text?: unknown };
+  const message = value as { command?: unknown; text?: unknown; imageId?: unknown };
+  if (message.command === 'select-image') {
+    return message.imageId === null || (typeof message.imageId === 'string' && /^[a-f0-9]{64}$/.test(message.imageId))
+      ? { command: 'select-image', imageId: message.imageId } : null;
+  }
   if (message.command === 'text') {
     if (typeof message.text !== 'string' || !message.text.trim() || message.text.length > 12000) return null;
-    return { command: 'text', text: message.text.trim() };
+    if (message.imageId !== undefined && (typeof message.imageId !== 'string' || !/^[a-f0-9]{64}$/.test(message.imageId))) return null;
+    return { command: 'text', text: message.text.trim(), ...(typeof message.imageId === 'string' && { imageId: message.imageId }) };
   }
   if (typeof message.command === 'string' && ['record', 'release', 'tap', 'cancel', 'reset', 'previous', 'shutdown'].includes(message.command)) {
-    return { command: message.command as Exclude<InputCommand['command'], 'text'> };
+    return { command: message.command as Exclude<InputCommand['command'], 'text' | 'select-image'> };
   }
   return null;
 }

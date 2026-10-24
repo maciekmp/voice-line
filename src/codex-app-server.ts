@@ -8,7 +8,7 @@ import { ConversationSession } from './conversation-session.ts';
 import { readConversationHistory, readLatestConversationExchange } from './conversation-history.ts';
 import type { VoiceReply, ConversationExchange, ConversationCheckpoint } from './conversation-contract.ts';
 import { LOCAL_INSTRUCTIONS } from './codex.ts';
-import { storeGeneratedImage, imageGenerationAnswer } from './image-artifacts.ts';
+import { storeGeneratedImage, imageGenerationAnswer, imageAttachmentPath } from './image-artifacts.ts';
 import type { AppStorage } from './app-storage.ts';
 import { loadCodexConfig, type CodexConfig } from './app-config.ts';
 import { stableExchangeId } from './conversation-format.ts';
@@ -163,7 +163,7 @@ export class CodexAppServer {
       if (this.lifecycle !== lifecycle || this.transport !== transport) throw new Error('Codex startup stopped');
     };
     try {
-      await this.request('initialize', { clientInfo: { name: 'voice_line', title: 'Voice Line', version: '0.2.0' },
+      await this.request('initialize', { clientInfo: { name: 'voice_line', title: 'Voice Line', version: '0.3.0' },
         capabilities: { experimentalApi: true } });
       ensureCurrent();
       this.send({ method: 'initialized', params: {} });
@@ -289,25 +289,26 @@ export class CodexAppServer {
   protected onNotification(_method: string, _params: any): void {}
   protected onServerExit(_error: Error): void {}
 
-  async respond(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text'): Promise<VoiceReply> {
+  async respond(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string): Promise<VoiceReply> {
+    if (imageId) return this.generateImage(raw, signal, questionSource, imageId);
     return this.runTurn(raw, signal, false, questionSource);
   }
 
-  async generateImage(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text'): Promise<VoiceReply> {
+  async generateImage(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string): Promise<VoiceReply> {
     await this.requireChatGPTImageAuth();
     if (!(await this.request('modelProvider/capabilities/read', {})).imageGeneration) {
       throw new Error('ImageGen nie jest dostępny dla tego połączenia Codex.');
     }
-    return this.runTurn(raw, signal, true, questionSource);
+    return this.runTurn(raw, signal, true, questionSource, imageId);
   }
 
-  private async runTurn(raw: string, signal: AbortSignal | undefined, image: boolean, questionSource: import('./conversation-contract.ts').QuestionSource): Promise<VoiceReply> {
-    const operation = this.operation.then(() => this.performTurn(raw, signal, image, questionSource));
+  private async runTurn(raw: string, signal: AbortSignal | undefined, image: boolean, questionSource: import('./conversation-contract.ts').QuestionSource, imageId?: string): Promise<VoiceReply> {
+    const operation = this.operation.then(() => this.performTurn(raw, signal, image, questionSource, imageId));
     this.operation = operation.catch(() => {});
     return operation;
   }
 
-  private async performTurn(raw: string, signal: AbortSignal | undefined, image: boolean, questionSource: import('./conversation-contract.ts').QuestionSource): Promise<VoiceReply> {
+  private async performTurn(raw: string, signal: AbortSignal | undefined, image: boolean, questionSource: import('./conversation-contract.ts').QuestionSource, imageId?: string): Promise<VoiceReply> {
     if (signal?.aborted) throw new Error('Cancelled');
     await this.start();
     await this.cleanHistory();
@@ -322,6 +323,8 @@ export class CodexAppServer {
     try {
       if (!this.session.matchesOperation(operation)) throw new Error('Conversation changed');
       this.rememberActivity();
+      if (signal?.aborted) throw new Error('Cancelled');
+      const attachment = imageId ? await imageAttachmentPath(this.cwd, imageId, this.connection.storage?.dataDirectory) : undefined;
       if (signal?.aborted) throw new Error('Cancelled');
       let resolve!: () => void, reject!: (error: Error) => void;
       const completion = new Promise<void>((res, rej) => { resolve = res; reject = rej; });
@@ -343,8 +346,9 @@ export class CodexAppServer {
         const reply = await this.request('turn/start', {
           threadId: turn.threadId,
           input: [{ type: 'text', text: image
-            ? 'Wygeneruj dokładnie jeden obraz zgodny z prośbą, używając wyłącznie wbudowanego narzędzia generowania obrazów. Nie używaj shell, MCP ani innych narzędzi. Nie czytaj ani nie zmieniaj plików projektu. Nie zastępuj obrazu opisem ani kodem SVG. Po wygenerowaniu zwróć JSON z polami prompt (prośba użytkownika) i answer (bardzo krótkie potwierdzenie po polsku). Prośba użytkownika:\n' + raw
-            : this.responseInstructions + (this.ephemeral || this.session.usesLocalContext ? this.session.contextPrompt(raw) : raw) }],
+            ? (attachment ? 'Edytuj załączony obraz zgodnie z prośbą. Zachowaj pozostałe szczegóły i zwróć dokładnie jeden obraz, ' : 'Wygeneruj dokładnie jeden obraz zgodny z prośbą, ') + 'używając wyłącznie wbudowanego narzędzia generowania obrazów. Nie używaj shell, MCP ani innych narzędzi. Nie czytaj ani nie zmieniaj plików projektu. Nie zastępuj obrazu opisem ani kodem SVG. Po wygenerowaniu zwróć JSON z polami prompt (prośba użytkownika) i answer (bardzo krótkie potwierdzenie po polsku). Prośba użytkownika:\n' + raw
+            : this.responseInstructions + (this.ephemeral || this.session.usesLocalContext ? this.session.contextPrompt(raw) : raw) },
+            ...(attachment ? [{ type: 'localImage', path: attachment }] : [])],
           ...(image ? { model: this.codexConfig.imageModel } : this.model && { model: this.model }),
           effort: this.codexConfig.effort,
           approvalPolicy: 'never',
@@ -360,7 +364,7 @@ export class CodexAppServer {
         let parsed: VoiceReply;
         try { parsed = JSON.parse(turn.text); }
         catch { throw new Error(`Codex returned invalid JSON: ${turn.text}`); }
-        if (typeof parsed.prompt !== 'string' || typeof parsed.answer !== 'string' || !parsed.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
+        if (typeof parsed.prompt !== 'string' || typeof parsed.answer !== 'string' || !parsed.answer.trim()) throw new Error(`Codex returned an incomplete voice reply. Raw response: ${turn.text}`);
         parsed.questionSource = questionSource;
         parsed.exchangeId = this.exchangeIdentity(`codex:${turn.threadId}:${turn.id}`);
         if (image && !turn.images.length) throw new Error(`Codex nie wygenerował obrazu: ${parsed.answer}`);

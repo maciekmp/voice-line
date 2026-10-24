@@ -100,6 +100,55 @@ test('startup, text, invalid commands and previous use the public controller API
   assert.equal(f.voices().at(-1)?.revision, 2);
 });
 
+test('image selection must belong to the current conversation and reaches the engine', async t => {
+  const f = fixture(); t.after(() => f.controller.shutdown());
+  await f.controller.start();
+  const imageId = 'a'.repeat(64);
+  let received: string | undefined;
+  f.engine.respond = async (text, _signal, _source, selected) => { received = selected; return { prompt: text, answer: 'Gotowe' }; };
+  assert.equal(await f.controller.command({ command: 'text', text: 'edit', imageId: '../secret' }), false);
+  assert.equal(await f.controller.command({ command: 'text', text: 'edit', imageId }), false);
+  f.engine.currentExchanges.push({ question: 'Obraz', answer: 'Gotowe', images: [{ id: imageId, alt: 'Obraz' }] });
+  assert.equal(await f.controller.command({ command: 'text', text: 'edit', imageId }), true);
+  assert.equal(received, imageId);
+  assert.equal(await f.controller.command({ command: 'text', text: 'zwykłe pytanie' }), true);
+  assert.equal(received, undefined);
+});
+
+test('selected image is available to voice input, survives failure and clears after success or reset', async t => {
+  const f = fixture(); t.after(() => f.controller.shutdown());
+  await f.controller.start();
+  const imageId = 'a'.repeat(64);
+  f.engine.currentExchanges.push({ question: 'Obraz', answer: 'Gotowe', images: [{ id: imageId, alt: 'Obraz' }] });
+  assert.equal(await f.controller.command({ command: 'select-image', imageId: 'b'.repeat(64) }), false);
+  assert.equal(await f.controller.command({ command: 'select-image', imageId }), true);
+  assert.equal(f.controller.snapshot().selectedImageId, imageId);
+  let received: string | undefined;
+  f.engine.respondAudio = async (_wav, _signal, callbacks, options) => {
+    received = options?.imageId;
+    callbacks?.onUpdate?.('thinking', { question: 'Zmień tło' });
+    throw new Error('No transcript');
+  };
+  assert.equal(f.application.beginRecording(), true); f.application.confirmRecording();
+  assert.equal(f.controller.snapshot().selectedImageId, imageId);
+  await f.application.releaseRecording();
+  assert.equal(received, imageId);
+  assert.equal(f.controller.snapshot().selectedImageId, imageId);
+  f.engine.respondAudio = async (_wav, _signal, _callbacks, options) => {
+    received = options?.imageId; return { prompt: 'Zmień tło', answer: 'Gotowe' };
+  };
+  assert.equal(f.application.beginRecording(), true); f.application.confirmRecording();
+  await f.application.releaseRecording();
+  assert.equal(received, imageId);
+  assert.equal(f.controller.snapshot().selectedImageId, null);
+  assert.equal(await f.controller.command({ command: 'select-image', imageId }), true);
+  await f.controller.command({ command: 'select-image', imageId: null });
+  assert.equal(f.controller.snapshot().selectedImageId, null);
+  await f.controller.command({ command: 'select-image', imageId });
+  await f.controller.command({ command: 'reset' });
+  assert.equal(f.controller.snapshot().selectedImageId, null);
+});
+
 test('voice operations publish stages and clean detached audio', async t => {
   const f = fixture(); t.after(() => f.controller.shutdown()); await f.controller.start();
   const initialEvents = f.voices().length;

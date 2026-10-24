@@ -48,10 +48,16 @@ function registerDesktopIpc(ipcMain, host) {
     try { clipboard.writeText(text); return true; }
     catch { return false; }
   });
-  handle('voice:text', async (event, text) => {
+  handle('voice:text', async (event, value) => {
+    const text = typeof value === 'string' ? value : value.text;
     if (!trusted(event) || host.exitStarted || typeof text !== 'string' || !text.trim() || text.length > 12000
       || !host.engine?.connected) return false;
-    const result = await host.engine.request({ command: 'text', text: text.trim() });
+    const result = await host.engine.request({ command: 'text', text: text.trim(), ...(typeof value === 'object' && { imageId: value.imageId }) });
+    return result.accepted;
+  });
+  handle('voice:image-selection', async (event, imageId) => {
+    if (!trusted(event) || host.exitStarted || !host.engine?.connected) return false;
+    const result = await host.engine.request({ command: 'select-image', imageId });
     return result.accepted;
   });
   handle('voice:image-preview', async (event, id) => {
