@@ -48,13 +48,11 @@ function registerDesktopIpc(ipcMain, host) {
     try { clipboard.writeText(text); return true; }
     catch { return false; }
   });
-  handle('voice:text', (event, text) => {
+  handle('voice:text', async (event, text) => {
     if (!trusted(event) || host.exitStarted || typeof text !== 'string' || !text.trim() || text.length > 12000
-      || !host.voice.ready || !host.engine?.connected || !['idle', 'error'].includes(host.voice.state)) return false;
-    overlay.intent('text-input');
-    sendVoice({ state: 'thinking', question: text.trim(), answer: '', questionSource: 'text' });
-    host.engine.send({ command: 'text', text: text.trim() });
-    return true;
+      || !host.engine?.connected) return false;
+    const result = await host.engine.request({ command: 'text', text: text.trim() });
+    return result.accepted;
   });
   handle('voice:image-preview', async (event, id) => {
     if (!host.panelWindow || host.panelWindow.isDestroyed() || event.sender !== host.panelWindow.webContents || host.exitStarted) return null;
@@ -83,23 +81,23 @@ function registerDesktopIpc(ipcMain, host) {
     if (!host.panelWindow || host.panelWindow.isDestroyed() || event.sender !== host.panelWindow.webContents || host.exitStarted) return;
     overlay.composerFocus(focused);
   });
-  on('voice:command', (event, command) => {
-    if (!trusted(event) || host.exitStarted) return;
-    if (command === 'pin' && event.sender === host.panelWindow?.webContents) { overlay.togglePin(); return; }
+  handle('voice:command', async (event, command) => {
+    if (!trusted(event) || host.exitStarted) return false;
+    if (command === 'pin' && event.sender === host.panelWindow?.webContents) { overlay.togglePin(); return true; }
     if (command === 'previous') {
-      if (event.sender !== host.panelWindow?.webContents || !host.voice.ready || !host.voice.canRestorePrevious
-        || !['idle', 'error'].includes(host.voice.state) || !host.engine?.connected) return;
-      sendVoice({ state: 'thinking' });
-      host.engine.send({ command });
-      overlay.open();
-      return;
+      if (!host.engine?.connected) return false;
+      const result = await host.engine.request({ command });
+      if (result.accepted && !host.exitStarted) overlay.open();
+      return result.accepted;
     }
-    if (command === 'hide') { hidePanel(); return; }
-    if (command === 'retry' && !host.voice.ready) {
-      if (!smokeTest && !preview) void engineSupervisor.restart();
-      return;
+    if (command === 'hide') { hidePanel(); return true; }
+    if (command === 'retry') {
+      if (smokeTest || preview) return false;
+      await engineSupervisor.restart();
+      return true;
     }
-    if (['record', 'release', 'cancel', 'reset'].includes(command) && host.engine?.connected) host.engine.send({ command });
+    if (['record', 'release', 'cancel', 'reset'].includes(command) && host.engine?.connected) return (await host.engine.request({ command })).accepted;
+    return false;
   });
   on('voice:ready', event => {
     if (!trusted(event) || host.exitStarted) return;

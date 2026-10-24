@@ -28,6 +28,7 @@ class FakeRealtime extends CodexRealtime {
     write: (audio: RealtimeAudioChunk) => { this.player.chunks.push(audio); },
     finish: async () => { this.player.finished = true; }, stop: () => { this.player.stopped = true; } };
   override async start() {}
+  override async startAudio() {}
   seed(exchanges: { question: string; answer: string }[]) {
     this.session.threadId = threadId;
     for (const exchange of exchanges) this.session.answered({ prompt: exchange.question, answer: exchange.answer });
@@ -370,6 +371,6 @@ test('missing key fails before server launch and has a useful Polish message', a
   delete process.env.OPENAI_API_KEY;
   t.after(() => { if (previous === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = previous; });
   const { cwd } = fixture(t);
-  await assert.rejects(new CodexRealtime(cwd).start(), /requires OPENAI_API_KEY/);
+  await assert.rejects(new CodexRealtime(cwd).startAudio(), /requires OPENAI_API_KEY/);
   assert.match(codexErrorMessage(new Error('realtime conversation requires API key auth'), 'fallback'), /OPENAI_API_KEY/);
 });

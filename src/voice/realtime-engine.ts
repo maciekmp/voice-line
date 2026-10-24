@@ -7,6 +7,8 @@ export class RealtimeVoiceEngine extends BaseVoiceEngine {
   readonly startupDescription = 'Codex realtime (API key)';
   private readonly realtime: RealtimeConversationClient;
   constructor(client: RealtimeVoiceEngine['realtime']) { super(client); this.realtime = client; }
+  override async startVoice(): Promise<void> { await this.realtime.startAudio?.(); }
+  override async startPlayback(): Promise<void> { await this.realtime.startAudio?.(); }
   async respondAudio(wav: string, signal?: AbortSignal, callbacks: VoiceCallbacks = {}) {
     let question = '', answer = '', speaking = false;
     let requestedImage: string | null = null;

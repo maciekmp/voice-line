@@ -29,6 +29,7 @@ test('source survives history serialization while legacy data and fingerprints s
 test('worker boundary and popup preserve pending, committed and legacy sources', () => {
   const completed = [{ id: 'e1', revision: 1, question: 'Q', answer: 'A', questionSource: 'voice' }];
   const snapshot = { type: 'voice', state: 'thinking', ready: true, health: 'ready', mode: 'local', threadId: id,
+    capabilities: { text: { state: 'ready' }, recording: { state: 'ready' }, playback: { state: 'ready' } },
     canRestorePrevious: false, revision: 1, operationId: 1,
     conversation: { id, revision: 1, completed, pending: { id: 'op1', revision: 1, question: 'Q2', answer: '', questionSource: 'text' } } };
   const parsed = parseWorkerEvent(snapshot);

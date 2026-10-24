@@ -14,7 +14,7 @@ The default `VOICE_MODE=local` uses the ChatGPT subscription. An optional experi
 
 The panel header displays **LOCAL** for local Whisper/TTS or **API** for Codex realtime. The engine is selected once at startup from `.env`; restart the application after changing `VOICE_MODE`. LOCAL refers to speech processing, while Codex still generates the answer. Each mode retains its own conversation history and authentication configuration.
 
-Voice orchestration lives in `src/voice/local-engine.ts` and `src/voice/realtime-engine.ts`, behind the contract in `src/voice-engine.ts`. `src/voice/create-engine.ts` constructs and validates the selected services. `src/main.ts` handles the microphone, gestures, conversation controls and UI events through that shared contract. `npm test -- test-voice-engine.ts` checks stage ordering, cancellation, partial transcripts, lifecycle and startup selection without inference requests.
+Voice orchestration lives in `src/voice/local-engine.ts` and `src/voice/realtime-engine.ts`, behind the contract in `src/voice-engine.ts`. `src/application-runtime.ts` constructs the shared services, controller and input adapter. Electron uses `src/worker-main.ts`; the terminal uses `src/cli-main.ts`. Both use the same conversation and Copilot flow. `src/main.ts` is a compatibility launcher. `npm test -- test-voice-engine.ts` checks stage ordering, cancellation, partial transcripts, lifecycle and startup selection without inference requests.
 
 - Windows 11, Node.js 22.18+, PowerShell 5.1, FFmpeg with DirectShow input.
 - A working microphone visible to FFmpeg.
@@ -115,9 +115,58 @@ npm.cmd start
 
 In Git Bash, use `cp .env.example .env` to create the configuration and run `npm start`. Use `npm` instead of `npm.cmd` for the other commands.
 
-To inspect recognition and speech output, run `npm.cmd run start:debug` instead of `npm.cmd start` (in Git Bash, `npm run start:debug`). Both modes print the cleaned question and the full AI answer; TTS skips fenced code blocks. Debug mode additionally prints the raw transcription, audio levels, timing measurements, and Codex thread ID. `Ctrl+Shift+N` starts a new conversation; `Ctrl+C` exits. Context expires 2 minutes after the last successful answer; the next voice or text question starts a new conversation. Restart resumes within that window; after expiry, use the previous-conversation control while its history is still retained.
+To inspect service diagnostics, run `npm.cmd run start:debug` instead of `npm.cmd start` (in Git Bash, `npm run start:debug`). Questions and answers appear in the panel; debug mode prints audio levels and timing measurements. Use `npm.cmd run start:cli -- --debug` for the interactive terminal with those diagnostics. TTS skips fenced code blocks. `Ctrl+Shift+N` starts a new conversation. Context expires 2 minutes after the last successful answer; the next voice or text question starts a new conversation. Restart resumes within that window; after expiry, use the previous-conversation control while its history is still retained.
 
-Only debug mode prints `[time]` measurements. Its main total is `Recording end to playback start`, measured from Copilot key release until the selected player reports active playback. The contiguous components are recording finalization, STT, Codex, and TTS startup to playback; they add up to that total apart from display rounding. Codex request acceptance and turn generation are nested details within the Codex component. Debug also reports playback duration and the full cycle. SAPI's audio queue status and FFplay's audio clock are approximate playback markers, not speaker-loopback measurements of the first audible sample. Console status messages and labels are in English; the assistant currently returns Polish questions and answers.
+Only debug mode prints `[time]` measurements. Its main total is `Recording end to playback start`, measured from Copilot key release until the selected player reports active playback. The contiguous components are recording finalization, STT, Codex, and TTS startup to playback; they add up to that total apart from display rounding. Codex request acceptance and turn generation are nested details within the Codex component. Debug also reports playback duration and the full cycle. SAPI's audio queue status and FFplay's audio clock are approximate playback markers, not speaker-loopback measurements of the first audible sample. User-facing terminal status and conversation labels are in Polish; debug measurements retain their technical English names.
+
+### Interactive terminal
+
+Run `npm.cmd run start:cli`. Type a message at `Ty>` and press Enter; typed
+messages receive text replies without speech playback. Copilot uses the same
+250 ms threshold as Electron: key-down interrupts the current operation,
+a short tap returns to typing, and a hold records from key-down until release.
+Before playback, interruption removes the unfinished turn from context. After
+playback starts, LOCAL retains the committed answer and realtime preserves the
+received fragment. A correction/continuation tap clears the draft; a voice hold
+preserves it. Service updates and answers preserve the text currently being edited.
+The terminal stays available for drafting and commands while services are starting.
+
+| Command | Action |
+| --- | --- |
+| `/new` | Start a new conversation; `Ctrl+Shift+N` does the same. |
+| `/previous` | Restore the previous retained conversation. |
+| `/cancel` | Interrupt current work and return to typing. |
+| `/history` | Print the current conversation, including image file paths. |
+| `/status` | Show separate text, recording and playback availability. |
+| `/retry` | Stop and recreate services and the keyboard hook; retain the draft. |
+| `/paste` | Enter multiline input; `/send` submits it and `/abort` discards it. |
+| `/image <description>` | Request an image through the selected backend. |
+| `/save "C:\path with spaces\conversation.md"` | Export completed conversation and embedded images. |
+| `/help`, `/quit` | Show help or shut down services and exit. |
+
+In multiline mode every line except `/send`, `/abort` and `/quit` is literal text.
+A rejected text submission keeps its draft. Ctrl+C interrupts an active operation;
+when idle it exits. Generated images are listed with their PNG paths; Markdown
+exports embed them using the same exporter as Electron. Exports survive automatic
+history cleanup, while the temporary artifact paths remain subject to retention.
+
+Piped input runs successive turns in order and waits for each to finish before
+processing the next line. EOF drains that work and shuts down cleanly. This mode
+does not open audio devices or install a keyboard hook. Failed startup, rejected
+submissions, operation errors or failed exports produce a nonzero exit status.
+For example:
+
+```powershell
+@('Pierwsze pytanie', 'Pytanie uzupełniające', '/save rozmowa.md') | npm.cmd run start:cli
+```
+
+Text startup is independent of microphone, STT and TTS in both interfaces.
+Missing microphone configuration or failed recognition startup disables recording
+without disabling text. Failed TTS startup allows LOCAL voice questions with
+text-only replies. Invalid audio or shortcut settings are reported for that
+service; invalid conversation-backend settings still prevent conversation startup.
+Use the panel's retry action or terminal `/retry` to recreate services. Restart the
+application after changing `.env`, since each process reads one configuration snapshot.
 
 ### Backend and model settings
 
@@ -207,7 +256,7 @@ and opens correction without also toggling views. Once playback has started,
 LOCAL keeps its full answer and API saves the received fragment marked interrupted.
 A tap then clears the draft and allows continuing by text. Holding at least 250 ms
 selects voice recording while preserving an unsent draft; release submits it.
-Audio is captured from key-down and discarded for taps. CLI retains its existing press-to-record flow.
+Audio is captured from key-down and discarded for taps. CLI shares this tap/hold flow.
 
 Escape hides the panel without stopping work and preserves the draft; updates
 from the same operation do not reopen it. Hover cannot open the hidden panel.
@@ -239,10 +288,10 @@ Node process exit. `npm run diagnose:keys` starts only a passive keyboard observ
 the isolated desktop preview does not install a keyboard hook.
 Closing the panel hides the panel without stopping services; **Zakończ** in the tray
 menu quits and shuts down the microphone, keyboard hook and voice workers.
-The microphone remains active between questions, as in terminal mode; only
-question recording retains samples. Conversation text is held in memory in the
-main process and renderers for display; the session file contains only metadata,
-while Codex retains its own history.
+The microphone remains active between questions in interactive mode; only
+question recording retains samples. The worker owns conversation history and
+publishes snapshots for display. Completed messages and image references are
+persisted in application-owned history files; the session file stores metadata.
 
 ### Audio feedback and preview
 
@@ -346,12 +395,15 @@ test history and session metadata without inference. Neither probe is a default 
 
 ## Components
 
-- `src/main.ts`: composition root for desktop and terminal input, keyboard/IPC adapters and process signals. The legacy `--debug-keys` flag delegates to the keyboard-only diagnostic.
-- `src/application-controller.ts`: injected voice engine, recorder, clock and event sink; coordinates startup, voice/text operations, cancellation, reset, previous, history maintenance and shutdown. Responses wait for the previous provider call and audio cleanup; stale callbacks cannot publish after reset or cancel.
-- `src/app-config.ts`: one immutable configuration snapshot for the selected services, passed by the factory to Codex, Whisper, recording and playback. Invalid `VOICE_MODE`, `CODEX_MODE`, `STT_MODE` and `TTS_MODE` values report their setting instead of silently choosing another backend; LOCAL-only settings are not validated in realtime mode.
+- `src/application-runtime.ts`: shared composition root for configuration, services, optional microphone and keyboard hook. `src/worker-main.ts` hosts it over Node IPC; `src/cli-main.ts` hosts it in the terminal. `src/main.ts` preserves older launch commands and `--debug-keys`.
+- `src/application-controller.ts`: injected voice engine, optional recorder, clock and event sink; owns conversation operations, cancellation, reset, previous, history maintenance and shutdown. Text, recognition and playback initialize independently. Synchronous command admission returns an operation ID or rejection reason separately from asynchronous completion. Responses wait for the previous provider call and audio cleanup; stale callbacks cannot publish after reset or cancel.
+- `src/application-input.ts`: shared Copilot tap/hold and keyboard-shortcut adapter. It translates physical input to controller operations and presentation intents; the controller knows neither physical keys nor desktop/CLI modes.
+- `src/cli.ts`: terminal presentation, editable prompt, multiline input, history, export and service restart. It consumes the same authoritative events as the desktop and preserves draft text during asynchronous updates.
+- `src/worker-host.ts`, `src/worker-validation.cjs` and `electron/engine-supervisor.cjs`: correlated IPC requests and admission acknowledgements, with bounded waits and rejection of pending requests on disconnect or restart. Electron clears a submitted draft only after worker acceptance; it does not synthesize operation states locally.
+- `src/app-config.ts`: one immutable configuration snapshot for the selected services, passed by the factory to Codex, Whisper, recording and playback. Application hosts isolate audio-setting errors to their affected capabilities; strict diagnostic/factory loading still rejects invalid settings. LOCAL-only settings are not validated in realtime mode.
 - `src/conversation-contract.ts` and `src/application-contract.ts`: neutral service interfaces, reply/history types, application command validation, service health and operation snapshot fields. Backend exports remain compatible adapters.
 - `src/desktop-contract.ts` and `src/desktop-validation.cjs`: preload API, requests/events and runtime validation of renderer requests and worker snapshots. `electron/desktop-worker.cjs` dispatches validated events; `desktop-conversation.cjs` presents authoritative completed/pending exchanges; `desktop-windows.cjs` applies native geometry and window lifecycle.
-- `src/answer-format.js` and `src/app-data.cjs`: shared answer formatting and data-root resolution, independent of Electron. Renderer/host imports retain thin compatibility adapters.
+- `src/answer-format.js`, `src/app-data.cjs`, `src/image-files.cjs` and `src/conversation-export.cjs`: shared formatting, data-root resolution, validated image access and portable conversation export, independent of Electron. Renderer/host imports retain thin compatibility adapters.
 - `src/keyboard/bridge.ps1`: a small Win32 low-level keyboard hook bridge. It emits physical DOWN and UP events as JSON lines. `src/keyboard/copilot-key.ts` reads them in Node.
 - `src/audio/recorder.ts`: FFmpeg opens the microphone at startup and streams 16 kHz mono PCM. Samples are kept only while Copilot is held; release writes a WAV immediately. This keeps the microphone in use while the app runs, even between utterances. Set `FFMPEG_BIN` to the real executable if your `ffmpeg.exe` on `PATH` is a launcher such as Chocolatey's shim. When `FFPLAY_BIN` is unset, playback prefers the real `ffplay.exe` beside that configured FFmpeg. This allows Copilot interruption to terminate the actual player instead of leaving it running behind a launcher. An explicit `FFPLAY_BIN` must also point to the actual executable.
 - `src/stt/transcriber.ts`: local whisper.cpp server loaded once at startup. The model stays in memory between utterances; `STT_MODE=cli` in `.env` restores the old per-utterance CLI mode for troubleshooting.
@@ -375,4 +427,4 @@ Debug mode also prints captured WAV duration and sound levels (RMS and peak in d
 
 - The keyboard hook suppresses only the configured `COPILOT_VK` while the voice application runs. Some keyboards may emit a different shortcut or may not expose a held F23 event; check `npm.cmd run diagnose:keys` first and configure the virtual key your keyboard reports.
 - Windows SAPI voice quality depends on installed voices. Piper requires a separate executable and voice download; neither is bundled in Git.
-- Microphone, local model, and signed-in Codex CLI are required for the full voice loop. This repository does not bundle an STT model or download one automatically.
+- Microphone, local model, and signed-in Codex CLI are required for the full LOCAL voice loop. Text input works without the microphone and speech services. This repository does not bundle an STT model or download one automatically.

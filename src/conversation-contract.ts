@@ -48,5 +48,6 @@ export type RealtimeCallbacks = {
 };
 
 export interface RealtimeConversationClient extends ConversationClient {
+  startAudio?(): Promise<void>;
   respondAudio(wav: string, signal?: AbortSignal, callbacks?: RealtimeCallbacks): Promise<VoiceReply>;
 }

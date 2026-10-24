@@ -50,6 +50,7 @@ test('IPC keeps UTF-16 text limits, finite audio levels and detached nested valu
     assert.equal(parseWorkerEvent({ type: 'level', source: 'listening', level }), null);
   }
   const input = { type: 'voice', state: 'idle', health: 'ready', ready: true, mode: 'local',
+    capabilities: { text: { state: 'ready' }, recording: { state: 'ready' }, playback: { state: 'ready' } },
     threadId: id, canRestorePrevious: false, revision: 1, operationId: null,
     conversation: { id, revision: 1, pending: null, completed: [{ question: 'Q', answer: 'A',
       imageTask: { threadId: id, turnId: 'turn_1', extra: 'discard' } }] } };

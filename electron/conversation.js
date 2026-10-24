@@ -92,8 +92,17 @@ main.addEventListener('scroll', () => {
   if (!resizing) followLatest = main.scrollHeight - main.clientHeight - main.scrollTop <= 32;
 });
 get('pin').addEventListener('click', () => window.voiceDesktop.command('pin'));
-get('previous').addEventListener('click', () => {
-  if (!get('previous').disabled) window.voiceDesktop.command('previous');
+get('previous').addEventListener('click', async () => {
+  if (get('previous').disabled) return;
+  pending = true; updateComposer();
+  try {
+    if (!await window.voiceDesktop.command('previous')) {
+      errorText.textContent = 'Nie przywrócono rozmowy. Poczekaj na gotowość usług i spróbuj ponownie.';
+      get('error').hidden = false;
+    }
+  } catch {
+    errorText.textContent = 'Nie przywrócono rozmowy. Spróbuj ponownie.'; get('error').hidden = false;
+  } finally { pending = false; updateComposer(); }
 });
 window.voiceDesktop.onPinned(pinned => {
   get('pin').setAttribute('aria-pressed', String(pinned));
@@ -165,10 +174,14 @@ window.voiceDesktop.onVoice(value => {
   refreshImageVisibility();
   statusText.textContent = value.interrupted ? 'Odpowiedź przerwana' : value.state === 'thinking' && value.generatingImage ? 'Generuję obraz…' : labels[value.state] || '';
   get('status').hidden = (!value.interrupted && Boolean(value.answer) && !['thinking', 'starting'].includes(value.state)) || !get('status').textContent;
-  get('error').hidden = !value.message;
-  errorText.textContent = value.message || '';
+  const audioIssues = [value.capabilities?.recording, value.capabilities?.playback]
+    .filter(capability => capability?.state === 'error' || capability?.state === 'disabled');
+  const serviceMessage = [value.message || value.capabilities?.text.message,
+    ...audioIssues.map(capability => capability?.message), value.inputMessage].filter(Boolean).join(' ');
+  get('error').hidden = !serviceMessage;
+  errorText.textContent = serviceMessage;
   setQuestionIcon(get('question-block'), value.questionSource);
-  get('retry').hidden = value.state !== 'error' || value.ready;
+  get('retry').hidden = !((value.state === 'error' && !value.ready) || audioIssues.length || value.inputMessage);
   for (const key of /** @type {const} */ (['question', 'answer'])) {
     if (key === 'answer') {
       const answer = value.answer || '';

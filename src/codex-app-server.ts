@@ -163,7 +163,7 @@ export class CodexAppServer {
       if (this.lifecycle !== lifecycle || this.transport !== transport) throw new Error('Codex startup stopped');
     };
     try {
-      await this.request('initialize', { clientInfo: { name: 'voice_line', title: 'Voice Line', version: '0.1.0' },
+      await this.request('initialize', { clientInfo: { name: 'voice_line', title: 'Voice Line', version: '0.2.0' },
         capabilities: { experimentalApi: true } });
       ensureCurrent();
       this.send({ method: 'initialized', params: {} });

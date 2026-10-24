@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ApplicationController, type AudioRecorder, type ControllerClock } from '../../src/application-controller.ts';
+import { ApplicationInput } from '../../src/application-input.ts';
 import type { ApplicationEvent } from '../../src/application-contract.ts';
 import type { VoiceEngine, VoiceCallbacks } from '../../src/voice-engine.ts';
 import type { VoiceReply } from '../../src/conversation-contract.ts';
@@ -40,6 +41,7 @@ function fixture(desktop = false) {
     mode: 'local', startupDescription: 'fake services', currentThreadId: '11111111-1111-1111-1111-111111111111',
     currentExchanges: [], canRestorePrevious: true,
     start: async () => { calls.push('engine.start'); }, stop: () => { calls.push('engine.stop'); },
+    startVoice: async () => { calls.push('voice.start'); }, startPlayback: async () => { calls.push('playback.start'); },
     cancel: () => { calls.push('engine.cancel'); }, reset: () => { calls.push('engine.reset'); },
     expireConversation: () => {}, restorePrevious: async () => { calls.push('previous'); return true; },
     maintainHistory: async () => { calls.push('cleanup'); return false; },
@@ -56,11 +58,27 @@ function fixture(desktop = false) {
     stop: async () => { calls.push('record.stop'); return 'speech.wav'; }, cancel: () => { calls.push('record.cancel'); },
     shutdown: () => { calls.push('record.shutdown'); },
   };
-  const controller = new ApplicationController({ engine, recorder, desktop, key: 134, clock: time.clock,
+  const controller = new ApplicationController({ engine, recorder, clock: time.clock,
     emit: event => events.push(event), removeAudio: async wav => { files.push(wav); },
     log: { log() {}, error() {} }, operationTimeoutMs: 1000 });
   const voices = () => events.filter(event => event.type === 'voice');
-  return { engine, recorder, controller, events, calls, files, time, voices, reply };
+  const input = new ApplicationInput(controller, event => events.push(event), { clock: time.clock });
+  // Core-operation tests start recording directly; gesture scenarios use the real input adapter.
+  const command = controller.command.bind(controller);
+  const application = controller;
+  const facade = {
+    snapshot: () => controller.snapshot(), start: () => controller.start(),
+    maintainHistory: () => controller.maintainHistory(),
+    shutdown: () => { input.dispose(); return controller.shutdown(); },
+    command: async (value: unknown): Promise<boolean> => {
+      if (desktop) return input.command(value);
+      const message = value as { command?: string };
+      if (message?.command === 'record') { controller.interruptForInput(); const started = controller.beginRecording(); controller.confirmRecording(); return started; }
+      if (message?.command === 'release') { void controller.releaseRecording(); return true; }
+      return command(value);
+    },
+  };
+  return { engine, recorder, controller: facade, application, input, events, calls, files, time, voices, reply };
 }
 
 test('startup, text, invalid commands and previous use the public controller API without devices', async t => {
@@ -82,12 +100,13 @@ test('startup, text, invalid commands and previous use the public controller API
   assert.equal(f.voices().at(-1)?.revision, 2);
 });
 
-test('CLI voice publishes stages, cleans audio and ignores key repeats', async t => {
+test('voice operations publish stages and clean detached audio', async t => {
   const f = fixture(); t.after(() => f.controller.shutdown()); await f.controller.start();
-  await f.controller.command({ command: 'record' }); await f.controller.command({ command: 'record' });
+  const initialEvents = f.voices().length;
+  await f.controller.command({ command: 'record' });
   assert.equal(f.calls.filter(call => call === 'record').length, 1);
   await f.controller.command({ command: 'release' }); await flush();
-  assert.deepEqual(f.voices().slice(2).map(event => event.state), ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking', 'idle']);
+  assert.deepEqual(f.voices().slice(initialEvents).map(event => event.state), ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking', 'idle']);
   assert.deepEqual(f.files, ['speech.wav']);
   assert.ok(f.events.some(event => event.type === 'level' && event.level === 0.5));
   assert.equal(f.controller.snapshot().operationId, null);
@@ -143,7 +162,7 @@ test('a press begun while unavailable cannot record when startup completes durin
   assert.equal(f.events.filter(e => e.type === 'ui').at(-1)?.action, 'voice-input');
 });
 
-for (const { desktop, duration } of [{ desktop: true, duration: 80 }, { desktop: true, duration: 500 }, { desktop: false, duration: 500 }]) {
+for (const { desktop, duration } of [{ desktop: true, duration: 80 }, { desktop: true, duration: 500 }]) {
   test(`${desktop ? 'desktop' : 'CLI'} Copilot interrupts playback and ${duration < 250 ? 'composes on tap' : 'records on hold'}`, async t => {
     const f = fixture(desktop); t.after(() => f.controller.shutdown()); await f.controller.start();
     const response = deferred<VoiceReply>(); let callbacks!: VoiceCallbacks; let signal!: AbortSignal;
@@ -325,4 +344,69 @@ test('expiration clears completed history but preserves the pending question', a
   assert.equal(snapshot.pending?.question, 'new question');
   await f.controller.command({ command: 'cancel' });
   response.resolve(f.reply); await work;
+});
+
+test('text becomes ready while microphone startup is pending and remains available after audio failure', async t => {
+  const f = fixture(); t.after(() => f.controller.shutdown());
+  const microphone = deferred<void>(); f.recorder.startCapture = () => microphone.promise;
+  const starting = f.controller.start(); await flush();
+  assert.equal(f.controller.snapshot().ready, true);
+  assert.equal(f.controller.snapshot().capabilities.recording.state, 'starting');
+  assert.equal(await f.controller.command({ command: 'text', text: 'without audio' }), true);
+  microphone.reject(new Error('microphone unavailable')); await starting;
+  assert.equal(f.controller.snapshot().capabilities.recording.state, 'error');
+  assert.equal(f.controller.snapshot().ready, true);
+  assert.equal(await f.controller.command({ command: 'text', text: 'still works' }), true);
+});
+
+test('playback startup failure leaves voice recognition usable with a text-only response', async t => {
+  const f = fixture(true); t.after(() => f.controller.shutdown());
+  f.engine.startPlayback = async () => { throw new Error('TTS unavailable'); };
+  let playback: boolean | undefined;
+  f.engine.respondAudio = async (_wav, _signal, _callbacks, options) => { playback = options?.playback; return f.reply; };
+  await f.controller.start();
+  assert.equal(f.controller.snapshot().capabilities.recording.state, 'ready');
+  assert.equal(f.controller.snapshot().capabilities.playback.state, 'error');
+  await f.input.command({ command: 'record' }); f.time.advance(250);
+  await f.input.command({ command: 'release' }); await flush();
+  assert.equal(playback, false);
+});
+
+test('a missing microphone disables only recording and admission reports busy before inference finishes', async t => {
+  const f = fixture();
+  const core = new ApplicationController({ engine: f.engine, emit: () => {}, removeAudio: async () => {}, log: { log() {}, error() {} } });
+  t.after(() => core.shutdown());
+  await core.start();
+  assert.equal(core.snapshot().capabilities.recording.state, 'disabled');
+  const response = deferred<VoiceReply>(); f.engine.respond = () => response.promise;
+  const first = core.dispatch({ command: 'text', text: 'first' });
+  assert.deepEqual(first.result, { accepted: true, operationId: 1 });
+  assert.deepEqual(core.dispatch({ command: 'text', text: 'overlap' }).result, { accepted: false, reason: 'busy' });
+  response.resolve(f.reply); await first.completion;
+});
+
+test('Copilot recovers from an operation deadline even before an uncooperative provider settles', async t => {
+  const f = fixture(true); t.after(() => f.controller.shutdown()); await f.controller.start();
+  const response = deferred<VoiceReply>();
+  f.engine.respond = () => response.promise;
+  const first = f.input.dispatch({ command: 'text', text: 'timeout' }); await flush();
+  f.time.advance(1000); assert.equal(f.controller.snapshot().state, 'error');
+  await f.input.command({ command: 'tap' });
+  assert.equal(f.controller.snapshot().operationId, null);
+  const next = f.input.dispatch({ command: 'text', text: 'retry' });
+  assert.equal(next.result.accepted, true);
+  response.resolve(f.reply); await first.completion; await next.completion;
+  assert.equal(f.controller.snapshot().state, 'idle');
+});
+
+test('later audio startup updates cannot erase a text operation error', async t => {
+  const f = fixture(); t.after(() => f.controller.shutdown());
+  const microphone = deferred<void>(); f.recorder.startCapture = () => microphone.promise;
+  const starting = f.controller.start(); await flush();
+  f.engine.respond = async () => { throw new Error('network failure'); };
+  await f.controller.command({ command: 'text', text: 'question' });
+  const message = f.voices().at(-1)?.message; assert.ok(message);
+  microphone.resolve(); await starting;
+  assert.equal(f.voices().at(-1)?.message, message);
+  assert.equal(f.controller.snapshot().message, message);
 });

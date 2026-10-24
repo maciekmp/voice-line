@@ -41,7 +41,7 @@ export class WhisperTranscriber {
   }
 
   start(): Promise<void> {
-    if (this.useCli) return Promise.resolve();
+    if (this.useCli) return existsSync(this.model) ? Promise.resolve() : Promise.reject(new Error(`Whisper model not found: ${this.model}`));
     if (!this.startPromise) {
       const startup = this.startServer(this.generation).catch(error => {
         if (this.startPromise === startup) this.startPromise = null;

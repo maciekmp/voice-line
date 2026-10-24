@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict';
 import type { ChildProcess } from 'node:child_process';
 import { ApplicationController, type AudioRecorder } from '../../src/application-controller.ts';
+import { ApplicationInput } from '../../src/application-input.ts';
 import { LocalVoiceEngine } from '../../src/voice/local-engine.ts';
 import { PiperSpeaker } from '../../src/piper-speaker.ts';
 import { loadPiperConfig } from '../../src/app-config.ts';
@@ -41,12 +42,13 @@ try {
       lastDurationSeconds: 1, lastRmsDbfs: -12, lastPeakDbfs: -6,
     };
     const engine = new LocalVoiceEngine(client, { start: async () => {}, stop() {}, transcribe: async () => 'Pytanie testowe.' }, speaker, 'piper');
-    const controller = new ApplicationController({ engine, recorder, desktop: true,
+    const controller = new ApplicationController({ engine, recorder,
       emit: event => events.push(event), removeAudio: async () => {}, log: { log() {}, error: console.error } });
+    const input = new ApplicationInput(controller, event => events.push(event));
     try {
       await controller.start();
-      await controller.command({ command: 'record' }); await sleep(300);
-      await controller.command({ command: 'release' });
+      await input.command({ command: 'record' }); await sleep(300);
+      await input.command({ command: 'release' });
       await waitFor(() => controller.snapshot().state === 'speaking');
       // Capture the exact owned player before interruption, not unrelated processes.
       const player = (speaker as unknown as { active: { player: ChildProcess } }).active.player;
@@ -57,20 +59,19 @@ try {
         player.once('close', () => { clearTimeout(timeout); resolve(); });
       });
       const started = performance.now();
-      await controller.command({ command: 'record' });
+      await input.command({ command: 'record' });
       await closed;
       assert.equal(player.killed, true);
       await sleep(duration);
       assert.equal(controller.snapshot().state, duration < 250 ? 'idle' : 'listening');
       if (duration < 250) {
-        await controller.command({ command: 'release' });
-        assert.ok(events.some(event => event.type === 'ui' && event.action === 'compose'));
+        await input.command({ command: 'release' });
+        assert.ok(events.some(event => event.type === 'ui' && event.action === 'continue'));
       } else {
-        assert.ok(!events.some(event => event.type === 'ui'));
-        await controller.command({ command: 'cancel' });
+        await input.command({ command: 'cancel' });
       }
       console.log(`Copilot ${duration < 250 ? 'tap' : 'hold'}: native playback stopped in ${Math.round(performance.now() - started - duration)} ms`);
-    } finally { await controller.shutdown(); }
+    } finally { input.dispose(); await controller.shutdown(); }
   }
 } finally {
   if (originalAudioDriver === undefined) delete process.env.SDL_AUDIODRIVER;

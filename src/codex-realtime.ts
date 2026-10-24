@@ -67,10 +67,10 @@ export class CodexRealtime extends CodexAppServer {
     return changed || imagesChanged;
   }
 
-  override start(): Promise<void> {
+  startAudio(): Promise<void> {
     if (!this.apiKey) return Promise.reject(new Error('VOICE_MODE=realtime requires OPENAI_API_KEY; ChatGPT login is not supported by Codex realtime'));
     if (this.voice && !voices.has(this.voice)) return Promise.reject(new Error('Invalid CODEX_REALTIME_VOICE'));
-    return super.start();
+    return this.start();
   }
 
   // The canonical timeline includes voice transcripts and normal text turns in order.
@@ -138,7 +138,7 @@ export class CodexRealtime extends CodexAppServer {
 
   private async runAudio(wav: string, signal: AbortSignal | undefined, callbacks: RealtimeCallbacks): Promise<VoiceReply> {
     const pcm = realtimePcm(await readFile(wav));
-    await this.start();
+    await this.startAudio();
     await this.cleanHistory();
     this.session.expire();
     if (!this.session.threadId || this.session.usesLocalContext) await this.openThread();

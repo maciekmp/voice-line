@@ -5,6 +5,7 @@ function record(value) { return value !== null && typeof value === 'object' && !
 /** @param {unknown} value @returns {value is string} */
 function imageId(value) { return imageIdSchema.safeParse(value).success; }
 const workerEventSchema = z.union([
+  z.object({ type: z.literal('notice'), message: z.string(), source: z.literal('shortcut').optional() }),
   z.object({ type: z.literal('level'), source: z.enum(['listening', 'speaking']),
     level: z.number().transform(value => Math.min(1, Math.max(0, value))) }),
   z.object({ type: z.literal('ui'), action: z.enum(['compose', 'correct', 'continue', 'voice-input', 'text-input']) }),
@@ -14,7 +15,12 @@ const workerEventSchema = z.union([
     ready: z.boolean(), canRestorePrevious: z.boolean(), revision: revisionSchema,
     operationId: revisionSchema.nullable(), threadId: identifierSchema.nullable(),
     conversation: conversationViewSchema, message: z.string().optional(), generatingImage: z.boolean().optional(),
-  }).refine(value => value.ready === (value.health === 'ready') && value.threadId === value.conversation.id),
+    capabilities: z.object({
+      text: z.object({ state: z.enum(['starting', 'ready', 'error', 'stopped']), message: z.string().optional() }),
+      recording: z.object({ state: z.enum(['starting', 'ready', 'error', 'stopped', 'disabled']), message: z.string().optional() }),
+      playback: z.object({ state: z.enum(['starting', 'ready', 'error', 'stopped', 'disabled']), message: z.string().optional() }),
+    }),
+  }).refine(value => value.ready === (value.health === 'ready') && value.threadId === value.conversation.id && value.capabilities.text.state === value.health),
 ]);
 /** @param {import('./application-contract.ts').ConversationView} value */
 function copyConversation(value) {

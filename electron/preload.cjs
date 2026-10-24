@@ -19,7 +19,7 @@ const desktopApi = {
   imagePreview(id) { return ipcRenderer.invoke('voice:image-preview', id); },
   saveImage(id) { return ipcRenderer.invoke('voice:image-save', id); },
   resize(size) { ipcRenderer.send('voice:resize', size); },
-  command(command) { ipcRenderer.send('voice:command', command); },
+  command(command) { return ipcRenderer.invoke('voice:command', command); },
   onLevel(callback) { return listen('voice:level', callback); },
   onVoice(callback) { return listen('voice:snapshot', callback); },
   onClearDraft(callback) { return listen('voice:clear-draft', callback); },

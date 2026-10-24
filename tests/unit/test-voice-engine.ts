@@ -66,6 +66,8 @@ test('local engine reports stages, question and answer before playback', async (
 test('local lifecycle manages its services and typed messages do not use STT/TTS', async () => {
   const { calls, engine } = fixture();
   await engine.start();
+  assert.deepEqual(calls, ['client.start']);
+  await Promise.all([engine.startVoice(), engine.startPlayback()]);
   assert.deepEqual(new Set(calls), new Set(['client.start', 'stt.start', 'tts.start']));
   calls.length = 0;
   await engine.respond('Typed');
@@ -135,4 +137,16 @@ test('realtime adapter replaces partial text, preserves prior context and ignore
   assert.deepEqual(updates.at(-1), { state: 'speaking', question: 'Question', answer: 'Full answer' });
   assert.equal(client.currentExchanges.length, 1);
   assert.equal(engine.mode, 'realtime');
+});
+
+test('failed playback setup leaves typed turns available and recognition can return a text-only answer', async () => {
+  const { client, stt, speaker, calls } = fixture();
+  const engine = new LocalVoiceEngine(client, stt, speaker, 'sapi', { playback: 'TTS_RATE must be valid' });
+  await engine.start();
+  await assert.rejects(engine.startPlayback(), /TTS_RATE/);
+  await engine.respond('typed');
+  const reply = await engine.respondAudio('speech.wav', undefined, {}, { playback: false });
+  assert.equal(reply.answer, 'Answer');
+  assert.ok(!calls.some(call => call.startsWith('speak:')));
+  assert.ok(calls.includes('respond:typed'));
 });

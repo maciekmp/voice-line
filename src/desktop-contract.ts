@@ -1,4 +1,4 @@
-import type { ApplicationState, ConversationView, ServiceHealth } from './application-contract.ts';
+import type { ApplicationState, ConversationView, ServiceHealth, ApplicationCapabilities } from './application-contract.ts';
 import type { ConversationExchange, GeneratedImage } from './conversation-contract.ts';
 
 export type DesktopCommand = 'record' | 'release' | 'cancel' | 'reset' | 'previous' | 'pin' | 'hide' | 'retry';
@@ -9,8 +9,10 @@ export type AudioIndicator = 'bars' | 'orb' | 'glow' | 'waves';
 export type DesktopSettings = { indicator: AudioIndicator; paused: boolean };
 export type DesktopVoice = {
   state: ApplicationState; ready: boolean; health?: ServiceHealth; mode?: 'local' | 'realtime';
+  capabilities?: ApplicationCapabilities;
   threadId?: string | null; canRestorePrevious?: boolean; revision?: number; operationId?: number | null;
   generatingImage?: boolean; question: string; answer: string; message: string;
+  inputMessage?: string;
   interrupted?: boolean; questionSource?: import('./conversation-contract.ts').QuestionSource;
   images: GeneratedImage[]; history: ConversationExchange[]; conversation: ConversationView;
 };
@@ -37,7 +39,7 @@ export interface DesktopApi {
   imagePreview(id: string): Promise<string | null>;
   saveImage(id: string): Promise<SaveResult>;
   resize(size: PanelMeasurement): void;
-  command(command: DesktopCommand): void;
+  command(command: DesktopCommand): Promise<boolean>;
   onLevel(callback: (level: number) => void): () => void;
   onVoice(callback: (snapshot: DesktopVoice) => void): () => void;
   onMode(callback: (mode: PanelMode) => void): () => void;

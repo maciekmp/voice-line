@@ -109,3 +109,32 @@ test('IPC send failure is controlled and shutdown prevents a queued restart', as
   assert.equal(children.length, 1);
   assert.equal(supervisor.state, 'stopped');
 });
+
+test('requests are correlated and disconnect or restart releases all pending callers', async () => {
+  const children = [];
+  const supervisor = createEngineSupervisor({ launch() { const child = fixture(); children.push(child); return child; } });
+  supervisor.start();
+  const first = supervisor.request({ command: 'text', text: 'one' });
+  const second = supervisor.request({ command: 'reset' });
+  const [one, two] = children[0].messages;
+  children[0].emit('message', { type: 'command-result', requestId: two.requestId, result: { accepted: true, operationId: null } });
+  assert.deepEqual(await second, { accepted: true, operationId: null });
+  children[0].emit('message', { type: 'command-result', requestId: one.requestId, result: { accepted: false, reason: 'busy' } });
+  assert.deepEqual(await first, { accepted: false, reason: 'busy' });
+  const interrupted = supervisor.request({ command: 'text', text: 'lost' });
+  const restarted = supervisor.restart();
+  assert.deepEqual(await interrupted, { accepted: false, reason: 'disconnected' });
+  children[0].emit('close'); await restarted;
+  const disconnected = supervisor.request({ command: 'text', text: 'lost again' });
+  children[1].connected = false; children[1].emit('disconnect');
+  assert.deepEqual(await disconnected, { accepted: false, reason: 'disconnected' });
+  children[1].emit('close');
+});
+
+test('missing acknowledgement times out without treating a successful send as acceptance', async () => {
+  const child = fixture();
+  const supervisor = createEngineSupervisor({ launch: () => child, requestTimeoutMs: 5 });
+  supervisor.start();
+  assert.deepEqual(await supervisor.request({ command: 'text', text: 'no ack' }), { accepted: false, reason: 'timeout' });
+  child.emit('close');
+});

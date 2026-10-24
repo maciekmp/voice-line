@@ -110,3 +110,14 @@ test('CLI uses the injected model across successive answers', async t => {
   assert.ok(args.every(input => input[input.indexOf('-m') + 1] === 'configured-model'));
   assert.ok(args.every(input => input.includes('web_search="live"')), 'CLI enables live search on new and resumed turns');
 });
+
+test('application hosts isolate invalid audio and shortcut settings while strict diagnostic loading still rejects them', () => {
+  const env = { WHISPER_THREADS: 'bad', TTS_MODE: 'bad', COPILOT_VK: '999' };
+  const config = loadAppConfig(env, false, true);
+  assert.match(config.serviceErrors?.recording ?? '', /WHISPER_THREADS/);
+  assert.match(config.serviceErrors?.playback ?? '', /TTS_MODE/);
+  assert.match(config.serviceErrors?.shortcut ?? '', /COPILOT_VK/);
+  assert.equal(config.codex.mode, 'app-server');
+  assert.throws(() => loadAppConfig(env, false), /TTS_MODE/);
+  assert.throws(() => loadAppConfig({ CODEX_MODE: 'typo' }, false, true), /CODEX_MODE/);
+});

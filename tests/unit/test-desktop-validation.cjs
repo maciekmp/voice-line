@@ -5,6 +5,7 @@ const { createWorkerEventReceiver } = require('../../electron/desktop-worker.cjs
 
 function snapshot() {
   return { type: 'voice', state: 'idle', ready: true, health: 'ready', mode: 'local',
+    capabilities: { text: { state: 'ready' }, recording: { state: 'ready' }, playback: { state: 'ready' } },
     threadId: 'conversation-1', canRestorePrevious: false, revision: 3, operationId: null,
     conversation: { id: 'conversation-1', revision: 2, pending: null,
       completed: [{ id: 'exchange-1', revision: 1, question: 'Q', answer: 'A',
@@ -33,7 +34,9 @@ test('worker validation checks canonical history, consistency and nested image r
   const variants = [null, [], {}, { ...valid, state: 'unknown' }, { ...valid, health: 'error' },
     { ...valid, revision: -1 }, { ...valid, operationId: NaN }, { ...valid, canRestorePrevious: 1 },
     { ...valid, threadId: 'other' }, { ...valid, mode: 'unknown' }, { ...valid, message: {} },
-    { ...valid, generatingImage: 'yes' },
+    { ...valid, generatingImage: 'yes' }, { ...valid, capabilities: undefined },
+    { ...valid, capabilities: { ...valid.capabilities, text: { state: 'error' } } },
+    { ...valid, capabilities: { ...valid.capabilities, recording: { state: 'unknown' } } },
     { ...valid, conversation: { ...valid.conversation, revision: 1.5 } },
     { ...valid, conversation: { ...valid.conversation, pending: { id: 'op', revision: 1, question: 'Q', answer: null } } },
     { ...valid, conversation: { ...valid.conversation, completed: [...valid.conversation.completed, ...valid.conversation.completed] } },

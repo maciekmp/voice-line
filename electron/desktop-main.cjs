@@ -85,12 +85,12 @@ const onEngineMessage = createWorkerEventReceiver({
 });
 const engineSupervisor = createEngineSupervisor({
   launch() {
-    sendVoice({ state: 'starting', ready: false });
+    sendVoice({ state: 'starting', ready: false, inputMessage: '' });
     return spawn(process.env.NODE_BIN || 'node',
-    ['--env-file-if-exists=.env', '--experimental-strip-types', 'src/main.ts', '--desktop', ...(process.argv.includes('--debug') ? ['--debug'] : [])],
+    ['--env-file-if-exists=.env', '--experimental-strip-types', 'src/worker-main.ts', ...(process.argv.includes('--debug') ? ['--debug'] : [])],
     { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'inherit', 'inherit', 'ipc'], windowsHide: true });
   },
-  onChild(child) { engine = child && { get connected() { return child.connected; }, send: message => engineSupervisor.send(message) }; },
+  onChild(child) { engine = child && { get connected() { return child.connected; }, request: message => engineSupervisor.request(message) }; },
   canStart: () => !exitStarted && !smokeTest && !preview,
   onMessage: onEngineMessage,
   onError(error) {
@@ -195,8 +195,8 @@ function menu() {
   return Menu.buildFromTemplate([
     { label: 'Otwórz rozmowę', click: openPanel },
     ...(!preview ? [
-      { label: 'Przerwij', enabled: voice.ready, click: () => engine?.connected && engine.send({ command: 'cancel' }) },
-      { label: 'Nowa rozmowa', enabled: voice.ready, click: () => engine?.connected && engine.send({ command: 'reset' }) },
+      { label: 'Przerwij', enabled: voice.ready, click: () => engine?.connected && engine.request({ command: 'cancel' }) },
+      { label: 'Nowa rozmowa', enabled: voice.ready, click: () => engine?.connected && engine.request({ command: 'reset' }) },
       { label: 'Zapisz rozmowę…', enabled: voice.ready && Boolean(voice.answer) && ['idle', 'error'].includes(voice.state) && !savingConversation,
         click: () => { void saveCurrentConversation(); } },
     ] : [

@@ -16,6 +16,8 @@ async function verifyDesktop(host) {
     const snapshot = fixture.update(message);
     return host.onEngineMessage({ ...snapshot, type: 'voice', mode: snapshot.mode || 'local',
       ready: Boolean(snapshot.ready), health: snapshot.ready ? 'ready' : snapshot.state === 'error' ? 'error' : 'starting',
+      capabilities: { text: { state: snapshot.ready ? 'ready' : snapshot.state === 'error' ? 'error' : 'starting' },
+        recording: { state: 'ready' }, playback: { state: 'ready' } },
       threadId: snapshot.conversation.id, revision: snapshot.conversation.revision,
       operationId: null, canRestorePrevious: Boolean(snapshot.canRestorePrevious) });
   };
@@ -337,7 +339,15 @@ async function verifyDesktop(host) {
   sendVoice({ state: 'idle' });
   const commands = [];
   console.log('Conversation mode checks: passed');
-  host.engine = { connected: true, send: message => commands.push(message) };
+  host.engine = { connected: true, request: async message => {
+    commands.push(message);
+    if (message.command === 'previous') sendVoice({ state: 'thinking' });
+    if (message.command === 'text') {
+      sendVoice({ state: 'thinking', question: message.text, answer: '', questionSource: 'text' });
+      host.onEngineMessage({ type: 'ui', action: 'text-input' });
+    }
+    return { accepted: true, operationId: 1 };
+  } };
   previousConversations.clear();
   const savedExchanges = [{ question: 'Zapisane pytanie', answer: 'Zapisana odpowiedź' },
     { question: 'Kolejne zapisane pytanie', answer: 'Kolejna zapisana odpowiedź' }];
@@ -495,6 +505,35 @@ async function verifyDesktop(host) {
   await new Promise(resolve => setTimeout(resolve, 80));
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#message').value"), 'Zachowaj tę wiadomość', 'Rejected messages preserve the draft');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#error').hidden"), false);
+  let acknowledge;
+  host.engine = { connected: true, request: () => new Promise(resolve => { acknowledge = resolve; }) };
+  await fill('Czeka na potwierdzenie');
+  await evaluate("document.querySelector('#composer').requestSubmit()");
+  await wait(50);
+  assert.equal(await evaluate("document.querySelector('#message').value"), 'Czeka na potwierdzenie', 'Draft survives until the worker accepts');
+  assert.equal(host.voice.state, 'idle', 'Waiting for admission cannot invent a thinking state');
+  await fill('Nowszy draft');
+  acknowledge({ accepted: true, operationId: 2 });
+  await wait(50);
+  assert.equal(await evaluate("document.querySelector('#message').value"), 'Nowszy draft', 'An acknowledgement cannot erase edits made while it was in flight');
+  host.engine = { connected: true, request: async () => ({ accepted: false, reason: 'busy' }) };
+  await evaluate("document.querySelector('#composer').requestSubmit()"); await wait(50);
+  assert.equal(await evaluate("document.querySelector('#message').value"), 'Nowszy draft', 'Worker rejection preserves the draft');
+  sendVoice({ state: 'idle', ready: true, capabilities: {
+    text: { state: 'ready' }, recording: { state: 'error', message: 'Mikrofon jest niedostępny. Możesz pisać.' }, playback: { state: 'ready' },
+  } });
+  assert.equal(await evaluate("document.querySelector('#retry').hidden"), false, 'Audio failures allow retry even while text is ready');
+  assert.match(await evaluate("document.querySelector('#error').textContent"), /Możesz pisać/);
+  sendVoice({ state: 'idle', ready: true, capabilities: {
+    text: { state: 'ready' }, recording: { state: 'ready' }, playback: { state: 'ready' },
+  } });
+  host.onEngineMessage({ type: 'notice', source: 'shortcut', message: 'Skrót Copilot jest niedostępny. Możesz pisać.' });
+  sendVoice({ state: 'idle', ready: true });
+  assert.match(await evaluate("document.querySelector('#error').textContent"), /Skrót Copilot/);
+  assert.equal(await evaluate("document.querySelector('#retry').hidden"), false, 'Shortcut failure survives service updates and offers retry');
+  sendVoice({ inputMessage: '' });
+  host.engine = undefined;
+  console.log('Worker acknowledgement, draft preservation and degraded audio checks: passed');
   panelWindow.setSize(340, 420);
   sendVoice({ answer: 'Długa odpowiedź. '.repeat(300) });
   assert.equal(await panelWindow.webContents.executeJavaScript("document.documentElement.scrollWidth <= innerWidth && document.querySelector('main').scrollHeight > document.querySelector('main').clientHeight"), true);

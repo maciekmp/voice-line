@@ -12,7 +12,9 @@ export type VoiceCallbacks = {
 export interface VoiceEngine extends ConversationClient {
   readonly mode: 'local' | 'realtime';
   readonly startupDescription: string;
-  respondAudio(wav: string, signal?: AbortSignal, callbacks?: VoiceCallbacks): Promise<VoiceReply>;
+  startVoice(): Promise<void>;
+  startPlayback(): Promise<void>;
+  respondAudio(wav: string, signal?: AbortSignal, callbacks?: VoiceCallbacks, options?: { playback: boolean }): Promise<VoiceReply>;
 }
 
 // Conversation ownership remains with Codex; adapters only coordinate voice services.
@@ -25,6 +27,8 @@ export abstract class BaseVoiceEngine implements VoiceEngine {
   get currentExchanges() { return this.client.currentExchanges; }
   get canRestorePrevious() { return this.client.canRestorePrevious; }
   start() { return this.client.start(); }
+  startVoice(): Promise<void> { return Promise.resolve(); }
+  startPlayback(): Promise<void> { return Promise.resolve(); }
   stop() { this.client.stop(); }
   cancel() { this.client.cancel(); }
   interruptTurn(checkpoint: ConversationCheckpoint, partial?: VoiceReply) { this.client.interruptTurn?.(checkpoint, partial); }

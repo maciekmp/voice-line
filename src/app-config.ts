@@ -13,6 +13,7 @@ export type AppConfig = Readonly<{
   voiceMode: 'local' | 'realtime'; ttsMode: 'sapi' | 'piper'; dataDirectory: string;
   microphone: string; copilotVk: number; saveAudio: boolean; ffmpeg: string;
   codex: CodexConfig; whisper: WhisperConfig; piper: PiperConfig; sapi: SapiConfig; realtime: RealtimeConfig;
+  serviceErrors?: Readonly<{ recording?: string; playback?: string; shortcut?: string }>;
 }>;
 
 function choice<T extends string>(env: NodeJS.ProcessEnv, key: string, values: readonly T[], fallback: T): T {
@@ -58,15 +59,25 @@ export function loadRecorderConfig(env: NodeJS.ProcessEnv = process.env): Readon
   return Object.freeze({ ffmpeg: env.FFMPEG_BIN ?? 'ffmpeg.exe' });
 }
 
-export function loadAppConfig(env: NodeJS.ProcessEnv = process.env, validateResources = true): AppConfig {
+export function loadAppConfig(env: NodeJS.ProcessEnv = process.env, validateResources = true, isolateAudioErrors = false): AppConfig {
+  const serviceErrors: { recording?: string; playback?: string; shortcut?: string } = {};
+  function audio<T>(service: keyof typeof serviceErrors, load: () => T, fallback: () => T): T {
+    try { return load(); }
+    catch (error) {
+      if (!isolateAudioErrors) throw error;
+      serviceErrors[service] = error instanceof Error ? error.message : String(error);
+      return fallback();
+    }
+  }
   const voiceMode = choice(env, 'VOICE_MODE', ['local', 'realtime'], 'local');
   const codex = loadCodexConfig(env);
   if (voiceMode === 'realtime' && codex.mode === 'cli') throw new Error('VOICE_MODE=realtime requires the app-server backend. Remove CODEX_MODE=cli.');
-  const ttsMode = voiceMode === 'local' ? choice(env, 'TTS_MODE', ['sapi', 'piper'], 'sapi') : 'sapi';
-  const whisper = loadWhisperConfig(voiceMode === 'local' ? env : {});
+  const ttsMode = voiceMode === 'local' ? audio<'sapi' | 'piper'>('playback', () => choice(env, 'TTS_MODE', ['sapi', 'piper'], 'sapi'), () => 'sapi') : 'sapi';
+  const whisper = audio('recording', () => loadWhisperConfig(voiceMode === 'local' ? env : {}), () => loadWhisperConfig({}));
   if (validateResources && voiceMode === 'local' && !whisper.model) throw new Error('Set WHISPER_MODEL for VOICE_MODE=local.');
   return Object.freeze({ voiceMode, ttsMode, dataDirectory: appDataDirectory(env),
-    microphone: env.MIC_DEVICE ?? '', copilotVk: integer(env, 'COPILOT_VK', 134, 1, 255), saveAudio: env.SAVE_AUDIO === '1',
+    microphone: env.MIC_DEVICE ?? '', copilotVk: audio('shortcut', () => integer(env, 'COPILOT_VK', 134, 1, 255), () => 134), saveAudio: env.SAVE_AUDIO === '1',
     ffmpeg: loadRecorderConfig(env).ffmpeg, codex, whisper, piper: loadPiperConfig(env),
-    sapi: loadSapiConfig(voiceMode === 'local' && ttsMode === 'sapi' ? env : {}), realtime: loadRealtimeConfig(env) });
+    sapi: audio('playback', () => loadSapiConfig(voiceMode === 'local' && ttsMode === 'sapi' ? env : {}), () => loadSapiConfig({})), realtime: loadRealtimeConfig(env),
+    ...(isolateAudioErrors && { serviceErrors: Object.freeze(serviceErrors) }) });
 }

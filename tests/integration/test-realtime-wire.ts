@@ -97,7 +97,7 @@ try {
   await new Promise(resolve => setTimeout(resolve, 250));
   restored = new CodexRealtime(directory, createAppStorage('realtime', directory), createAppStorage('imagegen', directory));
   await restored.start();
-  assert.deepEqual(restored.currentExchanges.map(({ id, revision, ...exchange }) => exchange), [{ question: 'Pytanie testowe.', answer: 'Test.' }]);
+  assert.deepEqual(restored.currentExchanges.map(({ id, revision, ...exchange }) => exchange), [{ question: 'Pytanie testowe.', answer: 'Test.', questionSource: 'voice' }]);
   assert.ok(restored.currentExchanges.every(exchange => exchange.id && exchange.revision === 1));
   assert.equal(restored.currentExchanges[0].id, reply.exchangeId, 'Runtime exchange identity survives restart');
   await restored.respondAudio(path);

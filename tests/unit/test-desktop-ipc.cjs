@@ -15,7 +15,7 @@ function setup(options = {}) {
   const host = {
     panelWindow: window(), exitStarted: false,
     voice: { ready: true, state: 'idle', canRestorePrevious: true },
-    engine: { connected: true, send: message => sent.push(message) },
+    engine: { connected: true, request: async message => { sent.push(message); return { accepted: true, operationId: 1 }; } },
     sendVoice: update => updates.push(update),
     engineSupervisor: { restart() { retries++; } },
     overlay: { intent() {}, compose() {}, open() {}, togglePin() {}, toggle() {}, hover() {}, snapshot: () => ({ pinned: false }) },
@@ -26,7 +26,8 @@ function setup(options = {}) {
   };
   const dispose = registerDesktopIpc(ipc, host);
   const event = () => ({ sender: host.panelWindow.webContents });
-  return { ipc, handlers, host, sent, updates, dispose, event, retries: () => retries };
+  const command = (sender, value) => handlers.get('voice:command')(sender, value);
+  return { ipc, handlers, command, host, sent, updates, dispose, event, retries: () => retries };
 }
 
 test('composer focus accepts only boolean reports from the live conversation renderer', () => {
@@ -58,53 +59,55 @@ test('only the live panel can open the conversation or receive initial settings'
   assert.equal(settings, 1); assert.equal(updates.length, 1);
 });
 
-test('desktop text boundary validates sender, readiness, size and worker connectivity', () => {
+test('desktop text boundary validates sender and waits for authoritative admission', async () => {
   const { handlers, host, event, sent, updates } = setup();
   const text = handlers.get('voice:text');
-  for (const value of ['', '   ', null, 42, 'a'.repeat(12001)]) assert.equal(text(event(), value), false);
-  assert.equal(text({ sender: {} }, 'question'), false);
-  host.voice.state = 'speaking';
-  assert.equal(text(event(), 'question'), false);
-  host.voice.state = 'idle';
+  for (const value of ['', '   ', null, 42, 'a'.repeat(12001)]) assert.equal(await text(event(), value), false);
+  assert.equal(await text({ sender: {} }, 'question'), false);
   host.engine.connected = false;
-  assert.equal(text(event(), 'question'), false);
+  assert.equal(await text(event(), 'question'), false);
   host.engine.connected = true;
-  host.voice.ready = false;
-  assert.equal(text(event(), 'question'), false);
-  host.voice.ready = true;
-  assert.equal(text(event(), '  pytanie\n'), true);
+  let respond;
+  host.engine.request = message => { sent.push(message); return new Promise(resolve => { respond = resolve; }); };
+  const response = text(event(), '  pytanie\n');
+  let settled = false; response.then(() => { settled = true; });
+  await Promise.resolve(); assert.equal(settled, false);
+  assert.deepEqual(updates, [], 'The host cannot invent a thinking state');
+  respond({ accepted: true, operationId: 1 });
+  assert.equal(await response, true);
   assert.deepEqual(sent, [{ command: 'text', text: 'pytanie' }]);
-  assert.deepEqual(updates, [{ state: 'thinking', question: 'pytanie', answer: '', questionSource: 'text' }]);
+  host.engine.request = async () => ({ accepted: false, reason: 'busy' });
+  assert.equal(await text(event(), 'rejected'), false);
 });
 
 test('desktop uses the current worker after restart and drops commands during shutdown', () => {
-  const { ipc, host, sent, event } = setup();
+  const { command, host, sent, event } = setup();
   const replacement = [];
-  ipc.emit('voice:command', event(), 'record');
-  host.engine = { connected: true, send: message => replacement.push(message) };
-  ipc.emit('voice:command', event(), 'cancel');
-  ipc.emit('voice:command', event(), { command: 'reset' });
-  ipc.emit('voice:command', { sender: {} }, 'reset');
+  command(event(), 'record');
+  host.engine = { connected: true, request: async message => { replacement.push(message); return { accepted: true, operationId: null }; } };
+  command(event(), 'cancel');
+  command(event(), { command: 'reset' });
+  command({ sender: {} }, 'reset');
   host.exitStarted = true;
-  ipc.emit('voice:command', event(), 'reset');
+  command(event(), 'reset');
   assert.deepEqual(sent, [{ command: 'record' }]);
   assert.deepEqual(replacement, [{ command: 'cancel' }]);
 });
 
-test('retry invokes the production supervisor only while services are unavailable', () => {
-  const { ipc, host, event, retries } = setup();
-  ipc.emit('voice:command', event(), 'retry');
-  assert.equal(retries(), 0);
+test('retry restarts production services also when only audio is unavailable', () => {
+  const { command, host, event, retries } = setup();
+  command(event(), 'retry');
+  assert.equal(retries(), 1);
   host.voice.ready = false;
-  ipc.emit('voice:command', event(), 'retry');
-  assert.equal(retries(), 1);
+  command(event(), 'retry');
+  assert.equal(retries(), 2);
   host.exitStarted = true;
-  ipc.emit('voice:command', event(), 'retry');
-  assert.equal(retries(), 1);
+  command(event(), 'retry');
+  assert.equal(retries(), 2);
   for (const options of [{ smokeTest: true }, { preview: true }]) {
     const isolated = setup(options);
     isolated.host.voice.ready = false;
-    isolated.ipc.emit('voice:command', isolated.event(), 'retry');
+    isolated.command(isolated.event(), 'retry');
     assert.equal(isolated.retries(), 0);
   }
 });

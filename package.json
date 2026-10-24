@@ -1,11 +1,11 @@
 {
   "name": "voice-line",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node scripts/launch-desktop.cjs",
-    "start:cli": "node --env-file-if-exists=.env --experimental-strip-types src/main.ts",
+    "start:cli": "node --env-file-if-exists=.env --experimental-strip-types src/cli-main.ts",
     "start:debug": "node scripts/launch-desktop.cjs --debug",
     "preview:desktop": "node scripts/launch-desktop.cjs --preview",
     "check": "npm run typecheck && npm test",

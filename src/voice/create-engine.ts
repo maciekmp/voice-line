@@ -23,5 +23,5 @@ export function createVoiceEngine(cwd: string, validate = true, config: AppConfi
     : new CodexAppServer(cwd, storage.session, false, { storage, config: config.codex });
   return new LocalVoiceEngine(client, new WhisperTranscriber(config.whisper.binary, model,
     config.whisper.language, config.whisper), tts === 'piper'
-      ? new PiperSpeaker(undefined, undefined, undefined, config.piper) : new Speaker(undefined, config.sapi), tts);
+      ? new PiperSpeaker(undefined, undefined, undefined, config.piper) : new Speaker(undefined, config.sapi), tts, config.serviceErrors);
 }
