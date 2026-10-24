@@ -1,4 +1,5 @@
 import { splitAnswer, splitInline } from './answer-format.js';
+import { highlightCode } from './code-highlight.js';
 
 /** @param {HTMLElement} container @param {string} answer */
 export function renderAnswer(container, answer) {
@@ -73,7 +74,13 @@ export function renderAnswer(container, answer) {
     pre.tabIndex = 0;
     pre.setAttribute('aria-label', part.language ? `Kod: ${part.language}` : 'Kod');
     const code = document.createElement('code');
-    code.textContent = part.text;
+    for (const token of highlightCode(part.text, part.language || '')) {
+      if (!token.type) { code.append(document.createTextNode(token.text)); continue; }
+      const span = document.createElement('span');
+      span.className = `syntax-${token.type}`;
+      span.textContent = token.text;
+      code.append(span);
+    }
     pre.append(code);
     block.append(copy, pre, feedback);
     fragment.append(block);
