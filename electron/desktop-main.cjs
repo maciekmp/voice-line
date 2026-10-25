@@ -217,20 +217,6 @@ function menu() {
   ]);
 }
 
-function trayImage() {
-  // Small native bitmap of the orb; no external assets or network requests.
-  const bitmap = Buffer.alloc(16 * 16 * 4);
-  for (let y = 0; y < 16; y++) {
-    for (let x = 0; x < 16; x++) {
-      if (Math.hypot(x - 7.5, y - 7.5) > 7.3) continue;
-      const color = y < 6 ? [232, 97, 51] : y < 9 ? [255, 250, 247] : [250, 194, 179];
-      bitmap.set([...color, 255], (y * 16 + x) * 4); // Native BGRA.
-    }
-  }
-  return nativeImage.createFromBitmap(bitmap, { width: 16, height: 16 });
-}
-
-
 if (!smokeTest && !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -261,7 +247,8 @@ if (!smokeTest && !app.requestSingleInstanceLock()) {
       }
       catch (error) { console.error(error); app.exit(1); }
     } else {
-      tray = new Tray(trayImage());
+      // The ICO contains native sizes for Windows display scaling (16–256 px).
+      tray = new Tray(path.join(__dirname, 'assets', 'tray.ico'));
       tray.setToolTip('Voice Line');
       tray.setContextMenu(menu());
       tray.on('click', openPanel);
