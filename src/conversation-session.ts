@@ -85,7 +85,7 @@ export class ConversationSession {
     const next = { ...this.state, providerThreads: { ...this.state.providerThreads, [this.threadId]: codexThreadId(thread) }, revision: this.revision + 1 };
     this.write(next, false, files); this.state = next;
   }
-  interruptTurn(checkpoint: ConversationCheckpoint, partial?: VoiceReply): void {
+  interruptTurn(checkpoint: ConversationCheckpoint, partial?: VoiceReply, files: TransactionFile[] = []): void {
     if (!this.threadId) return;
     if (checkpoint.id !== null && checkpoint.id !== this.threadId) throw new Error('Interrupted conversation changed');
     const baseline = checkpoint.exchanges;
@@ -96,6 +96,9 @@ export class ConversationSession {
       exchanges.push(committed ? copyExchange(committed) : {
         id: partial.exchangeId ?? randomUUID(), revision: 1, question: partial.prompt, answer: partial.answer, interrupted: true,
         ...(partial.questionSource && { questionSource: partial.questionSource }),
+        ...(partial.images?.length && { images: partial.images.map(image => ({ ...image })) }),
+        ...(partial.inputImages?.length && { inputImages: partial.inputImages.map(image => ({ ...image })) }),
+        ...(partial.imageTask && { imageTask: { ...partial.imageTask } }),
       });
     }
     let next = hydrateSession(this.state, this.threadId, exchanges);
@@ -103,7 +106,7 @@ export class ConversationSession {
       lastAnswerAt: exchanges.length ? (partial ? this.now() : this.state.lastAnswerAt) : null,
       localContextIds: [...new Set([...next.localContextIds, this.threadId])] };
     this.repository.commit(this.metadata(next), { id: this.threadId,
-      contents: this.repository.versioned ? encodeHistory(this.threadId, next.revision, exchanges) : JSON.stringify(exchanges) });
+      contents: this.repository.versioned ? encodeHistory(this.threadId, next.revision, exchanges) : JSON.stringify(exchanges) }, files);
     this.state = next;
   }
   get previousConversationId(): string | null { return this.state.previousThreadId; }

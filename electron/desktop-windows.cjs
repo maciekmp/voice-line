@@ -4,11 +4,12 @@ const { createPointerTracker } = require('./overlay-pointer.cjs');
 // Native surfaces, measurements, hide timers and display listeners.
 // OverlayController decides visibility/mode; this adapter only applies it.
 /** @param {{screen: Electron.Screen, BrowserWindow: typeof import('electron').BrowserWindow,
- * root: string, PANEL_MAX_HEIGHT: number, panelWindow?: Electron.BrowserWindow,
+ * root: string, PANEL_MAX_HEIGHT: number, panelWindow?: Electron.BrowserWindow, Menu?: typeof import('electron').Menu,
  * hover: (surface: 'panel', entered: boolean) => void,
  * exiting: () => boolean, dismiss: () => void}} host */
 function createWindowAdapter(host) {
   const { screen, BrowserWindow, root, PANEL_MAX_HEIGHT } = host;
+  const Menu = host.Menu || require('electron').Menu;
   let disposed = false;
   let removeDisplayListeners = () => {};
   const trackPointer = createPointerTracker((surface, entered) => host.hover(surface, entered));
@@ -61,6 +62,11 @@ function createWindowAdapter(host) {
       panelWindow.webContents.send('voice:mode', 'peek');
     }, 180);
   }
+  function holdPanel() {
+    clearTimeout(panelResetTimer);
+    panelResetTimer = undefined;
+    host.panelWindow?.hide();
+  }
   /** @param {import('../src/desktop-contract.ts').PanelMode} mode @param {boolean} focus */
   function renderOpenPanel(mode, focus) {
     const { panelWindow } = host;
@@ -85,10 +91,24 @@ function createWindowAdapter(host) {
         resizable: false, maximizable: false, minimizable: false, fullscreenable: false,
         alwaysOnTop: true,
         title: 'Voice Line — rozmowa', show: false, transparent: true, backgroundColor: '#00000000', hasShadow: false,
-        webPreferences: { preload: path.join(root, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, backgroundThrottling: false },
+        webPreferences: { preload: path.join(root, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, spellcheck: true, backgroundThrottling: false },
       });
       const panelWindow = host.panelWindow;
       panelWindow.setMenu(null);
+      const session = panelWindow.webContents.session;
+      const languages = ['pl', 'en-US'].filter(language => session.availableSpellCheckerLanguages.includes(language));
+      if (languages.length) session.setSpellCheckerLanguages(languages);
+      panelWindow.webContents.on('context-menu', (_event, params) => {
+        if (!params.isEditable) return;
+        const suggestions = params.dictionarySuggestions.map(suggestion => ({ label: suggestion,
+          click: () => { if (!panelWindow.isDestroyed()) panelWindow.webContents.replaceMisspelling(suggestion); } }));
+        if (params.misspelledWord) suggestions.push({ label: 'Dodaj do słownika',
+          click: () => session.addWordToSpellCheckerDictionary(params.misspelledWord) });
+        Menu.buildFromTemplate([...suggestions, ...(suggestions.length ? [{ type: /** @type {const} */ ('separator') }] : []),
+          { role: 'undo', label: 'Cofnij' }, { role: 'redo', label: 'Ponów' }, { type: 'separator' },
+          { role: 'cut', label: 'Wytnij' }, { role: 'copy', label: 'Kopiuj' }, { role: 'paste', label: 'Wklej' },
+          { role: 'selectAll', label: 'Zaznacz wszystko' }]).popup({ window: panelWindow });
+      });
       panelWindow.setAlwaysOnTop(true, 'screen-saver');
       panelWindow.on('show', () => {
         panelWindow.setAlwaysOnTop(true, 'screen-saver');
@@ -112,7 +132,7 @@ function createWindowAdapter(host) {
       await panelWindow.loadFile(path.join(root, 'conversation.html'));
 
     },
-    positionPanel, openPanel: renderOpenPanel, hidePanel: renderHidePanel, samplePointer,
+    positionPanel, openPanel: renderOpenPanel, hidePanel: renderHidePanel, holdPanel, samplePointer,
     get mode() { return panelMode; },
     get height() { return panelHeight; }, /** @param {number} value */ set height(value) { panelHeight = value; },
     get heights() { return panelHeights; },

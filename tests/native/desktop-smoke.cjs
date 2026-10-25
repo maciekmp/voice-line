@@ -74,6 +74,7 @@ async function verifyDesktop(host) {
           'Switching away from the mini orb releases GPU resources and its animation loop');
       }
       if (variant === 'waves') {
+        assert.equal(await evaluate('getComputedStyle(document.querySelector("#audio-waves")).height'), '40px');
         assert.equal(await evaluate('document.querySelector("voice-waves").shadowRoot.querySelector(".field").classList.contains("rendered")'), true,
           'Background waves reuse the working orb shader');
         assert.equal(await evaluate('(() => { const canvas = document.querySelector("voice-waves").shadowRoot.querySelector("canvas"); return canvas.width > canvas.height; })()'), true);
@@ -294,6 +295,10 @@ async function verifyDesktop(host) {
   }
   sendVoice({ state: 'idle' }); await wait(300);
   assert.equal(panelWindow.isVisible(), true);
+  // This case checks unprotected expiry; the settled popup may have moved
+  // underneath the stationary OS cursor while its content changed.
+  overlay.hover('panel', false);
+  overlay.composerFocus(false);
   await wait(5100);
   assert.equal(panelWindow.isVisible(), false, 'Completion hides the panel after five seconds');
   sendVoice({ state: 'error', ready: false, message: 'Sprawdź mikrofon.' });
@@ -409,7 +414,7 @@ async function verifyDesktop(host) {
   assert.equal(await panelWindow.webContents.executeJavaScript("getComputedStyle(document.querySelector('main')).display"), 'none', 'Input-only mode hides the old conversation');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').hidden"), false);
   assert.equal(await panelWindow.webContents.executeJavaScript("document.activeElement.id"), 'message');
-  assert.ok(await evaluate('document.querySelector("#panel").offsetHeight') <= 106, 'Input-only popup includes its compact header');
+  assert.ok(await evaluate('document.querySelector("#panel").offsetHeight') <= 150, 'Input-only popup includes its compact header and image controls');
   assert.equal(await panelWindow.webContents.executeJavaScript('document.documentElement.scrollHeight <= innerHeight'), true);
   await fs.writeFile(path.join(outputDirectory, 'electron-conversation-compose.png'), (await panelWindow.webContents.capturePage()).toPNG());
   overlay.hover('panel', true);
@@ -542,6 +547,8 @@ async function verifyDesktop(host) {
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#composer').getBoundingClientRect().bottom <= innerHeight + 1"), true);
   // Windows DPI conversion can round native bounds by one or two DIP.
   assert.ok(panelWindow.getBounds().height <= PANEL_MAX_HEIGHT + 2, 'Long answers respect the popup height cap within native DPI rounding');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector("#audio-waves")).height'), '40px',
+    'Expanding the conversation keeps waves at a fixed height');
   console.log('Text composer checks: passed');
   const chatOutput = path.join(outputDirectory, 'electron-conversation-chat.png');
   sendVoice({ state: 'idle', ready: true, question: 'Jak mogę lepiej zaplanować dzień?', answer: 'Wybierz trzy najważniejsze zadania. Zacznij od jednego i zostaw trochę miejsca na przerwy.' });
@@ -551,13 +558,15 @@ async function verifyDesktop(host) {
   await new Promise(resolve => setTimeout(resolve, 350));
   await fs.writeFile(chatOutput, (await panelWindow.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
   const iconCompleted = [
-    { id: 'icon-voice', revision: 1, question: 'Pytanie mówione', answer: 'Odpowiedź na pytanie mówione.', questionSource: 'voice', interrupted: true },
+    { id: 'icon-voice', revision: 1, question: 'Pytanie mówione', answer: 'Odpowiedź na pytanie mówione.', questionSource: 'voice', interrupted: true,
+      inputImages: [{ id: imageId, alt: 'Obraz we wcześniejszym pytaniu' }] },
     { id: 'icon-text', revision: 1, question: 'Pytanie pisane', answer: 'Odpowiedź na pytanie pisane.', questionSource: 'text' },
     { id: 'icon-legacy', revision: 1, question: 'Starsze pytanie', answer: 'Odpowiedź bez informacji o źródle.' },
   ];
   host.sendVoice({ state: 'thinking', ready: true, message: 'Przykładowy komunikat błędu.',
     conversation: { id: 'icon-preview', revision: 1, completed: iconCompleted,
-      pending: { id: 'icon-pending', revision: 1, question: 'Bieżące pytanie pisane', answer: '', questionSource: 'text' } } });
+      pending: { id: 'icon-pending', revision: 1, question: 'Bieżące pytanie pisane', answer: '', questionSource: 'text',
+        inputImages: [{ id: imageId, alt: 'Obraz w bieżącym pytaniu' }] } } });
   await new Promise(resolve => setTimeout(resolve, 250));
   const iconState = await panelWindow.webContents.executeJavaScript(`(() => {
     const icon = document.querySelector('#question-block > .message-icon');
@@ -575,6 +584,14 @@ async function verifyDesktop(host) {
   assert.deepEqual(iconState, { current: 'keyboard', label: 'Twoje pytanie pisane', history: ['mic', 'keyboard', 'question'],
     answers: 3, interruption: 'info', status: 'info', error: 'error', width: '14px', height: '14px', opacity: '0.65', gap: '8px',
     decorative: 'true', focusable: 'false', noOverflow: true });
+  const inputAlignment = await evaluate(`(() => {
+    const left = selector => document.querySelector(selector).getBoundingClientRect().left;
+    return {
+      current: Math.abs(left('#input-images .input-image-thumbnail') - left('#question')) <= 1,
+      history: Math.abs(left('#history .input-image-thumbnail') - left('#history .previous-question > p')) <= 1,
+    };
+  })()`);
+  assert.deepEqual(inputAlignment, { current: true, history: true }, 'Input image thumbnails align with question text in current and earlier messages');
   await panelWindow.webContents.executeJavaScript('document.querySelector("main").scrollTop = 0');
   await fs.writeFile(path.join(outputDirectory, 'electron-message-icons.png'), (await panelWindow.webContents.capturePage(undefined, { stayHidden: true, stayAwake: true })).toPNG());
   host.sendVoice({ conversation: { id: 'icon-preview', revision: 2, completed: [{ ...iconCompleted[0], questionSource: 'text' }], pending: null } });
@@ -823,6 +840,7 @@ async function verifyDesktop(host) {
   await fs.writeFile(path.join(outputDirectory, 'electron-image-gallery.png'), (await panelWindow.webContents.capturePage()).toPNG());
   console.log('Progressive image gallery checks: passed');
   await require('./history-scale.cjs').verifyHistoryScale({ panelWindow, outputDirectory, imageId });
+  await require('./desktop-imports.cjs').verifyImageImports(host);
   console.log(JSON.stringify({ result: 'passed', profile: profileDirectory,
     cache: sessionDirectory, bounds: panelWindow.getBounds(), captures: outputDirectory }));
 }

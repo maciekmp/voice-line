@@ -4,6 +4,9 @@ import type { ConversationExchange, GeneratedImage } from './conversation-contra
 export type DesktopCommand = 'record' | 'release' | 'cancel' | 'reset' | 'previous' | 'pin' | 'hide' | 'retry';
 export type PanelMode = 'peek' | 'chat' | 'compose' | 'compact';
 export type SaveResult = 'saved' | 'cancelled' | 'error';
+export type ImageImportSource = 'file' | 'clipboard' | 'screen';
+export type ImageImportResult = { status: 'imported'; image: GeneratedImage }
+  | { status: 'cancelled' | 'error'; message?: string };
 export type PanelMeasurement = { height: number; mode: PanelMode; reducedMotion: boolean };
 export type AudioIndicator = 'bars' | 'orb' | 'glow' | 'waves';
 export type DesktopSettings = { indicator: AudioIndicator; paused: boolean };
@@ -13,9 +16,10 @@ export type DesktopVoice = {
   threadId?: string | null; canRestorePrevious?: boolean; revision?: number; operationId?: number | null;
   generatingImage?: boolean; question: string; answer: string; message: string;
   selectedImageId?: string | null;
+  selectedImage?: GeneratedImage | null;
   inputMessage?: string;
   interrupted?: boolean; questionSource?: import('./conversation-contract.ts').QuestionSource;
-  images: GeneratedImage[]; history: ConversationExchange[]; conversation: ConversationView;
+  images: GeneratedImage[]; inputImages?: GeneratedImage[]; history: ConversationExchange[]; conversation: ConversationView;
 };
 export type DesktopEvent =
   | { channel: 'voice:snapshot'; value: DesktopVoice }
@@ -27,6 +31,7 @@ export type DesktopRequest =
   | { channel: 'voice:command'; value: DesktopCommand }
   | { channel: 'voice:text'; value: string | { text: string; imageId: string } }
   | { channel: 'voice:image-selection'; value: string | null }
+  | { channel: 'voice:image-import'; value: ImageImportSource }
   | { channel: 'voice:copy-code'; value: string }
   | { channel: 'voice:image-preview' | 'voice:image-save'; value: string }
   | { channel: 'voice:resize'; value: PanelMeasurement }
@@ -39,6 +44,7 @@ export interface DesktopApi {
   composerFocus(focused: boolean): void;
   text(text: string, imageId?: string): Promise<boolean>;
   selectImage(id: string | null): Promise<boolean>;
+  addImage(source: ImageImportSource): Promise<ImageImportResult>;
   copyCode(text: string): Promise<boolean>;
   imagePreview(id: string): Promise<string | null>;
   saveImage(id: string): Promise<SaveResult>;

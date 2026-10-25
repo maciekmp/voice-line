@@ -11,6 +11,7 @@ import type { VoiceReply, ConversationCheckpoint } from './conversation-contract
 export type { VoiceReply } from './conversation-contract.ts';
 import { loadCodexConfig, type CodexConfig } from './app-config.ts';
 import type { CodexRawLog } from './codex-rpc-transport.ts';
+import { progressCallbacks } from './reply-progress.ts';
 
 export const INSTRUCTIONS = 'Jesteś asystentem głosowym z oknem rozmowy. Nie uruchamiaj narzędzi, nie czytaj ani nie zmieniaj plików. Dostajesz pytanie tekstowe lub surową transkrypcję po polsku. Najpierw popraw je do zwięzłego pytania: usuń wypełniacze, powtórzenia i wycofane fragmenty, uwzględnij ostatnią samokorektę. Następnie odpowiedz po polsku, krótko i naturalnie, korzystając z kontekstu rozmowy. Zwróć JSON z polami prompt (poprawione pytanie) i answer (pełna odpowiedź do wyświetlenia). Jeśli pytanie wymaga kodu, umieść kompletny kod w blokach Markdown otoczonych potrójnymi backtickami z nazwą języka, zachowując wcięcia i nowe linie. Krótkie fragmenty kodu w zdaniu otaczaj pojedynczymi backtickami. Poza kodem używaj zwykłego tekstu. Opisz krótko rozwiązanie poza blokami kodu; bloki kodu nie będą odczytywane głosowo. Jeśli transkrypcja jest niezrozumiała, poproś o powtórzenie zamiast zgadywać. Pytanie:\n';
 const schemaPath = fileURLToPath(new URL('./response.schema.json', import.meta.url));
@@ -55,7 +56,10 @@ export class CodexClient {
   stop(): void { this.lifecycle++; this.startup = null; this.cancel(); this.historyServer?.stop(); }
   reset(): void { this.cancel(); this.session.reset(); }
   cancel(): void { this.active?.kill(); this.active = null; this.historyServer?.cancel(); }
-  interruptTurn(checkpoint: ConversationCheckpoint, partial?: VoiceReply): void { this.session.interruptTurn(checkpoint, partial); }
+  interruptTurn(checkpoint: ConversationCheckpoint, partial?: VoiceReply): void {
+    if (this.storage) this.storage.interruptTurn(checkpoint, partial);
+    else this.session.interruptTurn(checkpoint, partial);
+  }
   get currentThreadId(): string | null { return this.session.threadId; }
   get currentExchanges() { return this.session.currentExchanges; }
   get canRestorePrevious(): boolean { return this.session.canRestorePrevious; }
@@ -65,17 +69,17 @@ export class CodexClient {
     await this.start();
     return this.historyServer!.restorePrevious(signal);
   }
-  async generateImage(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress): Promise<VoiceReply> {
+  async generateImage(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress, onText?: import('./conversation-contract.ts').ReplyProgress): Promise<VoiceReply> {
     await this.start();
-    return this.historyServer!.generateImage(raw, signal, questionSource, imageId, ...(onImages ? [onImages] : []));
+    return this.historyServer!.generateImage(raw, signal, questionSource, imageId, ...progressCallbacks(onImages, onText));
   }
-  async respond(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress): Promise<VoiceReply> {
+  async respond(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress, onText?: import('./conversation-contract.ts').ReplyProgress): Promise<VoiceReply> {
     await this.start();
-    if (imageId) return this.historyServer!.respond(raw, signal, questionSource, imageId, ...(onImages ? [onImages] : []));
+    if (imageId) return this.historyServer!.respond(raw, signal, questionSource, imageId, ...progressCallbacks(onImages, onText));
     // Ephemeral exec cannot be read by a separate process after it exits.
     // Route recognizable image requests to the live server, which supplies pixels.
     const image = this.storage?.ephemeral ? imageRequest(raw) : null;
-    if (image) return this.historyServer!.generateImage(image, signal, questionSource, undefined, ...(onImages ? [onImages] : []));
+    if (image) return this.historyServer!.generateImage(image, signal, questionSource, undefined, ...progressCallbacks(onImages, onText));
     const release = this.storage ? await this.historyServer!.beginExternalTurn() : undefined;
     try {
       this.session.expire();
@@ -121,6 +125,7 @@ export class CodexClient {
       if (signal?.aborted || !this.session.matchesOperation(commitOperation)) throw new Error('Cancelled');
       if (this.storage) await this.storage.commitReply(reply, undefined, () => !signal?.aborted && this.session.matchesOperation(commitOperation));
       else this.session.answered(reply);
+      onText?.({ prompt: reply.prompt, answer: reply.answer });
       return { ...reply, startupMs: result.startupMs, turnMs: result.turnMs };
     } finally { release?.(); }
   }

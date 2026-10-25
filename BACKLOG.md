@@ -1,5 +1,13 @@
-Zaktualizować ikonę w pasku systemowym. 
-Obsługa obrazów ze schowka. 
-Przycisk do dodawania dowolnego obrazu. Lub dowolnego pliku sprawdzić, czy jest jakaś różnica. 
-Flow, w którym użytkownik może zaznaczyć część ekranu i zadać pytanie na jej temat. 
-Podkreślenie Błędów w polu tekstowym. 
+- [ ] Zaktualizować ikonę w pasku systemowym.
+- [x] Obsługa obrazów ze schowka; zwykłe wklejanie tekstu pozostaje dostępne.
+- [x] Ikona dodawania obrazu PNG, JPEG lub WebP; jeden załącznik do pytania tekstowego lub głosowego.
+- [ ] Obsługa pozostałych plików, np. PDF i DOCX. Protokół obrazu i odczyt dokumentu wymagają osobnych ścieżek.
+- [x] Ikona zaznaczania części ekranu i pytanie o wycinek.
+- [x] Miniatury załączników wyrównane do tekstu wiadomości; usuwanie załącznika ikoną × po prawej.
+- [x] Ikony załączników pionowo po prawej w polu tekstowym; wybór pliku i wklejanie obrazu zachowują widoczny czat.
+- [x] Podkreślenie błędów pisowni w polu tekstowym i sugestie poprawek.
+- [x] Stała wysokość fal 40 px, niezależna od wysokości panelu.
+- [x] Scrollbary bez przycisków strzałek.
+- [x] Komunikaty uruchamiania i gotowości usług w konsoli; GUI bez stałego komunikatu gotowości.
+- [x] Wyjaśniona ikona aktywnego mikrofonu przy starcie. Mikrofon pozostaje otwarty; pomiar wykazał około 854 ms oszczędności przy rozpoczynaniu nagrania.
+- [x] Delty app servera wykorzystane do stopniowego pokazywania tekstu i odczytu zdań dla pytań głosowych; pytania wpisane pozostają bez odczytu.

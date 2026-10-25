@@ -14,7 +14,7 @@ const exchangeSchema = z.object({
   question: z.string(), answer: z.string(),
   questionSource: questionSourceSchema.optional(), interrupted: z.boolean().optional(),
   id: exchangeIdSchema.optional(), revision: revisionSchema.min(1).optional(),
-  images: z.array(generatedImageSchema).optional(), imageTask: imageTaskSchema.optional(),
+  images: z.array(generatedImageSchema).optional(), inputImages: z.array(generatedImageSchema).optional(), imageTask: imageTaskSchema.optional(),
 });
 
 // IPC also accepts synthetic preview IDs and revision zero. Storage stays stricter.
@@ -27,7 +27,7 @@ const conversationViewSchema = z.object({
   completed: z.array(desktopExchangeSchema),
   pending: z.object({ id: identifierSchema, revision: revisionSchema,
     question: z.string(), answer: z.string(), questionSource: questionSourceSchema.optional(),
-    images: z.array(generatedImageSchema).optional() }).nullable(),
+    images: z.array(generatedImageSchema).optional(), inputImages: z.array(generatedImageSchema).optional() }).nullable(),
 }).refine(value => {
   const ids = value.completed.flatMap(item => item.id === undefined ? [] : [item.id]);
   return new Set(ids).size === ids.length;

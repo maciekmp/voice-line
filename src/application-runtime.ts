@@ -8,6 +8,8 @@ import { Recorder } from './audio/recorder.ts';
 import { startKeyboard } from './keyboard/copilot-key.ts';
 import { createVoiceEngine } from './voice/create-engine.ts';
 import { loadAppConfig } from './app-config.ts';
+import { verifyImportedImage } from './imported-image.ts';
+import { storageCoordinator } from './storage-coordinator.ts';
 
 // Shared composition root. Hosts supply presentation, process signals and transport.
 // Resource validation happens per service so missing audio never prevents typing.
@@ -21,6 +23,8 @@ export function createApplicationRuntime(emit: (event: ApplicationEvent) => void
     playback: options.voice,
     recordingUnavailableMessage: options.voice === false ? 'Nagrywanie jest wyłączone w trybie potokowym.' : undefined,
     emit, removeAudio: wav => unlink(wav), saveAudio: config.saveAudio, debug: options.debug, log: options.log,
+    verifyImage: image => verifyImportedImage(config.dataDirectory, image),
+    retainImage: id => storageCoordinator(config.dataDirectory).lease(`input-image:${id}`),
   });
   const input = new ApplicationInput(controller, emit, { key: config.copilotVk });
   let keyboard: ReturnType<typeof startKeyboard> | undefined;

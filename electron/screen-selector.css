@@ -1,0 +1,5 @@
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; cursor: crosshair; user-select: none; }
+#screen { display: block; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+#selection { position: fixed; border: 1px solid white; background: #ffffff12; box-shadow: 0 0 0 20000px #0007; pointer-events: none; }
+#help { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); margin: 0; border: 1px solid #aaa; border-radius: 8px; padding: 10px 16px; background: #242220; color: #eee9e2; font: 14px/1.5 'Segoe UI', sans-serif; pointer-events: none; }
+[hidden] { display: none !important; }

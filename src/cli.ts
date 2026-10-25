@@ -6,6 +6,7 @@ import type { Readable, Writable } from 'node:stream';
 import { createApplicationRuntime, type ApplicationRuntime } from './application-runtime.ts';
 import type { ApplicationEvent, ApplicationCommand, ApplicationSnapshot, CommandResult } from './application-contract.ts';
 import type { ConversationExchange } from './conversation-contract.ts';
+import { createReadinessReporter } from './service-status.ts';
 const require = createRequire(import.meta.url);
 const { appDataDirectory } = require('./app-data.cjs');
 const { imagePath } = require('./image-files.cjs');
@@ -18,7 +19,7 @@ const help = `Wpisz wiadomość i naciśnij Enter. Copilot: tap — przerwij i p
 /save <ścieżka.md> — zapisz rozmowę z obrazami    /image <opis> — wygeneruj obraz
 /help — pomoc    /quit — zakończ    Ctrl+C — przerwij pracę lub zakończ, gdy bezczynna`;
 const phases = {
-  starting: 'Uruchamiam rozmowę…', idle: 'Gotowe.', listening: 'Słucham… Puść Copilot, aby wysłać.',
+  starting: '', idle: '', listening: 'Słucham… Puść Copilot, aby wysłać.',
   transcribing: 'Rozpoznaję mowę…', thinking: 'Przygotowuję odpowiedź…',
   'preparing-speech': 'Przygotowuję głos…', speaking: 'Odczytuję odpowiedź…', error: '',
 };
@@ -47,6 +48,7 @@ export function startCli(options: {
   let lastStatus = '';
   let lastMessage = '';
   let exitCode = 0;
+  let reportReadiness = createReadinessReporter(say);
   const printed = new Map<string, string>();
   const imageDirectory = join(appDataDirectory(), 'images');
   let resolveClosed!: (code: number) => void;
@@ -62,6 +64,7 @@ export function startCli(options: {
   }
   function showExchange(exchange: ConversationExchange) {
     say(`\nTy${exchange.questionSource === 'voice' ? ' (głos)' : ''}: ${exchange.question}\n\nAsystent: ${exchange.answer}${exchange.interrupted ? '\n[Odpowiedź przerwana]' : ''}`);
+    for (const image of exchange.inputImages ?? []) say(`Załączony obraz: ${image.alt}\n${imagePath(imageDirectory, image.id)}`);
     for (const image of exchange.images ?? []) say(`Obraz: ${image.alt}\n${imagePath(imageDirectory, image.id)}`);
   }
   function onEvent(event: ApplicationEvent) {
@@ -81,6 +84,7 @@ export function startCli(options: {
       return;
     }
     snapshot = event;
+    reportReadiness(event);
     if (!terminal && event.state === 'error') exitCode = 1;
     if (event.reset) { printed.clear(); say('Nowa rozmowa.'); }
     const status = event.state === 'thinking' && event.generatingImage ? 'Generuję obraz…' : phases[event.state];
@@ -103,6 +107,7 @@ export function startCli(options: {
   async function boot() {
     const currentGeneration = ++generation;
     snapshot = undefined; printed.clear(); lastStatus = ''; lastMessage = '';
+    reportReadiness = createReadinessReporter(say);
     try {
       runtime = (options.createRuntime ?? (emit => createApplicationRuntime(emit, {
         debug: options.debug, keyboard: terminal, voice: terminal,

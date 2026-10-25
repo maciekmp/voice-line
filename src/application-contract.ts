@@ -1,7 +1,8 @@
-import type { ConversationExchange } from './conversation-contract.ts';
+import type { ConversationExchange, GeneratedImage } from './conversation-contract.ts';
 
 export type ApplicationCommand = { command: 'text'; text: string; imageId?: string }
   | { command: 'select-image'; imageId: string | null }
+  | { command: 'import-image'; image: GeneratedImage }
   | { command: 'cancel' | 'reset' | 'previous' | 'shutdown' };
 export type InputCommand = ApplicationCommand | { command: 'record' | 'release' | 'tap' };
 export type ServiceHealth = 'starting' | 'ready' | 'error' | 'stopped';
@@ -9,7 +10,7 @@ export type Capability = { state: ServiceHealth | 'disabled'; message?: string }
 export type ApplicationCapabilities = { text: Capability; recording: Capability; playback: Capability };
 export type ResponsePhase = 'transcribing' | 'thinking' | 'preparing-speech' | 'speaking';
 export type ApplicationState = ResponsePhase | 'starting' | 'idle' | 'listening' | 'error';
-export type PendingExchange = { id: string; revision: number; question: string; answer: string; questionSource?: import('./conversation-contract.ts').QuestionSource; images?: import('./conversation-contract.ts').GeneratedImage[] };
+export type PendingExchange = { id: string; revision: number; question: string; answer: string; questionSource?: import('./conversation-contract.ts').QuestionSource; images?: GeneratedImage[]; inputImages?: GeneratedImage[] };
 export type ConversationView = {
   id: string | null; revision: number; completed: ConversationExchange[]; pending: PendingExchange | null;
 };
@@ -21,9 +22,11 @@ export type ApplicationSnapshot = {
   message?: string;
   generatingImage?: boolean;
   selectedImageId?: string | null;
+  selectedImage?: GeneratedImage | null;
   question?: string;
   answer?: string;
   images?: import('./conversation-contract.ts').GeneratedImage[];
+  inputImages?: GeneratedImage[];
   questionSource?: import('./conversation-contract.ts').QuestionSource;
   reset?: boolean;
   restored?: boolean;
@@ -43,7 +46,14 @@ export type WorkerResult = { type: 'command-result'; requestId: number; result: 
 
 export function parseInputCommand(value: unknown): InputCommand | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-  const message = value as { command?: unknown; text?: unknown; imageId?: unknown };
+  const message = value as { command?: unknown; text?: unknown; imageId?: unknown; image?: unknown };
+  if (message.command === 'import-image') {
+    if (!message.image || typeof message.image !== 'object' || Array.isArray(message.image)) return null;
+    const image = message.image as { id?: unknown; alt?: unknown };
+    return typeof image.id === 'string' && /^[a-f0-9]{64}$/.test(image.id)
+      && typeof image.alt === 'string' && image.alt.length <= 2000
+      ? { command: 'import-image', image: { id: image.id, alt: image.alt } } : null;
+  }
   if (message.command === 'select-image') {
     return message.imageId === null || (typeof message.imageId === 'string' && /^[a-f0-9]{64}$/.test(message.imageId))
       ? { command: 'select-image', imageId: message.imageId } : null;
@@ -54,7 +64,7 @@ export function parseInputCommand(value: unknown): InputCommand | null {
     return { command: 'text', text: message.text.trim(), ...(typeof message.imageId === 'string' && { imageId: message.imageId }) };
   }
   if (typeof message.command === 'string' && ['record', 'release', 'tap', 'cancel', 'reset', 'previous', 'shutdown'].includes(message.command)) {
-    return { command: message.command as Exclude<InputCommand['command'], 'text' | 'select-image'> };
+    return { command: message.command as Exclude<InputCommand['command'], 'text' | 'select-image' | 'import-image'> };
   }
   return null;
 }

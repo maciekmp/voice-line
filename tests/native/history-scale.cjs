@@ -45,7 +45,8 @@ async function verifyHistoryScale({ panelWindow, outputDirectory, imageId }) {
       }
     }
     const identityContainer = document.createElement('section'); document.body.append(identityContainer);
-    const identityRenderer = createHistoryRenderer(identityContainer);
+    const selectedInputs = [];
+    const identityRenderer = createHistoryRenderer(identityContainer, { onSelect: image => selectedInputs.push(image.id) });
     const one = exchange(1), two = exchange(2), three = exchange(3);
     identityRenderer.update([one, two, three], { conversationId: 'identity', revision: 1 });
     const firstNode = identityContainer.firstElementChild;
@@ -58,6 +59,22 @@ async function verifyHistoryScale({ panelWindow, outputDirectory, imageId }) {
     const switched = identityContainer.firstElementChild !== firstNode && identityRenderer.stats.rows === 1;
     identityRenderer.update([], { conversationId: null, revision: 2 });
     const cleared = identityContainer.childElementCount === 0 && identityRenderer.stats.rows === 0;
+    const attached = { id: 'attached', revision: 1, question: 'Pytanie o obraz', answer: 'Opis obrazu',
+      inputImages: [{ id: ${JSON.stringify(imageId)}, alt: 'Załączony obraz' }],
+      images: [{ id: ${JSON.stringify(imageId)}, alt: 'Wynik generowania' }] };
+    identityRenderer.update([attached], { conversationId: 'inputs', revision: 1 });
+    const inputRow = identityContainer.firstElementChild;
+    const inputButton = inputRow.querySelector('.input-image-thumbnail');
+    inputButton.click();
+    const inputAttachment = inputButton.dataset.imageId === ${JSON.stringify(imageId)}
+      && selectedInputs[0] === ${JSON.stringify(imageId)}
+      && inputRow.children[1].classList.contains('input-attachments')
+      && inputRow.children[2].classList.contains('previous-answer')
+      && inputRow.querySelectorAll('.message-attachments .image-stage').length === 1;
+    identityRenderer.update([{ ...attached, revision: 2, inputImages: [{ ...attached.inputImages[0], alt: 'Zmieniony podpis' }] }],
+      { conversationId: 'inputs', revision: 2 });
+    const inputRevision = identityContainer.firstElementChild === inputRow
+      && inputRow.querySelector('.input-image-thumbnail').getAttribute('aria-label').includes('Zmieniony podpis');
     identityRenderer.dispose(); identityContainer.remove();
     const { renderImages, imagePreviewCache } = await import(${JSON.stringify(imagesUrl)});
     const container = document.createElement('section'); container.hidden = true;
@@ -75,7 +92,7 @@ async function verifyHistoryScale({ panelWindow, outputDirectory, imageId }) {
     await new Promise(resolve => setTimeout(resolve, 100));
     const released = !container.querySelector('img').hasAttribute('src');
     dispose(); container.remove();
-    return { results, identity: { revised, pruned, reordered, switched, cleared },
+    return { results, identity: { revised, pruned, reordered, switched, cleared, inputAttachment, inputRevision },
       lazyImages: { before, hidden, visible, loaded, released }, viewport: { width: innerWidth, height: innerHeight } };
   })().catch(error => ({ error: { message: error.message, stack: error.stack } }))`);
   if (measurements.error) throw new Error(`${measurements.error.message}\n${measurements.error.stack}`);

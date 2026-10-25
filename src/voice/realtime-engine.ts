@@ -1,6 +1,7 @@
 import { BaseVoiceEngine, type VoiceCallbacks, type VoiceResponseOptions } from '../voice-engine.ts';
 import type { RealtimeConversationClient } from '../conversation-contract.ts';
 import { imageRequest } from '../image-artifacts.ts';
+import { progressCallbacks } from '../reply-progress.ts';
 
 export class RealtimeVoiceEngine extends BaseVoiceEngine {
   readonly mode = 'realtime' as const;
@@ -36,7 +37,10 @@ export class RealtimeVoiceEngine extends BaseVoiceEngine {
     } catch (error) {
       if (!requestedImage || signal?.aborted || !(error instanceof Error) || error.message !== 'Cancelled') throw error;
       callbacks.onUpdate?.('thinking', { question, answer: '' });
-      return await this.respond(requestedImage, signal, 'voice', options.imageId, callbacks.onImages);
+      const onText: import('../conversation-contract.ts').ReplyProgress | undefined = callbacks.onUpdate ? update => {
+        if (!signal?.aborted) callbacks.onUpdate?.('thinking', { question: update.prompt ?? question, answer: update.answer });
+      } : undefined;
+      return await this.respond(requestedImage, signal, 'voice', options.imageId, ...progressCallbacks(callbacks.onImages, onText));
     } finally { signal?.removeEventListener('abort', abort); }
   }
 }

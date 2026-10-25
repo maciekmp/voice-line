@@ -90,6 +90,34 @@ test('realtime voice hands the final transcript and image to the model without f
   assert.deepEqual(received, ['Co widzisz na obrazie?', undefined, 'voice', imageId]);
 });
 
+test('realtime voice image fallback streams text and suppresses progress after cancellation without adding TTS', async () => {
+  const f = fixture(), controller = new AbortController(), updates: { question?: string; answer?: string }[] = [];
+  let playbackStarts = 0;
+  const engine = new RealtimeVoiceEngine({ ...f.client,
+    respond: async (_text, _signal, _source, _image, _images, onText) => {
+      onText?.({ prompt: 'Poprawione pytanie o obraz', answer: 'Pierwszy fragment' });
+      controller.abort();
+      onText?.({ prompt: 'Poprawione pytanie o obraz', answer: 'Nieaktualny fragment' });
+      return { prompt: 'Poprawione pytanie o obraz', answer: 'Pełna odpowiedź' };
+    },
+    respondAudio: async (_wav, signal, callbacks) => {
+      callbacks?.onTranscript?.('user', 'Co widzisz na obrazie?', true);
+      assert.equal(signal?.aborted, true);
+      throw new Error('Cancelled');
+    },
+  });
+  await engine.respondAudio('voice.wav', controller.signal, {
+    onUpdate: (_state, value) => { if (value) updates.push(value); },
+    onPlaybackStart: () => playbackStarts++,
+  }, { playback: true, imageId: 'a'.repeat(64) });
+  assert.deepEqual(updates, [
+    { question: 'Co widzisz na obrazie?', answer: '' },
+    { question: 'Poprawione pytanie o obraz', answer: 'Pierwszy fragment' },
+  ]);
+  assert.equal(playbackStarts, 0);
+  assert.ok(!f.calls.some(call => call.startsWith('speak:')));
+});
+
 test('factory selects one engine at startup and validates only the selected services', t => {
   const directory = mkdtempSync(join(tmpdir(), 'voice-engine-'));
   const keys = ['VOICE_MODE', 'TTS_MODE', 'CODEX_MODE', 'WHISPER_MODEL'];

@@ -119,7 +119,9 @@ To inspect service diagnostics, run `npm.cmd run start:debug` instead of `npm.cm
 
 Debug mode also prints incoming Codex stdout lines before parsing, prefixed with `[codex:app-server:raw]` or `[codex:exec:raw]`. This includes RPC replies, notifications, streamed text and any inline image/audio data returned by the protocol, for local, realtime and image generation sessions. Raw messages appear only in the terminal; this logging does not write a separate file.
 
-Only debug mode prints `[time]` measurements. Its main total is `Recording end to playback start`, measured from Copilot key release until the selected player reports active playback. The contiguous components are recording finalization, STT, Codex, and TTS startup to playback; they add up to that total apart from display rounding. Codex request acceptance and turn generation are nested details within the Codex component. Debug also reports playback duration and the full cycle. SAPI's audio queue status and FFplay's audio clock are approximate playback markers, not speaker-loopback measurements of the first audible sample. User-facing terminal status and conversation labels are in Polish; debug measurements retain their technical English names.
+The console prints separate startup and readiness messages for text, recording and playback, once per service transition. Recording readiness waits for both text and recording services. Use `/status` for details. Audio failures do not disable typing; the panel reports startup and service errors without a persistent readiness summary.
+
+Only debug mode prints `[time]` measurements. `Recording end to playback start` measures Copilot release to the player's first playback marker. App-server text generation and TTS now overlap: request acceptance, first text delta, generation completion and first playback are separate milestones, so their durations must not be added together. Debug also reports recording finalization, STT, playback duration and the full cycle. SAPI's audio queue status and FFplay's audio clock are approximate playback markers, not speaker-loopback measurements of the first audible sample.
 
 ### Interactive terminal
 
@@ -128,8 +130,8 @@ messages receive text replies without speech playback. Copilot uses the same
 250 ms threshold as Electron: key-down interrupts the current operation,
 a short tap returns to typing, and a hold records from key-down until release.
 Before playback, interruption removes the unfinished turn from context. After
-playback starts, LOCAL retains the committed answer and realtime preserves the
-received fragment. A correction/continuation tap clears the draft; a voice hold
+playback starts, LOCAL retains a committed answer or the received fragment marked
+interrupted; realtime preserves its received fragment. A correction/continuation tap clears the draft; a voice hold
 preserves it. Service updates and answers preserve the text currently being edited.
 The terminal stays available for drafting and commands while services are starting.
 
@@ -246,7 +248,7 @@ To compare Whisper CPU thread counts on exactly the same speech, add `SAVE_AUDIO
 
 `npm start` starts the real voice services with the panel hidden.
 
-The popup is the only desktop window. A short Copilot
+The popup is the main desktop window; image decoding and screen selection use temporary windows. A short Copilot
 press from hidden opens only the focused text input. A second tap opens history;
 subsequent taps alternate history with the latest exchange and input. A voice
 view shows the latest exchange without input; tapping adds input, and another
@@ -261,14 +263,37 @@ pending until the complete response is committed.
 
 Click the pencil button next to the displayed image's save button to attach that
 variant to a question or edit request. The selected image appears above the input;
-use **Usuń** to clear it. Selection applies to the next text or voice message and
+use the **×** icon on its right to clear it. Selection applies to the next text or voice message and
 clears when the command is submitted or the conversation changes. Questions about
 an attached image can return text without generating a replacement.
+
+Use the **Dodaj obraz** icon for a PNG, JPEG or WebP file, or paste a bitmap with Ctrl+V.
+Images are normalized to PNG and limited to 32 MiB before and after conversion.
+Ordinary text paste is unchanged. One image can be attached to a question; adding
+it does not submit anything. Cancelled imports and rejected submissions preserve
+the draft and previous attachment. The file picker and clipboard imports keep
+the conversation visible; import progress is announced to screen readers without
+an extra visible status label. The two attachment icons sit
+vertically inside the field's right edge, with space reserved for text.
+PDF, DOCX and other documents are separate
+from the app-server image-input protocol and are not accepted by this importer.
+
+The **Zaznacz ekran** icon hides the popup and lets you drag a rectangle on any monitor.
+Each selection stays on one monitor; mixed DPI and negative monitor coordinates
+are supported. Escape cancels. The popup, focus and pin return afterward, with
+the selection attached for a typed or voice question. This flow does not change
+the system clipboard and adds no global shortcut.
+
+Input images are stored with the question and included in history and Markdown
+exports. Click a history input thumbnail to attach it again. Earlier image pixels
+are sent only when explicitly reattached, including after restart; text history
+alone does not provide their visual contents. Images follow conversation retention.
 
 Copilot interrupts immediately on key-down. Before actual playback starts it
 removes the current exchange from history and context; a tap clears the draft
 and opens correction without also toggling views. Once playback has started,
-LOCAL keeps its full answer and API saves the received fragment marked interrupted.
+LOCAL keeps its committed full answer, or the received fragment marked interrupted
+if generation is still running; API saves its received fragment marked interrupted.
 A tap then clears the draft and allows continuing by text. Holding at least 250 ms
 selects voice recording while preserving an unsent draft; release submits it.
 Audio is captured from key-down and discarded for taps. CLI shares this tap/hold flow.
@@ -281,6 +306,11 @@ dismissal or another operation. Departure, blur and unpin never start another ti
 Errors stay visible until dismissal or another action. During startup/service failure,
 Copilot displays status and allows drafting, but recording and sending are unavailable.
 A press begun while unavailable needs to be repeated after readiness.
+
+The message field uses Polish and English spelling dictionaries with suggestions
+in the right-click menu. Wave feedback stays 40 px high;
+it does not scale with the amount of conversation text. Scrollbars retain their
+visible thumb without arrow buttons.
 
 Normal Codex text turns enable built-in live web search (`web_search="live"`),
 including LOCAL voice questions and typed questions in either voice mode. The
@@ -428,15 +458,27 @@ test history and session metadata without inference. Neither probe is a default 
 - `src/speaker.ts`: prewarms a Windows SAPI voice when the app starts and keeps the PowerShell worker between answers. A new key press interrupts speech and starts a fresh worker while recording. Speaking rate defaults to `2` on SAPI's `-10` to `10` scale; set `TTS_RATE=0` in `.env` for the former pace.
 - `src/piper-speaker.ts`: optional local Piper voice streamed to FFplay. Each utterance starts a Piper process; a new key press stops both Piper and FFplay.
 
-The answer layer currently waits for the full structured Codex reply before TTS;
-answers are not displayed or spoken token by token. SAPI synthesizes the full
-utterance to PCM before playback; Piper streams synthesized PCM to FFplay.
+App-server answers appear incrementally while their structured JSON is decoded.
+For LOCAL voice questions, SAPI/Piper read complete prose sentences before the
+whole response finishes, using one sequential queue. Fenced code is skipped;
+code-only replies direct you to the panel after generation completes. ImageGen
+speech waits for verified results. Typed questions remain silent. The `exec`
+backend keeps final-only replies; native realtime audio uses its own stream.
+Cancelling stops queued speech and inference. A speech failure leaves the complete
+text available; a generation failure after playback retains an interrupted fragment.
+If final text differs from the preview, speech stops and the corrected text is shown.
 To inspect a bad transcription, add `SAVE_AUDIO=1` to `.env`; the terminal prints
 the saved WAV path. Recordings are created in the system temporary directory and
 normally deleted after processing. Remove the option afterward to avoid
 accumulating recordings.
 
 Debug mode also prints captured WAV duration and sound levels (RMS and peak in dBFS). Compare WAV duration with the key-hold time to spot missing audio. Codex timing is split into request acceptance and turn completion. The Whisper server is bound to `127.0.0.1` and loads the model once.
+
+The Windows microphone-in-use icon is expected while the app runs: FFmpeg keeps
+the device open, discarding samples outside recording. A local measurement on
+2026-10-25 found a median 876 ms from FFmpeg launch to first PCM (5 launches),
+versus 22 ms to the next PCM on an open stream (40 samples), about 854 ms saved
+at recording start. This does not measure STT, inference or playback latency.
 
 ## Known limitations
 

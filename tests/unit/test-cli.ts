@@ -79,6 +79,8 @@ test('piped CLI waits for startup and successive turns, renders text and history
   assert.deepEqual(f.prompts, ['Pierwsze pytanie', 'Drugie pytanie']);
   assert.match(f.output, /Asystent: Odpowiedź: Pierwsze pytanie/);
   assert.match(f.output, /Asystent: Odpowiedź: Drugie pytanie/);
+  assert.equal(f.output.match(/Rozmowa tekstowa gotowa\./g)?.length, 1);
+  assert.equal(f.output.match(/Nagrywanie gotowe/g)?.length, 1);
   assert.equal(f.stopped, 1);
 });
 

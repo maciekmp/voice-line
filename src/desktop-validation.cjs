@@ -1,5 +1,5 @@
 const { z } = require('zod');
-const { imageIdSchema, conversationViewSchema, revisionSchema, identifierSchema } = require('./conversation-schemas.cjs');
+const { imageIdSchema, generatedImageSchema, conversationViewSchema, revisionSchema, identifierSchema } = require('./conversation-schemas.cjs');
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 function record(value) { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 /** @param {unknown} value @returns {value is string} */
@@ -16,6 +16,7 @@ const workerEventSchema = z.union([
     operationId: revisionSchema.nullable(), threadId: identifierSchema.nullable(),
     conversation: conversationViewSchema, message: z.string().optional(), generatingImage: z.boolean().optional(),
     selectedImageId: imageIdSchema.nullable().optional(),
+    selectedImage: generatedImageSchema.nullable().optional(),
     capabilities: z.object({
       text: z.object({ state: z.enum(['starting', 'ready', 'error', 'stopped']), message: z.string().optional() }),
       recording: z.object({ state: z.enum(['starting', 'ready', 'error', 'stopped', 'disabled']), message: z.string().optional() }),
@@ -31,17 +32,21 @@ function copyConversation(value) {
       ...(item.interrupted !== undefined && { interrupted: item.interrupted }),
       ...(item.id !== undefined && { id: item.id }), ...(item.revision !== undefined && { revision: item.revision }),
       ...(item.images !== undefined && { images: item.images.map(image => ({ id: image.id, alt: image.alt })) }),
+      ...(item.inputImages !== undefined && { inputImages: item.inputImages.map(image => ({ id: image.id, alt: image.alt })) }),
       ...(item.imageTask !== undefined && { imageTask: { threadId: item.imageTask.threadId, turnId: item.imageTask.turnId } }),
     })),
     pending: value.pending && { id: value.pending.id, revision: value.pending.revision,
       question: value.pending.question, answer: value.pending.answer,
       ...(value.pending.images !== undefined && { images: value.pending.images.map(image => ({ id: image.id, alt: image.alt })) }),
+      ...(value.pending.inputImages !== undefined && { inputImages: value.pending.inputImages.map(image => ({ id: image.id, alt: image.alt })) }),
       ...(value.pending.questionSource !== undefined && { questionSource: value.pending.questionSource }) },
   };
 }
 
 /** @param {string} channel @param {unknown} value @returns {import('./desktop-contract.ts').DesktopRequest | null} */
 function parseDesktopRequest(channel, value) {
+  if (channel === 'voice:image-import') return ['file', 'clipboard', 'screen'].includes(/** @type {string} */ (value))
+    ? { channel, value: /** @type {import('./desktop-contract.ts').ImageImportSource} */ (value) } : null;
   if (channel === 'voice:image-selection') return value === null || imageId(value) ? { channel, value } : null;
   if (channel === 'voice:text') {
     if (record(value)) {

@@ -5,7 +5,7 @@ const { createWindowAdapter } = require('../../electron/desktop-windows.cjs');
 const { createOverlayController } = require('../../electron/overlay-controller.cjs');
 
 function fixture(options = {}) {
-  const created = [], hover = [];
+  const created = [], hover = [], menus = [];
   class Window extends EventEmitter {
     constructor(settings) {
       super(); this.settings = settings; this.bounds = { x: 1000, y: 700, ...settings };
@@ -13,7 +13,11 @@ function fixture(options = {}) {
       this.webContents = new EventEmitter();
       this.webContents.send = (...args) => this.messages.push(args);
       this.webContents.setWindowOpenHandler = callback => { this.openHandler = callback; };
-      this.webContents.session = { setPermissionRequestHandler: callback => { this.permissionHandler = callback; } };
+      this.webContents.replaceMisspelling = text => { this.replacement = text; };
+      this.webContents.session = { availableSpellCheckerLanguages: ['pl', 'en-US', 'fr'],
+        setSpellCheckerLanguages: languages => { this.languages = languages; },
+        addWordToSpellCheckerDictionary: word => { this.dictionaryWord = word; },
+        setPermissionRequestHandler: callback => { this.permissionHandler = callback; } };
       created.push(this);
     }
     setMenu() {} setAlwaysOnTop() {}
@@ -35,10 +39,11 @@ function fixture(options = {}) {
   screen.getPrimaryDisplay = () => ({ workArea: { x: 0, y: 0, width: 1200, height: 800 } });
   let dismissed = 0;
   const host = { screen, BrowserWindow: Window, root: '/fixture',
+    Menu: { buildFromTemplate(template) { menus.push(template); return { popup() {} }; } },
     PANEL_MAX_HEIGHT: 500, hover: (...value) => hover.push(value),
     exiting: () => false, dismiss: () => dismissed++ };
   const adapter = createWindowAdapter(host);
-  return { host, adapter, created, hover, dismissed: () => dismissed };
+  return { host, adapter, created, hover, menus, dismissed: () => dismissed };
 }
 
 test('native adapter preserves window isolation, blocks navigation and removes display listeners', async t => {
@@ -155,4 +160,26 @@ test('shutdown during panel loading removes display listeners', async () => {
   f.adapter.dispose(); release(); await startup;
   assert.equal(f.created.length, 1);
   assert.equal(f.host.screen.listenerCount('display-added'), 0);
+});
+test('native editor enables Polish and English spelling and offers correction without sending text', async t => {
+  const f = fixture(); t.after(() => f.adapter.dispose()); await f.adapter.create();
+  const window = f.host.panelWindow;
+  assert.equal(window.settings.webPreferences.spellcheck, true);
+  assert.deepEqual(window.languages, ['pl', 'en-US']);
+  window.webContents.emit('context-menu', {}, { isEditable: false });
+  assert.equal(f.menus.length, 0);
+  window.webContents.emit('context-menu', {}, { isEditable: true, dictionarySuggestions: ['poprawnie'], misspelledWord: 'poprafnie' });
+  f.menus[0][0].click();
+  assert.equal(window.replacement, 'poprawnie');
+  f.menus[0][1].click();
+  assert.equal(window.dictionaryWord, 'poprafnie');
+  assert.ok(f.menus[0].some(item => item.role === 'paste'));
+});
+test('external interaction hides the native surface without resetting its mode', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const f = fixture(); t.after(() => f.adapter.dispose()); await f.adapter.create();
+  f.adapter.openPanel('chat', true); f.adapter.hidePanel(); f.adapter.holdPanel();
+  t.mock.timers.tick(1000);
+  assert.equal(f.adapter.mode, 'chat');
+  assert.equal(f.host.panelWindow.isVisible(), false);
 });
