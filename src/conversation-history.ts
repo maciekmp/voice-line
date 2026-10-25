@@ -1,6 +1,6 @@
 import type { ConversationExchange } from './conversation-contract.ts';
 import { resolve } from 'node:path';
-import { ArtifactStore, imageFromProtocol } from './artifact-store.ts';
+import { ArtifactStore, tryImageFromProtocol } from './artifact-store.ts';
 import type { GeneratedImage } from './conversation-contract.ts';
 import { imageGenerationAnswer } from './image-artifacts.ts';
 
@@ -72,14 +72,14 @@ export function mapConversationTurns(turns: any[], onlyTurnId?: string, includeI
   const exchanges: MappedConversationExchange[] = [];
   for (const turn of turns) {
     if (turn.status !== 'completed' || !Array.isArray(turn.items) || (onlyTurnId && turn.id !== onlyTurnId)) continue;
-    const blobs = includeImages ? turn.items.filter((item: any) => item?.type === 'imageGeneration' && item.status === 'completed')
-      .map((item: any) => imageFromProtocol(item)) : [];
+    const blobs = includeImages ? turn.items.filter((item: any) => item?.type === 'imageGeneration')
+      .flatMap((item: any) => { const blob = tryImageFromProtocol(item); return blob ? [blob] : []; }) : [];
     const images = blobs.map((blob: { image: GeneratedImage }) => blob.image);
     for (const item of [...turn.items].reverse()) {
       if (item?.type !== 'agentMessage' || item.phase === 'commentary' || typeof item.text !== 'string') continue;
       try {
         const reply = JSON.parse(item.text);
-        if (typeof reply?.prompt === 'string' && typeof reply.answer === 'string' && reply.answer.trim()) {
+        if (typeof reply?.prompt === 'string' && typeof reply.answer === 'string' && (reply.answer.trim() || images.length)) {
           exchanges.push({ exchange: { question: reply.prompt, answer: reply.answer, ...(images.length && { images }) }, blobs });
           break;
         }

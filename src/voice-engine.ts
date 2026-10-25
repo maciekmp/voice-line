@@ -1,13 +1,14 @@
 import type { ConversationClient, ConversationExchange, VoiceReply, ConversationCheckpoint } from './conversation-contract.ts';
 export type { ConversationClient } from './conversation-contract.ts';
 import type { ResponsePhase } from './application-contract.ts';
-import { imageRequest, explicitImageRequest } from './image-artifacts.ts';
+import { imageRequest } from './image-artifacts.ts';
 
 export type VoiceCallbacks = {
   onUpdate?: (state: ResponsePhase, text?: { question?: string; answer?: string; exchanges?: ConversationExchange[] }) => void;
   onPlaybackStart?: () => void;
   onLevel?: (level: number) => void;
   onTiming?: (label: string, milliseconds: number) => void;
+  onImages?: import('./conversation-contract.ts').ImageProgress;
 };
 export type VoiceResponseOptions = { playback: boolean; imageId?: string };
 export interface VoiceEngine extends ConversationClient {
@@ -37,13 +38,14 @@ export abstract class BaseVoiceEngine implements VoiceEngine {
   expireConversation() { this.client.expireConversation(); }
   async maintainHistory() { return await this.client.maintainHistory?.() ?? false; }
   restorePrevious(signal?: AbortSignal) { return this.client.restorePrevious(signal); }
-  respond(text: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string) {
-    const image = this.mode === 'local' ? explicitImageRequest(text) : imageRequest(text);
-    return imageId || image ? this.generateImage(image ?? text, signal, questionSource, imageId) : this.client.respond(text, signal, questionSource);
+  respond(text: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress) {
+    const image = imageRequest(text);
+    return image ? this.generateImage(image, signal, questionSource, imageId, onImages)
+      : this.client.respond(text, signal, questionSource, imageId, ...(onImages ? [onImages] : []));
   }
-  generateImage(text: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string) {
+  generateImage(text: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress) {
     if (!this.client.generateImage) return Promise.reject(new Error('ImageGen jest niedostępny.'));
-    return this.client.generateImage(text, signal, questionSource, imageId);
+    return this.client.generateImage(text, signal, questionSource, imageId, ...(onImages ? [onImages] : []));
   }
   abstract respondAudio(wav: string, signal?: AbortSignal, callbacks?: VoiceCallbacks): Promise<VoiceReply>;
 }

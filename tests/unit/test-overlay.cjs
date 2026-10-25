@@ -37,19 +37,39 @@ for (const state of ['listening','transcribing','thinking','preparing-speech','s
     assert.equal(c.snapshot().mode,'hidden');
   });
 }
-test('new voice and text intents choose mode without stealing voice focus', () => {
+test('voice and text input preserve the expanded conversation', () => {
   const {controller:c}=setup(); c.compose(); c.open(); c.intent('voice-input'); c.voice('listening');
-  assert.equal(c.snapshot().mode,'peek');
+  assert.equal(c.snapshot().mode,'chat');
   for(const state of ['transcribing','thinking','preparing-speech','speaking']) c.voice(state);
-  assert.equal(c.snapshot().mode,'peek');
-  c.intent('text-input'); assert.equal(c.snapshot().mode,'compact');
-  c.voice('idle'); assert.equal(c.snapshot().mode,'compact');
+  assert.equal(c.snapshot().mode,'chat');
+  c.intent('text-input'); assert.equal(c.snapshot().mode,'chat');
+  c.voice('idle'); assert.equal(c.snapshot().mode,'chat');
+});
+for (const mode of ['compose', 'compact', 'chat']) {
+  test('voice recording preserves ' + mode + ' mode', () => {
+    const { controller: c } = setup();
+    if (mode === 'compose') c.compose();
+    else if (mode === 'compact') c.intent('text-input');
+    else c.open();
+    c.intent('voice-input');
+    for (const state of ['listening', 'transcribing', 'idle']) {
+      c.voice(state);
+      assert.equal(c.snapshot().mode, mode);
+    }
+  });
+}
+test('voice submission reveals its response after recording in input-only mode', () => {
+  const { controller: c } = setup();
+  c.compose(); c.intent('voice-input'); c.voice('listening'); c.voice('transcribing');
+  assert.equal(c.snapshot().mode, 'compose');
+  c.voice('thinking');
+  assert.equal(c.snapshot().mode, 'compact');
 });
 test('correction and continuation retain expanded scope, otherwise add a compact composer', () => {
   for(const intent of ['correct','continue']) {
     const {controller:c}=setup(); c.open(); c.intent(intent); assert.equal(c.snapshot().mode,'chat');
-    c.intent('voice-input'); c.intent(intent); assert.equal(c.snapshot().mode,'compact');
-    c.intent(intent); assert.equal(c.snapshot().mode,'compact');
+    c.intent('voice-input'); c.intent(intent); assert.equal(c.snapshot().mode,'chat');
+    c.intent(intent); assert.equal(c.snapshot().mode,'chat');
     c.dismiss(); c.intent(intent); assert.equal(c.snapshot().mode,'compose');
   }
 });
@@ -74,7 +94,7 @@ test('departure never starts a timer and a new operation cancels previous comple
   const {controller:c,advance}=setup(); c.compose(); c.hover('panel',true); c.hover('panel',false);
   advance(10000); assert.equal(c.snapshot().mode,'compose');
   c.intent('text-input'); c.voice('thinking'); c.voice('idle'); advance(4900);
-  c.intent('voice-input'); c.voice('listening'); advance(10000); assert.equal(c.snapshot().mode,'peek');
+  c.intent('voice-input'); c.voice('listening'); advance(10000); assert.equal(c.snapshot().mode,'compact');
   c.voice('idle'); advance(5000); assert.equal(c.snapshot().mode,'hidden');
 });
 test('errors persist, including when following an active operation', () => {

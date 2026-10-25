@@ -35,6 +35,24 @@ test('transport matches replies, forwards notifications and rejects RPC errors w
   transport.stop();
 });
 
+test('raw logging preserves incoming lines before parsing and leaves RPC handling intact', async () => {
+  const fixture = processFixture(), raw: string[][] = [], messages: any[] = [];
+  const transport = new CodexRpcTransport(fixture.process, message => messages.push(message), () => {}, undefined,
+    (source, line) => raw.push([source, line]));
+  const reply = transport.request('first', {});
+  const notification = '{ "method": "event", "params": {"text":"zażółć"} }';
+  fixture.child.stdout.write('invalid JSON\n' + notification.slice(0, 20));
+  fixture.child.stdout.write(notification.slice(20) + '\n{"id":1,"result":"ok"}\n');
+  assert.equal(await reply, 'ok');
+  assert.deepEqual(raw, [
+    ['app-server', 'invalid JSON'], ['app-server', notification], ['app-server', '{"id":1,"result":"ok"}'],
+  ]);
+  assert.deepEqual(messages, [JSON.parse(notification)]);
+  transport.stop();
+  fixture.child.stdout.write('{"method":"late"}\n');
+  assert.equal(raw.length, 3);
+});
+
 test('asynchronous EPIPE rejects every pending request and disconnects once', async () => {
   const pipeError = Object.assign(new Error('broken pipe'), { code: 'EPIPE' });
   const fixture = processFixture(new Writable({ write(_chunk, _encoding, callback) {

@@ -12,6 +12,15 @@ function snapshot() {
         images: [{ id: 'a'.repeat(64), alt: 'obraz' }] }] } };
 }
 
+test('pending image previews survive worker validation and cannot smuggle invalid IDs', () => {
+  const value = snapshot();
+  value.conversation.pending = { id: 'pending-1', revision: 1, question: 'Q', answer: '', images: [{ id: 'b'.repeat(64), alt: 'Preview' }] };
+  const result = parseWorkerEvent(value);
+  assert.deepEqual(result.conversation.pending.images, value.conversation.pending.images);
+  value.conversation.pending.images[0].id = '../secret';
+  assert.equal(parseWorkerEvent(value), null);
+});
+
 test('desktop requests reject malformed payloads and preserve exact clipboard code', () => {
   assert.deepEqual(parseDesktopRequest('voice:copy-code', '\tcode\r\n'), { channel: 'voice:copy-code', value: '\tcode\r\n' });
   assert.deepEqual(parseDesktopRequest('voice:text', '  pytanie\n'), { channel: 'voice:text', value: 'pytanie' });

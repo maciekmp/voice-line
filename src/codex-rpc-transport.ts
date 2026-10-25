@@ -2,6 +2,7 @@ import { createInterface, type Interface } from 'node:readline';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 
 type Pending = { resolve: (value: any) => void; reject: (error: Error) => void };
+export type CodexRawLog = (source: 'app-server' | 'exec', line: string) => void;
 
 export class CodexRpcTransport {
   private nextId = 0;
@@ -15,7 +16,7 @@ export class CodexRpcTransport {
   private readonly onServerRequest?: (method: string, params: any) => unknown | Promise<unknown>;
 
   constructor(child: ChildProcessWithoutNullStreams, onMessage: (message: any) => void, onDisconnect: (error: Error) => void,
-    onServerRequest?: (method: string, params: any) => unknown | Promise<unknown>) {
+    onServerRequest?: (method: string, params: any) => unknown | Promise<unknown>, rawLog?: CodexRawLog) {
     this.child = child;
     this.onMessage = onMessage;
     this.onDisconnect = onDisconnect;
@@ -34,6 +35,7 @@ export class CodexRpcTransport {
     this.lines.on('error', error => this.disconnect(error));
     this.lines.on('line', line => {
       if (this.disconnected) return;
+      rawLog?.('app-server', line);
       let message: any;
       try { message = JSON.parse(line); } catch { return; }
       if (!message || typeof message !== 'object' || Array.isArray(message)) return;

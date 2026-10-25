@@ -27,7 +27,7 @@ function registerDesktopIpc(ipcMain, host) {
   }
   on('voice:open', event => {
     if (!trusted(event) || host.exitStarted) return;
-    if (process.argv.includes('--debug')) console.log('[overlay] open request');
+    if (process.argv.includes('--app-debug')) console.log('[overlay] open request');
     openPanel();
   });
   on('voice:resize', (event, size) => {

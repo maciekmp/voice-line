@@ -26,7 +26,8 @@ const conversationViewSchema = z.object({
   id: identifierSchema.nullable(), revision: revisionSchema,
   completed: z.array(desktopExchangeSchema),
   pending: z.object({ id: identifierSchema, revision: revisionSchema,
-    question: z.string(), answer: z.string(), questionSource: questionSourceSchema.optional() }).nullable(),
+    question: z.string(), answer: z.string(), questionSource: questionSourceSchema.optional(),
+    images: z.array(generatedImageSchema).optional() }).nullable(),
 }).refine(value => {
   const ids = value.completed.flatMap(item => item.id === undefined ? [] : [item.id]);
   return new Set(ids).size === ids.length;

@@ -29,7 +29,7 @@ function createDesktopFixture() {
   voice = { ...voice, message: '', ...update, history: conversationHistory };
 return { ...voice, conversation: { id: voice.threadId || null, revision: ++revision,
   completed: voice.answer ? [...conversationHistory, { question: voice.question, answer: voice.answer, images: voice.images || [] }] : [...conversationHistory],
-  pending: voice.answer ? null : { id: 'fixture-pending', revision, question: voice.question || '', answer: '' } } };
+  pending: voice.answer ? null : { id: 'fixture-pending', revision, question: voice.question || '', answer: '', images: voice.images || [] } } };
 
  } };
 }

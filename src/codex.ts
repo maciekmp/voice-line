@@ -4,11 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { launch } from './process.ts';
 import { ConversationSession } from './conversation-session.ts';
 import type { GeneratedImage } from './conversation-contract.ts';
-import { imageRequest, storeGeneratedImage, imageGenerationAnswer } from './image-artifacts.ts';
+import { imageRequest, storeGeneratedImage, imageGenerationAnswer, IMAGE_OUTPUT_INSTRUCTIONS } from './image-artifacts.ts';
+import { tryImageFromProtocol } from './artifact-store.ts';
 import type { AppStorage } from './app-storage.ts';
 import type { VoiceReply, ConversationCheckpoint } from './conversation-contract.ts';
 export type { VoiceReply } from './conversation-contract.ts';
 import { loadCodexConfig, type CodexConfig } from './app-config.ts';
+import type { CodexRawLog } from './codex-rpc-transport.ts';
 
 export const INSTRUCTIONS = 'Jesteś asystentem głosowym z oknem rozmowy. Nie uruchamiaj narzędzi, nie czytaj ani nie zmieniaj plików. Dostajesz pytanie tekstowe lub surową transkrypcję po polsku. Najpierw popraw je do zwięzłego pytania: usuń wypełniacze, powtórzenia i wycofane fragmenty, uwzględnij ostatnią samokorektę. Następnie odpowiedz po polsku, krótko i naturalnie, korzystając z kontekstu rozmowy. Zwróć JSON z polami prompt (poprawione pytanie) i answer (pełna odpowiedź do wyświetlenia). Jeśli pytanie wymaga kodu, umieść kompletny kod w blokach Markdown otoczonych potrójnymi backtickami z nazwą języka, zachowując wcięcia i nowe linie. Krótkie fragmenty kodu w zdaniu otaczaj pojedynczymi backtickami. Poza kodem używaj zwykłego tekstu. Opisz krótko rozwiązanie poza blokami kodu; bloki kodu nie będą odczytywane głosowo. Jeśli transkrypcja jest niezrozumiała, poproś o powtórzenie zamiast zgadywać. Pytanie:\n';
 const schemaPath = fileURLToPath(new URL('./response.schema.json', import.meta.url));
@@ -16,8 +18,8 @@ const WEB_INSTRUCTIONS = 'Możesz używać wbudowanego narzędzia wyszukiwania i
 export const WEB_RESPONSE_INSTRUCTIONS = INSTRUCTIONS.replace('Nie uruchamiaj narzędzi, nie czytaj ani nie zmieniaj plików.', WEB_INSTRUCTIONS);
 export const LOCAL_INSTRUCTIONS = WEB_RESPONSE_INSTRUCTIONS.replace(WEB_INSTRUCTIONS,
   WEB_INSTRUCTIONS.replace('Nie używaj shell, MCP ani innych narzędzi', 'Poza wyszukiwaniem internetu i ImageGen nie używaj shell, MCP ani innych narzędzi') +
-  ' Dodatkowo możesz używać wbudowanego narzędzia ImageGen, gdy użytkownik prosi o stworzenie obrazu. Sam rozpoznaj tę intencję niezależnie od sformułowania. Nie generuj obrazu przy pytaniach o obrazy lub o sposób ich tworzenia. Generuj jeden obraz, bez zastępowania go opisem lub SVG; po wygenerowaniu podaj krótkie potwierdzenie w answer. Jeśli narzędzie jest niedostępne lub zawiedzie, powiedz to wprost i nie twierdź, że obraz powstał. Prośba do ImageGen ma zawierać tylko bieżącą prośbę użytkownika, bez historii rozmowy.');
-type Turn = { text: string; threadId?: string; images?: GeneratedImage[]; startupMs?: number; turnMs?: number };
+  ' Dodatkowo możesz używać wbudowanego narzędzia ImageGen, gdy użytkownik prosi o stworzenie obrazu. Sam rozpoznaj tę intencję niezależnie od sformułowania. Nie generuj obrazu przy pytaniach o obrazy lub o sposób ich tworzenia. ' + IMAGE_OUTPUT_INSTRUCTIONS + ' Po wygenerowaniu podaj krótkie potwierdzenie w answer. Jeśli narzędzie jest niedostępne lub zawiedzie, powiedz to wprost i nie twierdź, że obraz powstał. Prośba do ImageGen ma zawierać tylko bieżącą prośbę użytkownika, bez historii rozmowy.');
+type Turn = { text: string; threadId?: string; images?: GeneratedImage[]; failedImageResults?: number; startupMs?: number; turnMs?: number };
 
 export class CodexClient {
   private readonly session: ConversationSession;
@@ -29,10 +31,12 @@ export class CodexClient {
   private lifecycle = 0;
   private readonly storage?: AppStorage;
   private readonly config: CodexConfig;
-  constructor(cwd: string, executable = 'codex.cmd', storage?: AppStorage, config: CodexConfig = loadCodexConfig()) {
+  private readonly rawLog?: CodexRawLog;
+  constructor(cwd: string, executable = 'codex.cmd', storage?: AppStorage, config: CodexConfig = loadCodexConfig(), rawLog?: CodexRawLog) {
     this.cwd = cwd; this.executable = executable;
     this.storage = storage;
     this.config = config;
+    this.rawLog = rawLog;
     this.session = storage?.session ?? new ConversationSession(cwd);
   }
   start(): Promise<void> {
@@ -45,7 +49,7 @@ export class CodexClient {
   private async openHistory(lifecycle: number): Promise<void> {
     const { CodexAppServer } = await import('./codex-app-server.ts');
     if (this.lifecycle !== lifecycle) throw new Error('Codex startup stopped');
-    this.historyServer = new CodexAppServer(this.cwd, this.session, true, { home: this.storage?.home, storage: this.storage, config: this.config });
+    this.historyServer = new CodexAppServer(this.cwd, this.session, true, { home: this.storage?.home, storage: this.storage, config: this.config, rawLog: this.rawLog });
     await this.historyServer.start();
   }
   stop(): void { this.lifecycle++; this.startup = null; this.cancel(); this.historyServer?.stop(); }
@@ -61,17 +65,17 @@ export class CodexClient {
     await this.start();
     return this.historyServer!.restorePrevious(signal);
   }
-  async generateImage(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string): Promise<VoiceReply> {
+  async generateImage(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress): Promise<VoiceReply> {
     await this.start();
-    return this.historyServer!.generateImage(raw, signal, questionSource, imageId);
+    return this.historyServer!.generateImage(raw, signal, questionSource, imageId, ...(onImages ? [onImages] : []));
   }
-  async respond(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string): Promise<VoiceReply> {
+  async respond(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress): Promise<VoiceReply> {
     await this.start();
-    if (imageId) return this.historyServer!.generateImage(raw, signal, questionSource, imageId);
+    if (imageId) return this.historyServer!.respond(raw, signal, questionSource, imageId, ...(onImages ? [onImages] : []));
     // Ephemeral exec cannot be read by a separate process after it exits.
     // Route recognizable image requests to the live server, which supplies pixels.
     const image = this.storage?.ephemeral ? imageRequest(raw) : null;
-    if (image) return this.historyServer!.generateImage(image, signal, questionSource);
+    if (image) return this.historyServer!.generateImage(image, signal, questionSource, undefined, ...(onImages ? [onImages] : []));
     const release = this.storage ? await this.historyServer!.beginExternalTurn() : undefined;
     try {
       this.session.expire();
@@ -90,14 +94,15 @@ export class CodexClient {
       const operation = this.session.captureOperation();
       const conversationId = this.session.threadId ?? randomUUID();
       const exchangeId = this.storage ? randomUUID() : undefined;
-      const result = await this.run(args, LOCAL_INSTRUCTIONS + (ephemeral || this.session.usesLocalContext ? this.session.contextPrompt(raw) : raw), signal, conversationId);
+      const result = await this.run(args, LOCAL_INSTRUCTIONS + (ephemeral || this.session.usesLocalContext ? this.session.contextPrompt(raw) : raw), signal, conversationId, onImages);
       if (signal?.aborted || !this.session.matchesOperation(operation)) throw new Error('Cancelled');
       let reply: VoiceReply;
       try { reply = JSON.parse(result.text); }
       catch { throw new Error(`Codex returned invalid JSON: ${result.text}`); }
-      if (typeof reply.prompt !== 'string' || typeof reply.answer !== 'string' || !reply.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
+      if (typeof reply.prompt !== 'string' || typeof reply.answer !== 'string') throw new Error('Codex returned an incomplete voice reply');
       reply.questionSource = questionSource;
       if (exchangeId) reply.exchangeId = exchangeId;
+      delete reply.images;
       if (result.images?.length) reply.images = result.images;
       if (ephemeral) this.session.threadId ??= randomUUID();
       else if (result.threadId) {
@@ -111,14 +116,15 @@ export class CodexClient {
         if (!latest || latest.question !== reply.prompt || latest.answer !== reply.answer) throw new Error('Codex returned mismatched latest reply history');
         if (latest.images?.length) reply.images = latest.images;
       }
-      reply.answer = imageGenerationAnswer(reply.answer, reply.images);
+      reply.answer = imageGenerationAnswer(reply.answer, reply.images, result.failedImageResults);
+      if (!reply.answer.trim()) throw new Error('Codex returned an incomplete voice reply');
       if (signal?.aborted || !this.session.matchesOperation(commitOperation)) throw new Error('Cancelled');
       if (this.storage) await this.storage.commitReply(reply, undefined, () => !signal?.aborted && this.session.matchesOperation(commitOperation));
       else this.session.answered(reply);
       return { ...reply, startupMs: result.startupMs, turnMs: result.turnMs };
     } finally { release?.(); }
   }
-  private run(args: string[], prompt: string, signal?: AbortSignal, conversationId?: string): Promise<Turn> {
+  private run(args: string[], prompt: string, signal?: AbortSignal, conversationId?: string, onImages?: import('./conversation-contract.ts').ImageProgress): Promise<Turn> {
     return new Promise((resolve, reject) => {
       const privateStorage = this.storage && !this.storage.ephemeral ? this.storage : undefined;
       const child = launch(this.executable, [...(privateStorage ? ['-c', 'cli_auth_credentials_store="file"'] : []), ...args],
@@ -128,8 +134,11 @@ export class CodexClient {
       let turnStartedAt: number | undefined;
       let text = '', threadId: string | undefined, errors = '';
       const images: any[] = [];
+      const previews: GeneratedImage[] = [];
+      let imageProgress = Promise.resolve();
       child.stderr.setEncoding('utf8').on('data', chunk => errors += chunk);
       createInterface({ input: child.stdout }).on('line', line => {
+        this.rawLog?.('exec', line);
         try {
           const event = JSON.parse(line);
           if (event.type === 'thread.started') {
@@ -138,7 +147,19 @@ export class CodexClient {
           }
           if (event.type === 'turn.started' && turnStartedAt === undefined) turnStartedAt = performance.now();
           if (event.type === 'item.completed' && event.item?.type === 'agent_message') text = event.item.text;
-          if (event.type === 'item.completed' && ['image_generation', 'imageGeneration'].includes(event.item?.type)) images.push(event.item);
+          if (event.type === 'item.completed' && ['image_generation', 'imageGeneration'].includes(event.item?.type)) {
+            images.push(event.item);
+            if (onImages && tryImageFromProtocol(event.item)) {
+              imageProgress = imageProgress.then(async () => {
+                if (signal?.aborted) return;
+                const image = await storeGeneratedImage(this.cwd, event.item, this.storage?.dataDirectory);
+                if (signal?.aborted) return;
+                if (!previews.some(previous => previous.id === image.id)) previews.push(image);
+                onImages([...previews]);
+              });
+              void imageProgress.catch(() => {});
+            }
+          }
           if (event.type === 'error') errors += `\n${event.message}`;
         } catch { /* Non-JSON diagnostics are ignored. */ }
       });
@@ -154,8 +175,15 @@ export class CodexClient {
         else if (code !== 0 || !text.trim()) reject(new Error(`Codex failed (${code}): ${errors.trim()}`));
         else {
           try {
-            const artifacts = await Promise.all(images.map(item => storeGeneratedImage(this.cwd, item, this.storage?.dataDirectory)));
-            resolve({ text, threadId, images: artifacts, startupMs: turnStartedAt === undefined ? undefined : turnStartedAt - startedAt, turnMs: turnStartedAt === undefined ? undefined : performance.now() - turnStartedAt });
+            await imageProgress;
+            if (signal?.aborted) throw new Error('Cancelled');
+            const validImages = images.filter(item => tryImageFromProtocol(item));
+            if (images.length && !validImages.length) {
+              const answer = JSON.parse(text)?.answer;
+              throw new Error(`Codex nie wygenerował obrazu: ${typeof answer === 'string' ? answer : 'ImageGen nie zwrócił poprawnego obrazu.'}`);
+            }
+            const artifacts = onImages ? previews : await Promise.all(validImages.map(item => storeGeneratedImage(this.cwd, item, this.storage?.dataDirectory)));
+            resolve({ text, threadId, images: artifacts, failedImageResults: images.length - validImages.length, startupMs: turnStartedAt === undefined ? undefined : turnStartedAt - startedAt, turnMs: turnStartedAt === undefined ? undefined : performance.now() - turnStartedAt });
           } catch (error) { reject(error); }
         }
       });

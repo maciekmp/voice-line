@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import { ArtifactStore } from './artifact-store.ts';
 export type { GeneratedImage, ImageTask } from './conversation-contract.ts';
 export type { ImageLink } from './artifact-store.ts';
+export const IMAGE_OUTPUT_INSTRUCTIONS = 'Uwzględnij liczbę obrazów lub wariantów podaną przez użytkownika. Jeśli nie podał liczby, wygeneruj jeden obraz. Gdy prosi o kilka obrazów, zwróć je jako osobne obrazy, nie kolaż ani siatkę, chyba że o to prosi. Jeśli narzędzie zwraca jeden obraz na wywołanie, wykonaj osobne wywołania dla kolejnych wariantów w ramach tej odpowiedzi. Nie zastępuj obrazów opisem ani kodem SVG. Jeśli narzędzie lub limity nie pozwalają uzyskać całej liczby, zachowaj uzyskane obrazy i nie twierdź, że powstały brakujące.';
 import type { GeneratedImage } from './conversation-contract.ts';
 import type { ImageLink } from './artifact-store.ts';
 const { readImage, imagePath } = createRequire(import.meta.url)('./image-files.cjs') as {
@@ -19,9 +20,11 @@ export async function imageAttachmentPath(cwd: string, id: string, dataDirectory
 }
 
 // Verified artifacts determine generation success, rather than the model's prose.
-export function imageGenerationAnswer(answer: string, images?: GeneratedImage[]): string {
+export function imageGenerationAnswer(answer: string, images?: GeneratedImage[], failedResults = 0): string {
   if (!images?.length) return answer;
-  return images.length === 1 ? 'Wygenerowano obraz.' : 'Wygenerowano obrazy.';
+  const warning = ' Nie wszystkie próby generowania zakończyły się poprawnie.';
+  return (images.length === 1 ? 'Wygenerowano obraz.' : 'Wygenerowano obrazy.')
+    + (failedResults > 0 || answer.endsWith(warning) ? warning : '');
 }
 
 // Compatibility functions delegate to the shared store used by providers and history hydration.

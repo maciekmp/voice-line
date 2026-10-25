@@ -10,6 +10,7 @@ export type ImageTask = z.infer<typeof imageTaskSchema>;
 export type ConversationExchange = z.infer<typeof exchangeSchema>;
 export type VoiceReply = { exchangeId?: string; interrupted?: boolean; questionSource?: QuestionSource; prompt: string; answer: string; images?: GeneratedImage[]; imageTask?: ImageTask; startupMs?: number; turnMs?: number };
 export type ConversationCheckpoint = { id: string | null; exchanges: ConversationExchange[] };
+export type ImageProgress = (images: GeneratedImage[]) => void;
 
 export interface ConversationClient {
   start(): Promise<void>;
@@ -23,8 +24,8 @@ export interface ConversationClient {
   readonly canRestorePrevious: boolean;
   expireConversation(): void;
   restorePrevious(signal?: AbortSignal): Promise<boolean>;
-  respond(text: string, signal?: AbortSignal, questionSource?: QuestionSource, imageId?: string): Promise<VoiceReply>;
-  generateImage?(text: string, signal?: AbortSignal, questionSource?: QuestionSource, imageId?: string): Promise<VoiceReply>;
+  respond(text: string, signal?: AbortSignal, questionSource?: QuestionSource, imageId?: string, onImages?: ImageProgress): Promise<VoiceReply>;
+  generateImage?(text: string, signal?: AbortSignal, questionSource?: QuestionSource, imageId?: string, onImages?: ImageProgress): Promise<VoiceReply>;
   maintainHistory?(): Promise<boolean>;
 }
 

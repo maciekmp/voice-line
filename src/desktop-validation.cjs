@@ -35,6 +35,7 @@ function copyConversation(value) {
     })),
     pending: value.pending && { id: value.pending.id, revision: value.pending.revision,
       question: value.pending.question, answer: value.pending.answer,
+      ...(value.pending.images !== undefined && { images: value.pending.images.map(image => ({ id: image.id, alt: image.alt })) }),
       ...(value.pending.questionSource !== undefined && { questionSource: value.pending.questionSource }) },
   };
 }

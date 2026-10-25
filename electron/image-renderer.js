@@ -49,7 +49,7 @@ function watch(element, update) {
 
 /** @param {HTMLElement} container @param {import('../src/conversation-contract.ts').GeneratedImage[]} [images]
  * @param {{lazy?: boolean, onSelect?: (image: import('../src/conversation-contract.ts').GeneratedImage) => void}} [options] @returns {() => void} */
-export function renderImages(container, images = [], { lazy = false, onSelect } = {}) {
+function renderImageList(container, images = [], { lazy = false, onSelect } = {}) {
   cleanups.get(container)?.();
   /** @type {(() => void)[]} */
   const dispose = [];
@@ -72,9 +72,9 @@ export function renderImages(container, images = [], { lazy = false, onSelect } 
     const select = document.createElement('button');
     select.type = 'button'; select.className = 'popup-action image-select';
     select.dataset.imageId = image.id;
-    select.setAttribute('aria-label', `Edytuj obraz: ${preview.alt.slice(0, 160)}`);
+    select.setAttribute('aria-label', `Załącz obraz: ${preview.alt.slice(0, 160)}`);
     select.setAttribute('aria-pressed', 'false');
-    select.title = 'Wybierz obraz do edycji';
+    select.title = 'Załącz obraz do pytania lub edycji';
     const editIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     editIcon.setAttribute('viewBox', '0 0 24 24'); editIcon.setAttribute('aria-hidden', 'true'); editIcon.setAttribute('focusable', 'false');
     const editPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
@@ -141,5 +141,93 @@ export function renderImages(container, images = [], { lazy = false, onSelect } 
       finally { save.disabled = false; save.removeAttribute('aria-busy'); }
     });
   }
+  return cleanup;
+}
+
+/** @typedef {import('../src/conversation-contract.ts').GeneratedImage} GalleryImage */
+/** @typedef {{lazy?: boolean, onSelect?: (image: GalleryImage) => void}} GalleryOptions */
+/** @type {WeakMap<HTMLElement, {images: GalleryImage[], lazy: boolean, onSelect?: GalleryOptions['onSelect'], active: boolean, append: (images: GalleryImage[]) => void, cleanup: () => void}>} */
+const galleries = new WeakMap();
+
+/** @param {HTMLElement} container @param {GalleryImage[]} [images] @param {GalleryOptions} [options] */
+export function renderImages(container, images = [], { lazy = false, onSelect } = {}) {
+  const unique = images.filter((image, index) => /^[a-f0-9]{64}$/.test(image?.id)
+    && images.findIndex(other => other.id === image.id) === index);
+  const previous = galleries.get(container);
+  if (previous?.active && previous.lazy === lazy && previous.onSelect === onSelect
+    && previous.images.length <= unique.length
+    && previous.images.every((image, index) => image.id === unique[index].id && image.alt === unique[index].alt)) {
+    previous.append(unique.slice(previous.images.length));
+    return previous.cleanup;
+  }
+  previous?.cleanup();
+  container.replaceChildren();
+  if (!unique.length) { galleries.delete(container); return () => {}; }
+  const thumbnails = document.createElement('div');
+  thumbnails.className = 'image-thumbnails'; thumbnails.hidden = true;
+  thumbnails.setAttribute('role', 'group'); thumbnails.setAttribute('aria-label', 'Warianty obrazu');
+  const stage = document.createElement('div'); stage.className = 'image-stage';
+  container.append(stage, thumbnails);
+  /** @type {{button: HTMLButtonElement, preview: HTMLImageElement, image: GalleryImage}[]} */
+  const entries = [];
+  /** @type {string | undefined} */
+  let selected;
+  let visible = !lazy;
+  let disposeImage = () => {};
+  const state = { images: /** @type {GalleryImage[]} */ ([]), lazy, onSelect, active: true, append, cleanup };
+  /** @param {GalleryImage} image */
+  function show(image) {
+    if (selected === image.id) return;
+    selected = image.id;
+    for (const entry of entries) entry.button.setAttribute('aria-pressed', String(entry.image.id === selected));
+    disposeImage();
+    disposeImage = renderImageList(stage, [image], { lazy, onSelect });
+    container.dispatchEvent(new Event('image-gallery-change', { bubbles: true }));
+  }
+  function loadThumbnails() {
+    if (!state.active || !visible || thumbnails.hidden) return;
+    for (const entry of entries) {
+      if (entry.preview.hasAttribute('src')) continue;
+      imagePreviewCache.get(entry.image.id).then(url => {
+        if (state.active && visible && entry.preview.isConnected && url) entry.preview.src = url;
+      }).catch(() => {});
+    }
+  }
+  /** @param {GalleryImage[]} additions */
+  function append(additions) {
+    for (const image of additions) {
+      const index = entries.length;
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'image-thumbnail';
+      button.dataset.imageId = image.id;
+      button.setAttribute('aria-label', `Pokaż wariant ${index + 1}: ${image.alt.slice(0, 160)}`);
+      button.setAttribute('aria-pressed', 'false');
+      const preview = document.createElement('img'); preview.alt = ''; preview.decoding = 'async';
+      preview.width = 32; preview.height = 32; preview.fetchPriority = 'low';
+      button.append(preview); thumbnails.append(button);
+      entries.push({ button, preview, image }); state.images.push(image);
+      button.addEventListener('click', () => show(image));
+      button.addEventListener('keydown', event => {
+        let next = index;
+        if (event.key === 'ArrowRight') next = (index + 1) % entries.length;
+        else if (event.key === 'ArrowLeft') next = (index - 1 + entries.length) % entries.length;
+        else if (event.key === 'Home') next = 0;
+        else if (event.key === 'End') next = entries.length - 1;
+        else return;
+        event.preventDefault(); entries[next].button.focus({ preventScroll: true }); show(entries[next].image);
+      });
+    }
+    thumbnails.hidden = entries.length < 2;
+    if (!thumbnails.hidden && thumbnails.nextElementSibling !== stage) container.insertBefore(thumbnails, stage);
+    if (!selected && state.images[0]) show(state.images[0]);
+    loadThumbnails();
+  }
+  const unwatch = lazy ? watch(thumbnails, intersects => {
+    visible = intersects && thumbnails.getClientRects().length > 0;
+    if (visible) loadThumbnails();
+    else for (const entry of entries) entry.preview.removeAttribute('src');
+  }) : () => {};
+  function cleanup() { state.active = false; unwatch(); disposeImage(); }
+  galleries.set(container, state);
+  append(unique);
   return cleanup;
 }

@@ -15,7 +15,8 @@ export function createApplicationRuntime(emit: (event: ApplicationEvent) => void
   options: { debug?: boolean; log?: Pick<Console, 'log' | 'error'>; keyboard?: boolean; voice?: boolean } = {}) {
   const config = loadAppConfig(undefined, false, true);
   const controller = new ApplicationController({
-    engine: createVoiceEngine(resolve('.'), false, config),
+    engine: createVoiceEngine(resolve('.'), false, config, options.debug
+      ? (source, line) => (options.log ?? console).log(`[codex:${source}:raw] ${line}`) : undefined),
     recorder: options.voice !== false && config.microphone ? new Recorder(config.microphone, tmpdir(), undefined, config.ffmpeg) : undefined,
     playback: options.voice,
     recordingUnavailableMessage: options.voice === false ? 'Nagrywanie jest wyłączone w trybie potokowym.' : undefined,

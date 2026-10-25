@@ -87,7 +87,7 @@ const engineSupervisor = createEngineSupervisor({
   launch() {
     sendVoice({ state: 'starting', ready: false, inputMessage: '' });
     return spawn(process.env.NODE_BIN || 'node',
-    ['--env-file-if-exists=.env', '--experimental-strip-types', 'src/worker-main.ts', ...(process.argv.includes('--debug') ? ['--debug'] : [])],
+    ['--env-file-if-exists=.env', '--experimental-strip-types', 'src/worker-main.ts', ...(process.argv.includes('--app-debug') ? ['--debug'] : [])],
     { cwd: path.join(__dirname, '..'), stdio: ['ignore', 'inherit', 'inherit', 'ipc'], windowsHide: true });
   },
   onChild(child) { engine = child && { get connected() { return child.connected; }, request: message => engineSupervisor.request(message) }; },
@@ -107,7 +107,7 @@ function startEngine() {
 
 const overlay = createOverlayController({
   onChange(value, { focus }) {
-    if (process.argv.includes('--debug')) console.log('[overlay]', { ...value, focus });
+    if (process.argv.includes('--app-debug')) console.log('[overlay]', { ...value, focus });
     if (panelWindow && !panelWindow.isDestroyed()) {
       if (value.mode === 'hidden') {
         if (panelWindow.isVisible()) windows.hidePanel();

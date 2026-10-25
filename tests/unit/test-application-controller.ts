@@ -115,7 +115,7 @@ test('image selection must belong to the current conversation and reaches the en
   assert.equal(received, undefined);
 });
 
-test('selected image is available to voice input, survives failure and clears after success or reset', async t => {
+test('selected image reaches voice input and clears when the edit is submitted or reset', async t => {
   const f = fixture(); t.after(() => f.controller.shutdown());
   await f.controller.start();
   const imageId = 'a'.repeat(64);
@@ -127,13 +127,14 @@ test('selected image is available to voice input, survives failure and clears af
   f.engine.respondAudio = async (_wav, _signal, callbacks, options) => {
     received = options?.imageId;
     callbacks?.onUpdate?.('thinking', { question: 'Zmień tło' });
-    throw new Error('No transcript');
+    throw new Error('Image edit failed');
   };
   assert.equal(f.application.beginRecording(), true); f.application.confirmRecording();
   assert.equal(f.controller.snapshot().selectedImageId, imageId);
   await f.application.releaseRecording();
   assert.equal(received, imageId);
-  assert.equal(f.controller.snapshot().selectedImageId, imageId);
+  assert.equal(f.controller.snapshot().selectedImageId, null);
+  await f.controller.command({ command: 'select-image', imageId });
   f.engine.respondAudio = async (_wav, _signal, _callbacks, options) => {
     received = options?.imageId; return { prompt: 'Zmień tło', answer: 'Gotowe' };
   };
@@ -148,6 +149,72 @@ test('selected image is available to voice input, survives failure and clears af
   await f.controller.command({ command: 'reset' });
   assert.equal(f.controller.snapshot().selectedImageId, null);
 });
+
+for (const source of ['text', 'voice'] as const) {
+  test(`${source} image edit consumes its attachment on submission, including when generation fails`, async t => {
+    const f = fixture(); t.after(() => f.controller.shutdown());
+    await f.controller.start();
+    const imageId = 'a'.repeat(64);
+    f.engine.currentExchanges.push({ question: 'Obraz', answer: 'Gotowe', images: [{ id: imageId, alt: 'Obraz' }] });
+    for (const succeeds of [false, true]) {
+      await f.controller.command({ command: 'select-image', imageId });
+      const response = deferred<VoiceReply>();
+      let received: string | undefined;
+      f.engine.respond = async (_text, _signal, _source, selected) => { received = selected; return response.promise; };
+      f.engine.respondAudio = async (_wav, _signal, callbacks, options) => {
+        received = options?.imageId;
+        callbacks?.onUpdate?.('transcribing');
+        assert.equal(f.controller.snapshot().selectedImageId, imageId, 'Transcription keeps the attachment');
+        callbacks?.onUpdate?.('thinking', { question: 'Zmień tło' });
+        return response.promise;
+      };
+      let completion: Promise<void>;
+      if (source === 'text') {
+        const receipt = f.application.dispatch({ command: 'text', text: 'Zmień tło', imageId });
+        assert.equal(receipt.result.accepted, true);
+        completion = receipt.completion;
+      } else {
+        assert.equal(f.application.beginRecording(), true);
+        f.application.confirmRecording();
+        assert.equal(f.controller.snapshot().selectedImageId, imageId, 'Recording keeps the attachment');
+        completion = f.application.releaseRecording();
+      }
+      await flush();
+      assert.equal(received, imageId, 'The submitted edit still receives its image');
+      assert.equal(f.controller.snapshot().selectedImageId, null, 'Submission consumes the attachment');
+      if (succeeds) response.resolve({ prompt: 'Zmień tło', answer: 'Gotowe' });
+      else response.reject(new Error('Image edit failed'));
+      await completion;
+      assert.equal(f.controller.snapshot().selectedImageId, null);
+    }
+  });
+}
+
+for (const source of ['text', 'voice'] as const) {
+  test(`${source} image previews stay pending and late previews are ignored after cancel`, async t => {
+    const f = fixture(); t.after(() => f.controller.shutdown());
+    await f.controller.start();
+    const response = deferred<VoiceReply>();
+    let progress: import('../../src/conversation-contract.ts').ImageProgress | undefined;
+    f.engine.respond = async (_text, _signal, _source, _image, onImages) => { progress = onImages; return response.promise; };
+    f.engine.respondAudio = async (_wav, _signal, callbacks) => { progress = callbacks?.onImages; return response.promise; };
+    let completion: Promise<void>;
+    if (source === 'text') completion = f.application.dispatch({ command: 'text', text: 'Wygeneruj obraz w 4 wariantach' }).completion;
+    else {
+      f.application.beginRecording(); f.application.confirmRecording(); completion = f.application.releaseRecording();
+    }
+    await flush();
+    const image = { id: 'a'.repeat(64), alt: 'Pierwszy wariant' };
+    progress?.([image]);
+    assert.deepEqual(f.controller.snapshot().conversation.pending?.images, [image]);
+    assert.equal(f.controller.snapshot().conversation.completed.length, 0);
+    await f.controller.command({ command: 'cancel' });
+    progress?.([image, { id: 'b'.repeat(64), alt: 'Spóźniony wariant' }]);
+    assert.equal(f.controller.snapshot().conversation.pending, null);
+    response.resolve(f.reply); await completion;
+    assert.equal(f.controller.snapshot().conversation.completed.length, 0);
+  });
+}
 
 test('voice operations publish stages and clean detached audio', async t => {
   const f = fixture(); t.after(() => f.controller.shutdown()); await f.controller.start();

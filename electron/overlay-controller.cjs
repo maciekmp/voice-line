@@ -34,9 +34,13 @@ function createOverlayController({ onChange, completionDelay = 5000, timers = gl
     snapshot, compose, toggle: () => compose(),
     intent(action) {
       if (action === 'voice-input') {
-        cancelCompletion(); mode = 'peek'; composerFocused = false; publish();
+        cancelCompletion();
+        if (!EDITABLE.has(mode)) mode = 'peek';
+        composerFocused = false; publish();
       } else if (action === 'text-input') {
-        cancelCompletion(); mode = 'compact'; publish();
+        cancelCompletion();
+        if (mode !== 'chat') mode = 'compact';
+        publish();
       } else compose(action === 'correct' || action === 'continue');
     },
     open(chat = true) { mode = chat ? 'chat' : mode === 'hidden' ? 'peek' : mode; publish(chat); },
@@ -53,6 +57,7 @@ function createOverlayController({ onChange, completionDelay = 5000, timers = gl
         if (mode === 'hidden') mode = 'peek';
       }
       voiceState = state;
+      if (mode === 'compose' && state === 'thinking') mode = 'compact';
       if (state === 'error') cancelCompletion();
       else if (wasActive && !ACTIVE.has(state)) retainCompletion();
       publish();

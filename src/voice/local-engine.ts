@@ -35,7 +35,7 @@ export class LocalVoiceEngine extends BaseVoiceEngine {
     if (!raw || !raw.replace(/\*[^*]+\*/g, '').trim()) throw new Error('Nie rozpoznano mowy. Sprawdź mikrofon i spróbuj ponownie.');
     callbacks.onUpdate?.('thinking', { question: raw });
     const turnStarted = performance.now();
-    const reply = await this.respond(raw, signal, 'voice', options.imageId);
+    const reply = await this.respond(raw, signal, 'voice', options.imageId, callbacks.onImages);
     check();
     callbacks.onTiming?.('Codex (cleanup + answer)', performance.now() - turnStarted);
     if (reply.startupMs !== undefined) callbacks.onTiming?.('Codex: request accepted', reply.startupMs);

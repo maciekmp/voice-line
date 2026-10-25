@@ -5,7 +5,7 @@ import { AudioIndicator } from './audio-indicator.js';
 import { decorateNotice, setMessageIcon, setQuestionIcon } from './message-icons.js';
 
 /** @typedef {{pin: HTMLButtonElement, previous: HTMLButtonElement, retry: HTMLButtonElement,
- * composer: HTMLFormElement, message: HTMLTextAreaElement, history: HTMLElement, status: HTMLElement,
+ * composer: HTMLFormElement, message: HTMLTextAreaElement, 'composer-status': HTMLElement, history: HTMLElement, status: HTMLElement,
  * error: HTMLElement, empty: HTMLElement, question: HTMLElement, answer: HTMLElement, images: HTMLElement,
  * 'question-block': HTMLElement, 'answer-block': HTMLElement, 'image-attachment': HTMLElement,
  * 'attachment-preview': HTMLImageElement, 'remove-attachment': HTMLButtonElement}} Elements */
@@ -51,7 +51,7 @@ function selectImage(image, changeDraft = true) {
   if (changeDraft) draftRevision++;
   get('image-attachment').hidden = !image;
   get('attachment-preview').removeAttribute('src');
-  get('message').placeholder = image ? 'Opisz zmiany w obrazie…' : 'Napisz wiadomość…';
+  get('message').placeholder = image ? 'Zapytaj o obraz lub opisz zmiany…' : 'Napisz wiadomość…';
   if (image) imagePreviewCache.get(image.id).then(url => {
     if (selectedImage !== image) return;
     if (url) get('attachment-preview').src = url;
@@ -90,7 +90,7 @@ const errorText = decorateNotice(get('error'), 'error');
 decorateNotice(get('empty'), 'info');
 setMessageIcon(get('answer-block'), 'answer');
 function reportComposerFocus() {
-  window.voiceDesktop.composerFocus(document.hasFocus() && document.activeElement === get('message') && !get('composer').hidden);
+  window.voiceDesktop.composerFocus(document.hasFocus() && document.activeElement === get('message') && !get('composer').hidden && !get('message').readOnly);
 }
 get('message').addEventListener('focus', reportComposerFocus);
 get('message').addEventListener('blur', reportComposerFocus);
@@ -163,7 +163,16 @@ function panelMode() {
 }
 const busy = () => ['listening', 'transcribing', 'thinking', 'preparing-speech', 'speaking'].includes(snapshot.state || 'starting');
 const canSubmit = () => !pending && !selectingImage && !busy() && snapshot.ready && Boolean(get('message').value.trim());
+main.addEventListener('image-gallery-change', () => { updateComposer(); reportSize(); });
 function updateComposer() {
+  const voiceInput = ['listening', 'transcribing'].includes(snapshot.state || '');
+  const inlineStatus = voiceInput && !get('composer').hidden;
+  get('composer').dataset.voiceInput = String(inlineStatus);
+  get('composer-status').textContent = inlineStatus ? labels[snapshot.state || 'idle'] || '' : '';
+  get('composer-status').hidden = !inlineStatus;
+  get('message').readOnly = voiceInput;
+  if (voiceInput && document.activeElement === get('message')) get('message').blur();
+  get('status').hidden = inlineStatus || (!snapshot.interrupted && Boolean(snapshot.answer) && !['thinking', 'starting'].includes(snapshot.state || '')) || !statusText.textContent;
   get('composer').setAttribute('aria-busy', String(pending || busy()));
   get('remove-attachment').disabled = pending || selectingImage || busy();
   for (const button of document.querySelectorAll('button.image-select')) {
@@ -206,8 +215,9 @@ window.voiceDesktop.onMode(mode => {
   if (!editable) get('message').blur();
   if (editable) {
     resizeMessage();
-    get('message').focus({ preventScroll: true });
+    if (!['listening', 'transcribing'].includes(snapshot.state || '')) get('message').focus({ preventScroll: true });
   }
+  updateComposer();
   anchorLatest();
   reportSize();
 });
@@ -227,7 +237,6 @@ window.voiceDesktop.onVoice(value => {
   get('history').hidden = document.body.dataset.mode !== 'chat' || !history.length;
   refreshImageVisibility();
   statusText.textContent = value.interrupted ? 'Odpowiedź przerwana' : value.state === 'thinking' && value.generatingImage ? 'Generuję obraz…' : labels[value.state] || '';
-  get('status').hidden = (!value.interrupted && Boolean(value.answer) && !['thinking', 'starting'].includes(value.state)) || !get('status').textContent;
   const audioIssues = [value.capabilities?.recording, value.capabilities?.playback]
     .filter(capability => capability?.state === 'error' || capability?.state === 'disabled');
   const serviceMessage = [value.message || value.capabilities?.text.message,
@@ -274,7 +283,6 @@ get('composer').addEventListener('submit', async event => {
     if (await window.voiceDesktop.text(text, selectedImage?.id)) {
       if (revision !== draftRevision) return;
       get('message').value = '';
-      selectImage(undefined);
       resizeMessage();
     } else {
       errorText.textContent = 'Nie wysłano wiadomości. Poczekaj na gotowość usług i spróbuj ponownie.';

@@ -117,6 +117,8 @@ In Git Bash, use `cp .env.example .env` to create the configuration and run `npm
 
 To inspect service diagnostics, run `npm.cmd run start:debug` instead of `npm.cmd start` (in Git Bash, `npm run start:debug`). Questions and answers appear in the panel; debug mode prints audio levels and timing measurements. Use `npm.cmd run start:cli -- --debug` for the interactive terminal with those diagnostics. TTS skips fenced code blocks. `Ctrl+Shift+N` starts a new conversation. Context expires 2 minutes after the last successful answer; the next voice or text question starts a new conversation. Restart resumes within that window; after expiry, use the previous-conversation control while its history is still retained.
 
+Debug mode also prints incoming Codex stdout lines before parsing, prefixed with `[codex:app-server:raw]` or `[codex:exec:raw]`. This includes RPC replies, notifications, streamed text and any inline image/audio data returned by the protocol, for local, realtime and image generation sessions. Raw messages appear only in the terminal; this logging does not write a separate file.
+
 Only debug mode prints `[time]` measurements. Its main total is `Recording end to playback start`, measured from Copilot key release until the selected player reports active playback. The contiguous components are recording finalization, STT, Codex, and TTS startup to playback; they add up to that total apart from display rounding. Codex request acceptance and turn generation are nested details within the Codex component. Debug also reports playback duration and the full cycle. SAPI's audio queue status and FFplay's audio clock are approximate playback markers, not speaker-loopback measurements of the first audible sample. User-facing terminal status and conversation labels are in Polish; debug measurements retain their technical English names.
 
 ### Interactive terminal
@@ -250,12 +252,18 @@ subsequent taps alternate history with the latest exchange and input. A voice
 view shows the latest exchange without input; tapping adds input, and another
 tap opens history. Sending text always selects the latest-exchange input view.
 
-Click the pencil button next to an image's save button in the latest reply or
-history, then type your changes or hold Copilot and dictate them. The selected image
-appears above the input; use **Usuń** to clear it. Selection applies to the next
-text or voice message and clears after a completed response or switching
-conversations. The app attaches the selected PNG and uses the explicit ImageGen
-path for the edit.
+Generated images appear as soon as each completed result has been validated and
+saved, while the remaining variants are still being generated. Multiple variants
+share one large preview with thumbnails above it. Click a thumbnail or use the
+arrow keys, Home and End to switch variants; incoming results preserve your choice.
+The same gallery is available in conversation history. Preview results remain
+pending until the complete response is committed.
+
+Click the pencil button next to the displayed image's save button to attach that
+variant to a question or edit request. The selected image appears above the input;
+use **Usuń** to clear it. Selection applies to the next text or voice message and
+clears when the command is submitted or the conversation changes. Questions about
+an attached image can return text without generating a replacement.
 
 Copilot interrupts immediately on key-down. Before actual playback starts it
 removes the current exchange from history and context; a tap clears the draft
@@ -433,6 +441,10 @@ Debug mode also prints captured WAV duration and sound levels (RMS and peak in d
 ## Known limitations
 
 ### Intermittent image-generation failures
+
+Direct requests such as `Wygeneruj obraz pingwina w 4 wariantach` now select
+the image-generation path and `CODEX_IMAGE_MODEL` in LOCAL, for both typed
+messages and recognized speech. The requested number of variants is preserved.
 
 Requests such as `Możesz wygenerować obraz z kamieniami?` may return an empty
 answer (`Codex returned an incomplete voice reply`) or claim success without

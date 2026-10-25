@@ -27,15 +27,18 @@ function fixture() {
   return { calls, client, stt, speaker, engine: new LocalVoiceEngine(client, stt, speaker) };
 }
 
-test('manual image selection routes a natural followup to ImageGen in both modes', async () => {
+test('image questions and natural edits reach the model with the attachment in both modes', async () => {
   const f = fixture();
   const received: unknown[][] = [];
-  f.client.generateImage = async (...args) => { received.push(args); return { prompt: args[0], answer: 'Gotowe' }; };
+  f.client.respond = async (...args) => { received.push(args); return { prompt: args[0], answer: 'Opis lub edycja' }; };
+  f.client.generateImage = async () => { throw new Error('Attachment must not force image generation'); };
   const imageId = 'a'.repeat(64);
   const realtime = new RealtimeVoiceEngine({ ...f.client, respondAudio: async () => ({ prompt: '', answer: '' }) });
   for (const engine of [f.engine, realtime]) {
-    await engine.respond('Zmień tło', undefined, 'text', imageId);
-    assert.deepEqual(received.at(-1), ['Zmień tło', undefined, 'text', imageId]);
+    for (const question of ['Co widzisz na obrazie?', 'Zmień tło']) {
+      await engine.respond(question, undefined, 'text', imageId);
+      assert.deepEqual(received.at(-1), [question, undefined, 'text', imageId]);
+    }
   }
 });
 
@@ -43,28 +46,48 @@ test('local voice edits the selected image using the recognized instruction', as
   const f = fixture();
   const imageId = 'a'.repeat(64);
   const received: unknown[][] = [];
-  f.client.generateImage = async (...args) => { received.push(args); return { prompt: args[0], answer: 'Gotowe' }; };
+  f.client.respond = async (...args) => { received.push(args); return { prompt: args[0], answer: 'Gotowe' }; };
   await f.engine.respondAudio('voice.wav', undefined, {}, { playback: false, imageId });
   assert.deepEqual(received, [['Raw', undefined, 'voice', imageId]]);
   assert.ok(!f.calls.some(call => call.startsWith('respond:') || call.startsWith('speak:')));
 });
 
-test('realtime voice hands the final transcript and selected image to ImageGen', async () => {
+test('local voice image question returns and reads the full description', async () => {
+  const f = fixture();
+  const imageId = 'a'.repeat(64);
+  f.stt.transcribe = async () => 'Co widzisz na obrazie?';
+  f.client.generateImage = async () => { throw new Error('Question must not force generation'); };
+  f.client.respond = async (question, _signal, source, attachment) => {
+    assert.equal(question, 'Co widzisz na obrazie?');
+    assert.equal(source, 'voice');
+    assert.equal(attachment, imageId);
+    return { prompt: question, answer: 'Na obrazie widzę czerwony kwadrat na białym tle.' };
+  };
+  const updates: string[] = [];
+  const reply = await f.engine.respondAudio('voice.wav', undefined, {
+    onUpdate: (_state, text) => { if (text?.answer) updates.push(text.answer); },
+  }, { playback: true, imageId });
+  assert.deepEqual(updates, [reply.answer]);
+  assert.ok(f.calls.includes(`speak:${reply.answer}`));
+  assert.equal(reply.images, undefined);
+});
+
+test('realtime voice hands the final transcript and image to the model without forcing generation', async () => {
   const f = fixture();
   const imageId = 'a'.repeat(64);
   let received: unknown[] | undefined;
   const engine = new RealtimeVoiceEngine({ ...f.client,
-    generateImage: async (...args) => { received = args; return { prompt: args[0], answer: 'Gotowe' }; },
+    respond: async (...args) => { received = args; return { prompt: args[0], answer: 'Opis obrazu' }; },
     respondAudio: async (_wav, signal, callbacks) => {
       callbacks?.onTranscript?.('user', 'Zmień', false);
       assert.equal(signal?.aborted, false);
-      callbacks?.onTranscript?.('user', 'Zmień tło', true);
+      callbacks?.onTranscript?.('user', 'Co widzisz na obrazie?', true);
       assert.equal(signal?.aborted, true);
       throw new Error('Cancelled');
     },
   });
   await engine.respondAudio('voice.wav', undefined, {}, { playback: true, imageId });
-  assert.deepEqual(received, ['Zmień tło', undefined, 'voice', imageId]);
+  assert.deepEqual(received, ['Co widzisz na obrazie?', undefined, 'voice', imageId]);
 });
 
 test('factory selects one engine at startup and validates only the selected services', t => {
@@ -119,19 +142,24 @@ test('local lifecycle manages its services and typed messages do not use STT/TTS
   assert.ok(calls.includes('client.stop') && calls.includes('stt.stop') && calls.includes('tts.shutdown'));
 });
 
-test('LOCAL leaves natural image intent to Codex, while /image explicitly selects generation', async () => {
+test('LOCAL routes clear generation requests to ImageGen and leaves questions to the conversation model', async () => {
   const { calls, client, stt, engine } = fixture();
   client.generateImage = async text => { calls.push(`image:${text}`); return { prompt: text, answer: 'Gotowe.' }; };
-  await engine.respond('Wygeneruj obraz kota');
-  assert.deepEqual(calls, ['respond:Wygeneruj obraz kota']);
+  await engine.respond('Wygeneruj obraz pingwina w 4 wariantach');
+  assert.deepEqual(calls, ['image:Wygeneruj obraz pingwina w 4 wariantach']);
   calls.length = 0;
   await engine.respond('/image kot');
   assert.deepEqual(calls, ['image:kot']);
   calls.length = 0;
-  stt.transcribe = async () => 'Chciałbym ilustrację kota';
+  stt.transcribe = async () => 'Wygeneruj obraz pingwina w 4 wariantach';
   await engine.respondAudio('speech.wav');
-  assert.ok(calls.includes('respond:Chciałbym ilustrację kota'));
-  assert.ok(!calls.some(call => call.startsWith('image:')));
+  assert.ok(calls.includes('image:Wygeneruj obraz pingwina w 4 wariantach'));
+  assert.ok(!calls.some(call => call.startsWith('respond:')));
+  for (const question of ['Co widzisz na obrazie?', 'Jak wygenerować obraz?', 'Wygeneruj kod']) {
+    calls.length = 0;
+    await engine.respond(question);
+    assert.deepEqual(calls, [`respond:${question}`]);
+  }
 });
 
 test('abort after recognition or generation prevents starting the next stage', async () => {

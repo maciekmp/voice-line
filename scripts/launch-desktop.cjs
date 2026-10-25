@@ -10,7 +10,9 @@ if (!process.argv.includes('--preview')) loadProjectEnv();
 
 // Some Electron-based terminals export this flag; the desktop host needs GUI mode.
 const { ELECTRON_RUN_AS_NODE: _runAsNode, ...env } = process.env;
-const child = spawn(require('electron'), [path.join(projectRoot, 'electron', 'desktop-main.cjs'), ...process.argv.slice(2)], {
+// Electron reserves --debug for Node's removed debugger; use an application flag.
+const appArgs = process.argv.slice(2).map(arg => arg === '--debug' ? '--app-debug' : arg);
+const child = spawn(require('electron'), [path.join(projectRoot, 'electron', 'desktop-main.cjs'), ...appArgs], {
   cwd: projectRoot, stdio: 'inherit', windowsHide: true, env: { ...env, NODE_BIN: process.execPath },
 });
 child.on('error', error => { console.error(error); process.exitCode = 1; });

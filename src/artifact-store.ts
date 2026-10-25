@@ -23,6 +23,12 @@ export function imageFromProtocol(item: any): { image: GeneratedImage & { id: Im
   return { bytes, image: { id: imageId(createHash('sha256').update(bytes).digest('hex')),
     alt: typeof item.revisedPrompt === 'string' ? item.revisedPrompt.slice(0, 2000) : 'Wygenerowany obraz' } };
 }
+// A completed tool event may describe a blocked/failed generation, without pixels.
+// Keep validation separate from storage: filesystem failures must still propagate.
+export function tryImageFromProtocol(item: any): ReturnType<typeof imageFromProtocol> | undefined {
+  try { return imageFromProtocol(item); }
+  catch { return undefined; }
+}
 export function validImageLink(link: any): link is ImageLink {
   return !!link && Number.isSafeInteger(link.anchor) && link.anchor >= 0 && typeof link.threadId === 'string'
     && validConversation.test(link.threadId) && typeof link.turnId === 'string' && /^[a-z\d_-]{1,128}$/i.test(link.turnId);

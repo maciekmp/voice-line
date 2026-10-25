@@ -617,7 +617,7 @@ async function verifyDesktop(host) {
   await fill('Szkic do zachowania');
   onEngineMessage({ type: 'ui', action: 'voice-input' });
   await new Promise(resolve => setTimeout(resolve, 250));
-  assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'peek');
+  assert.equal(await panelWindow.webContents.executeJavaScript("document.body.dataset.mode"), 'compose');
   assert.equal(await panelWindow.webContents.executeJavaScript("document.querySelector('#message').value"), 'Szkic do zachowania');
   onEngineMessage({ type: 'ui', action: 'continue' });
   await new Promise(resolve => setTimeout(resolve, 250));
@@ -730,7 +730,7 @@ async function verifyDesktop(host) {
   host.engine = { connected: true, request: async message => {
     imageCommands.push(message);
     if (message.command === 'select-image') return { accepted: true, operationId: null };
-    if (admitImage) sendVoice({ state: 'thinking', question: message.text, answer: '' });
+    if (admitImage) sendVoice({ state: 'thinking', question: message.text, answer: '', selectedImageId: null });
     return { accepted: admitImage, operationId: admitImage ? 1 : null };
   } };
   await fill('Zmień tło');
@@ -740,9 +740,12 @@ async function verifyDesktop(host) {
   admitImage = true;
   await evaluate('document.querySelector("#composer").requestSubmit()'); await wait();
   assert.deepEqual(imageCommands.at(-1), { command: 'text', text: 'Zmień tło', imageId });
-  assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), true, 'Accepted sends clear the selection');
+  assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), true, 'Accepted text edits consume the attachment');
   assert.equal(await evaluate('document.querySelector("#message").value'), '');
-  sendVoice({ state: 'idle', answer: 'Gotowe' });
+  sendVoice({ state: 'error', message: 'Nie udało się edytować obrazu' }); await wait();
+  assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), true, 'Generation failure does not restore a submitted attachment');
+  sendVoice({ state: 'idle', answer: 'Gotowe', selectedImageId: null }); await wait();
+  assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), true, 'Completed text edits clear the attachment, like voice edits');
   await fill('Zwykłe pytanie');
   await evaluate('document.querySelector("#composer").requestSubmit()'); await wait();
   assert.deepEqual(imageCommands.at(-1), { command: 'text', text: 'Zwykłe pytanie' });
@@ -751,14 +754,74 @@ async function verifyDesktop(host) {
   await wait();
   assert.equal(imageCommands.at(-1).command, 'select-image');
   assert.equal(imageCommands.at(-1).imageId, imageId);
-  sendVoice({ state: 'listening', question: '', answer: '', selectedImageId: imageId }); await wait();
+  await fill('Szkic\nz drugą linią');
+  const inputLayout = () => evaluate(`(() => {
+    const rect = id => { const r = document.getElementById(id).getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; };
+    return { mode: document.body.dataset.mode, composer: rect('composer'), message: rect('message'),
+      attachment: rect('image-attachment'), historyHidden: document.getElementById('history').hidden };
+  })()`);
+  const beforeVoice = await inputLayout();
+  onEngineMessage({ type: 'ui', action: 'voice-input' });
+  sendVoice({ state: 'listening', selectedImageId: imageId }); await wait();
   assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), false, 'Voice recording retains the selected image');
+  assert.deepEqual(await inputLayout(), beforeVoice, 'Voice input keeps the composer, attachment and conversation in place');
+  assert.equal(await evaluate('document.querySelector("#composer-status").textContent'), 'Słucham…');
+  assert.equal(await evaluate('document.querySelector("#status").hidden'), true, 'Voice status is shown only in the composer');
+  assert.equal(await evaluate('getComputedStyle(document.querySelector("#message")).visibility'), 'hidden');
+  await fs.writeFile(path.join(outputDirectory, 'electron-image-listening.png'), (await panelWindow.webContents.capturePage()).toPNG());
+  sendVoice({ state: 'transcribing', selectedImageId: imageId }); await wait();
+  assert.deepEqual(await inputLayout(), beforeVoice, 'Transcription keeps the same layout');
+  assert.equal(await evaluate('document.querySelector("#composer-status").textContent'), 'Rozpoznaję mowę…');
+  sendVoice({ state: 'idle', selectedImageId: imageId }); await wait();
+  assert.deepEqual(await inputLayout(), beforeVoice, 'Returning to typing keeps the same layout');
+  assert.equal(await evaluate('document.querySelector("#message").value'), 'Szkic\nz drugą linią');
+  assert.equal(await evaluate('document.querySelector("#message").readOnly'), false);
+  assert.equal(await evaluate('document.querySelector("#composer-status").hidden'), true);
+  sendVoice({ state: 'thinking', question: 'Zmień tło', answer: '', selectedImageId: null }); await wait();
+  assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), true, 'Submitted voice edits consume the attachment, like text edits');
   sendVoice({ state: 'idle', answer: 'Gotowe', selectedImageId: null }); await wait();
-  assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), true, 'Completed voice edit clears the selected image');
   await evaluate('document.querySelector("#history .image-select").click()'); await wait();
   sendVoice({ reset: true, threadId: 'after-image-selection' }); await wait();
   assert.equal(await evaluate('document.querySelector("#image-attachment").hidden'), true, 'Changing conversations clears the selection');
   console.log('Manual image selection checks: passed');
+  // Preview snapshots use the same canonical pending exchange as the worker.
+  const variants = [{ id: imageId, alt: 'Wariant 1' }, { id: secondImageId, alt: 'Wariant 2' }];
+  for (const [index, colour] of [[3, [70, 120, 210, 255]], [4, [190, 120, 70, 255]]]) {
+    const pixels = Buffer.alloc(240 * 180 * 4);
+    for (let offset = 0; offset < pixels.length; offset += 4) pixels.set(colour, offset);
+    const bytes = nativeImage.createFromBitmap(pixels, { width: 240, height: 180 }).toPNG();
+    const id = require('node:crypto').createHash('sha256').update(bytes).digest('hex');
+    await fs.writeFile(path.join(imageDirectory, `${id}.png`), bytes);
+    variants.push({ id, alt: `Wariant ${index}` });
+  }
+  sendVoice({ reset: true, threadId: 'stream-gallery' });
+  openPanel();
+  sendVoice({ state: 'thinking', question: 'Wygeneruj obraz w 4 wariantach', answer: '', generatingImage: true, images: variants.slice(0, 1) });
+  await wait(300);
+  assert.equal(await evaluate('document.querySelector("#images .image-stage img").naturalWidth'), 256, 'First preview appears while generation is still running');
+  await evaluate('window.firstGalleryImage = document.querySelector("#images .image-stage img")');
+  sendVoice({ state: 'thinking', images: variants.slice(0, 2) }); await wait();
+  assert.equal(await evaluate('document.querySelectorAll("#images .image-thumbnail").length'), 2);
+  assert.equal(await evaluate('window.firstGalleryImage === document.querySelector("#images .image-stage img")'), true, 'New variants keep the existing large preview node');
+  await evaluate('document.querySelectorAll("#images .image-thumbnail")[1].click()'); await wait();
+  assert.equal(await evaluate('document.querySelector("#images .image-stage img").naturalWidth'), 128);
+  await evaluate('window.selectedGalleryImage = document.querySelector("#images .image-stage img"); document.querySelectorAll("#images .image-thumbnail")[1].focus()');
+  sendVoice({ state: 'thinking', images: variants.slice(0, 3) }); await wait();
+  assert.equal(await evaluate('window.selectedGalleryImage === document.querySelector("#images .image-stage img")'), true, 'Streaming preserves the chosen variant');
+  assert.equal(await evaluate('document.activeElement === document.querySelectorAll("#images .image-thumbnail")[1]'), true, 'Streaming preserves thumbnail focus');
+  sendVoice({ state: 'thinking', images: variants }); await wait();
+  assert.equal(await evaluate('document.querySelectorAll("#images .generated-image").length'), 1, 'Gallery displays one large image');
+  assert.equal(await evaluate('document.querySelector("#images .image-thumbnails").getBoundingClientRect().bottom <= document.querySelector("#images .image-stage").getBoundingClientRect().top'), true);
+  assert.equal(await evaluate('document.querySelector("#images .image-select").disabled'), true, 'Pending previews cannot be attached to another operation');
+  await evaluate('document.querySelectorAll("#images .image-thumbnail")[1].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }))'); await wait();
+  assert.equal(await evaluate('document.querySelectorAll("#images .image-thumbnail")[2].getAttribute("aria-pressed")'), 'true');
+  await fs.writeFile(path.join(outputDirectory, 'electron-image-gallery-streaming.png'), (await panelWindow.webContents.capturePage()).toPNG());
+  sendVoice({ state: 'idle', answer: 'Wygenerowano obrazy.', generatingImage: false, images: variants }); await wait();
+  assert.equal(await evaluate('document.querySelectorAll("#images .image-thumbnail")[2].getAttribute("aria-pressed")'), 'true', 'Completion preserves the chosen variant');
+  await evaluate('document.querySelector("#images .image-select").click()'); await wait();
+  assert.equal(imageCommands.at(-1).imageId, variants[2].id, 'Attach action targets the displayed variant');
+  await fs.writeFile(path.join(outputDirectory, 'electron-image-gallery.png'), (await panelWindow.webContents.capturePage()).toPNG());
+  console.log('Progressive image gallery checks: passed');
   await require('./history-scale.cjs').verifyHistoryScale({ panelWindow, outputDirectory, imageId });
   console.log(JSON.stringify({ result: 'passed', profile: profileDirectory,
     cache: sessionDirectory, bounds: panelWindow.getBounds(), captures: outputDirectory }));

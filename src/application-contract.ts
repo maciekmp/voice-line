@@ -9,7 +9,7 @@ export type Capability = { state: ServiceHealth | 'disabled'; message?: string }
 export type ApplicationCapabilities = { text: Capability; recording: Capability; playback: Capability };
 export type ResponsePhase = 'transcribing' | 'thinking' | 'preparing-speech' | 'speaking';
 export type ApplicationState = ResponsePhase | 'starting' | 'idle' | 'listening' | 'error';
-export type PendingExchange = { id: string; revision: number; question: string; answer: string; questionSource?: import('./conversation-contract.ts').QuestionSource };
+export type PendingExchange = { id: string; revision: number; question: string; answer: string; questionSource?: import('./conversation-contract.ts').QuestionSource; images?: import('./conversation-contract.ts').GeneratedImage[] };
 export type ConversationView = {
   id: string | null; revision: number; completed: ConversationExchange[]; pending: PendingExchange | null;
 };
@@ -23,6 +23,7 @@ export type ApplicationSnapshot = {
   selectedImageId?: string | null;
   question?: string;
   answer?: string;
+  images?: import('./conversation-contract.ts').GeneratedImage[];
   questionSource?: import('./conversation-contract.ts').QuestionSource;
   reset?: boolean;
   restored?: boolean;

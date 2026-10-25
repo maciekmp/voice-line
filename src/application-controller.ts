@@ -77,7 +77,7 @@ export class ApplicationController {
         completed: this.completedExchanges, pending: this.pendingExchange } };
   }
   private publish(state: ApplicationState, extra: Partial<Pick<ApplicationSnapshot,
-    'question' | 'answer' | 'questionSource' | 'exchanges' | 'reset' | 'restored' | 'purgeHistory' | 'generatingImage' | 'message'>> = {}): void {
+    'question' | 'answer' | 'images' | 'questionSource' | 'exchanges' | 'reset' | 'restored' | 'purgeHistory' | 'generatingImage' | 'message'>> = {}): void {
     if (this.health === 'stopped') return;
     if ('message' in extra) this.message = extra.message ?? '';
     else if (state !== 'error') this.message = '';
@@ -92,13 +92,14 @@ export class ApplicationController {
         this.pendingExchange = null;
         this.conversationRevision++;
       }
-      if ('question' in extra || 'answer' in extra) {
+      if ('question' in extra || 'answer' in extra || 'images' in extra) {
         this.pendingExchange = {
           id: `operation:${this.current?.id ?? `recording:${this.generation}`}`,
           revision: ++this.pendingRevision,
           question: typeof extra.question === 'string' ? extra.question : this.pendingExchange?.question ?? '',
           answer: typeof extra.answer === 'string' ? extra.answer : this.pendingExchange?.answer ?? '',
           questionSource: extra.questionSource === 'voice' || extra.questionSource === 'text' ? extra.questionSource : this.pendingExchange?.questionSource,
+          images: extra.images ?? this.pendingExchange?.images,
         };
       }
     }
@@ -239,7 +240,7 @@ export class ApplicationController {
   }
   confirmRecording(): void {
     if (!this.held) return;
-    this.publish('listening', { question: '', answer: '', questionSource: 'voice' });
+    this.publish('listening', { question: '', answer: '', images: [], questionSource: 'voice' });
   }
   discardRecording(): void {
     if (!this.held) return;
@@ -265,10 +266,14 @@ export class ApplicationController {
       if (this.options.debug) this.log.log(`[audio] ${recorder.lastDurationSeconds.toFixed(2)} s, RMS ${recorder.lastRmsDbfs.toFixed(1)} dBFS, peak ${recorder.lastPeakDbfs.toFixed(1)} dBFS`);
       let prepared = false, playbackStartedAt: number | undefined;
       const callbacks: VoiceCallbacks = {
+        onImages: images => { if (this.live(operation)) this.publish('thinking', { images, generatingImage: true }); },
         onUpdate: (state, text) => {
           if (!this.live(operation)) return;
-          if (state === 'thinking' && !prepared) { this.prepareConversation(); prepared = true; }
-          this.publish(state, { ...text, generatingImage: state === 'thinking' && Boolean(imageId || (text?.question && imageRequest(text.question))) });
+          if (state === 'thinking' && !prepared) {
+            this.selectedImageId = null;
+            this.prepareConversation(); prepared = true;
+          }
+          this.publish(state, { ...text, generatingImage: state === 'thinking' && Boolean(text?.question && imageRequest(text.question)) });
         },
         onPlaybackStart: () => {
           if (!this.live(operation) || playbackStartedAt !== undefined) return;
@@ -335,9 +340,11 @@ export class ApplicationController {
     const operation = this.operation();
     if (message.command === 'text') {
       const imageId = message.imageId ?? this.selectedImageId ?? undefined;
-      this.publish('thinking', { question: message.text, answer: '', questionSource: 'text', generatingImage: Boolean(imageId || imageRequest(message.text)) });
+      this.selectedImageId = null;
+      this.publish('thinking', { question: message.text, answer: '', images: [], questionSource: 'text', generatingImage: Boolean(imageRequest(message.text)) });
       return accept(this.queue(operation, async () => {
-        this.prepareConversation(); await this.options.engine.respond(message.text, operation.controller.signal, 'text', imageId);
+        this.prepareConversation(); await this.options.engine.respond(message.text, operation.controller.signal, 'text', imageId,
+          images => { if (this.live(operation)) this.publish('thinking', { images, generatingImage: true }); });
         if (this.live(operation)) this.completed();
       }, 'Nie udało się przygotować odpowiedzi. Wyślij wiadomość ponownie.'));
     }
