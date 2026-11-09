@@ -1,8 +1,10 @@
 # Repository data and history review
 
 Reviewed on 2026-11-09 against application commit `0549748` on
-`chore/publication-readiness`. This review does not authorize publication or a
-visibility change. The repository remains private.
+`chore/publication-readiness`. This report records that local review checkpoint.
+The owner subsequently authorized publication on 2026-11-09; the repository is
+now public with its history retained. The scan below is bounded, not a guarantee
+that every possible disclosure was detected.
 
 ## Scope and method
 
@@ -39,23 +41,24 @@ the sensitive-file inventory is the intentionally public configuration template,
 | --- | --- | --- |
 | No confirmed credential found by these checks | No matches for the high-confidence credential/key patterns; generic assignment candidates were code, fixtures and documentation | This is evidence from a bounded scan, not a guarantee that no secret exists. No credential revocation was performed. |
 | Personal machine path in tracked audit reports | At the starting commit, `premium-audit.json:4` and `refactor-review-audit.json:4` contained the same private `projectRoot` value | Both working copies now use `.`. Old commits still retain the original path. |
-| The private path remains in history | Introduced in `premium-audit.json` by `d3808f8`, and in `refactor-review-audit.json` by `586990c` | The owner must decide whether disclosing the historical Windows profile identifier is acceptable before any future publication. A working-tree edit does not remove it from Git history. |
-| Identifying commit metadata | One distinct non-noreply author/committer email in application history | Review consent to publish author names and the email address. Values are intentionally omitted here. |
+| The private path remains in history | Introduced in `premium-audit.json` by `d3808f8`, and in `refactor-review-audit.json` by `586990c` | The owner accepted publication with the historical Windows profile identifier retained. A working-tree edit does not remove it from Git history. |
+| Identifying commit metadata | One distinct non-noreply author/committer email in application history | The owner accepted publication with the existing author/committer metadata retained. Values are intentionally omitted here. |
 | Private local data exists outside tracked history | `.env`, `.app-data/`, `.chatgpt-button/`, prototype session files and `output/` are ignored | Keep these local. Do not force-add them or distribute the entire working directory as a release archive. Select documentation media explicitly. |
 
 `.env` and archived authentication/session files were not printed or copied into
 the review. Their ignored status was checked without exposing their contents.
 There was no confirmed committed secret requiring a history rewrite in the
-reviewed text. Historical privacy findings above remain explicit publication
-considerations.
+reviewed text. The owner accepted the historical privacy disclosures above;
+that decision does not broaden the scope of the scan.
 
 ## Handling documentation media
 
 Keep original screenshots and videos in place. Documentation should use explicit
 copies of selected assets, with their provenance recorded under `docs/media/`.
 Generated folders contain more than the selected documentation assets and must
-remain ignored. Audio/video content, every screenshot, embedded metadata and any
-third-party model/artwork rights require their own review before a public release.
+remain ignored. The owner confirmed review of the selected documentation media
+and approved their publication on 2026-11-09. New media and third-party
+model/artwork attribution and redistribution conditions require separate review.
 A text-pattern scan cannot establish that spoken content or pixels contain no
 personal information.
 
@@ -68,8 +71,7 @@ were inventoried, not OCR-scanned; ignored recordings were not transcribed or
 auditioned as part of this history scan. Encoded, encrypted, unusual or short
 credentials can evade pattern matching.
 
-Before a future publication decision, repeat the scan against the exact proposed
-commit and selected media, review the historical path and author metadata, and
-check any GitHub-hosted artifacts separately. Keep visibility private until that
-decision is explicitly made by the owner. Runtime, dependency, CI and test results
-are recorded separately in the readiness review.
+For future releases, repeat the scan against the exact proposed commit and
+selected media, review any new identifying metadata, and check GitHub-hosted
+artifacts separately. Runtime, dependency, CI and test results are recorded
+separately in the [readiness review](READINESS.md).
