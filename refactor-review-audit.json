@@ -1,7 +1,7 @@
 {
   "findings": [],
   "mode": "strict",
-  "projectRoot": "C:\\Users\\MaciejPlusa\\dev\\voice-line",
+  "projectRoot": ".",
   "schemaVersion": 1,
   "summary": {
     "errors": 0,
