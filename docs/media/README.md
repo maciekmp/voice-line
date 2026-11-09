@@ -21,9 +21,14 @@ Narration uses Piper Bryce (`en_US-bryce-medium`);
 see its [source model card](https://huggingface.co/rhasspy/piper-voices/resolve/e70533d22ac02da609b7427dd1a8bd5349295e98/en/en_US/bryce/medium/MODEL_CARD).
 The soundtrack and interaction sounds were synthesized for the film.
 Detailed production manifests and artwork provenance remain local in the original output.
-No blanket redistribution license is asserted; project licensing and media rights
-still need review before public release.
+Source code and original text documentation use the [MIT License](../../LICENSE).
+That grant does not automatically cover third-party software, models, voices,
+generated artwork or other media. No blanket media redistribution license is
+asserted; check the applicable rights and attribution conditions before reuse.
+
+The owner confirmed review of these selected documentation materials and approved
+their publication on 9 November 2026.
 
 The 9 November 2026 checks covered copy hashes, metadata, sampled visuals and a full
-audio/video decode. They did not include a fresh full listening or frame-by-frame
-privacy review, or legal clearance.
+audio/video decode. Those automated checks did not include a fresh full listening or frame-by-frame
+privacy review, or legal clearance; the owner confirmation above is separate.
