@@ -39,7 +39,8 @@ export function buildHistoryContext(history: readonly ConversationExchange[], fo
   let selected: TextExchange[] = [];
   let clipped = false;
   for (let index = history.length - 1; index >= 0 && selected.length < policy.maxExchanges; index--) {
-    const { question } = history[index];
+    const question = history[index].question + (history[index].inputImages?.length
+      ? '\n[Do pytania załączono obraz. Piksele historycznego obrazu nie są dostępne w tym kontekście; poproś o ponowne załączenie, jeśli są potrzebne.]' : '');
     const answer = history[index].answer + (history[index].interrupted ? '\n[Odpowiedź przerwana — dostępny fragment.]' : '');
     const candidate = [{ question, answer }, ...selected];
     if (size(serialize(candidate, format)) <= policy.maxBytes) { selected = candidate; continue; }
@@ -55,13 +56,16 @@ export function buildHistoryContext(history: readonly ConversationExchange[], fo
     break;
   }
   const json = serialize(selected, format);
-  return { exchanges: selected, json, bytes: size(json), omitted: history.length - selected.length, clipped };
+  return { exchanges: selected, json, bytes: size(json), omitted: history.length - selected.length, clipped,
+    inputImagesUnavailable: selected.length > 0 && history.slice(-selected.length).some(exchange => Boolean(exchange.inputImages?.length)) };
 }
 
-export function contextNotice(context: { omitted: number; clipped: boolean }): string {
-  return context.omitted || context.clipped
+export function contextNotice(context: { omitted: number; clipped: boolean; inputImagesUnavailable?: boolean }): string {
+  const budgetNotice = context.omitted || context.clipped
     ? `Kontekst jest ograniczony: pominięto ${context.omitted} najstarszych wymian${context.clipped ? '; skrócono treść ostatniej wymiany, zachowując początek i koniec' : ''}. Pełna historia pozostaje zapisana w aplikacji.\n`
     : '';
+  return budgetNotice + (context.inputImagesUnavailable
+    ? 'Piksele obrazów załączonych do wcześniejszych pytań nie są dostępne w tym kontekście. Jeśli są potrzebne, poproś o ponowne załączenie obrazu.\n' : '');
 }
 
 export function localContextPrompt(history: readonly ConversationExchange[], raw: string): string {

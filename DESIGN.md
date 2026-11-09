@@ -109,6 +109,31 @@ Sticky composer nie ma przycisków wysyłania i anulowania. Status i błąd są
 dostępne także w compose. Reduced motion wyłącza animację rozszerzania 220 ms.
 Ukrycie resetuje renderer po schowaniu natywnego okna, zachowując szkic.
 
+## Przyciski pomocnicze
+
+Dla pomocniczych akcji w panelu preferuj przyciski ikonowe bez widocznego tekstu,
+spójne z kontrolkami podglądu obrazu. Korzystaj z istniejącego stylu `popup-action`
+i lokalnych ikon Lucide. Akcje załączników mają przycisk 24 px z ikoną 14 px.
+
+- Dodawanie obrazu: ikona `image-plus`.
+- Zaznaczanie fragmentu ekranu: ikona `scan`.
+- Usuwanie załącznika przy polu wiadomości: ikona `x` (×) po prawej stronie,
+  zamiast tekstowego przycisku „Usuń”.
+
+Ikony dodawania obrazu i zaznaczania ekranu umieszczaj pionowo, jedna pod drugą,
+wewnątrz prawej części pola tekstowego. Pole ma co najmniej 70 px wysokości,
+aby oba przyciski mieściły się w jego granicach. Zarezerwuj dla nich miejsce
+w paddingu pola, aby tekst, także wielowierszowy, nie wchodził pod przyciski.
+
+Wybór pliku i wklejanie obrazu zachowują widoczny panel oraz szkic. Podczas
+dodawania obrazu blokuj ikony akcji, bez widocznego napisu „Dodaję obraz…”.
+Status operacji pozostaje dostępny dla czytników ekranu. Panel ukrywaj tylko
+na czas zaznaczania ekranu, a następnie przywracaj rozmowę.
+
+Każdy przycisk ikonowy ma polską etykietę `aria-label` i podpowiedź `title`.
+SVG jest dekoracyjne (`aria-hidden="true"`, `focusable="false"`). Zachowuj
+widoczny fokus klawiatury oraz stany hover i disabled.
+
 ## Behavior owners
 
 | Capability | Canonical owner | Source | Verification |

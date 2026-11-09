@@ -7,7 +7,7 @@ import { ConversationRetention } from './conversation-retention.ts';
 import { ArtifactStore, type ImageLink } from './artifact-store.ts';
 import { ConversationRepository } from './conversation-repository.ts';
 import { ConversationService } from './conversation-service.ts';
-import type { VoiceReply, ConversationExchange } from './conversation-contract.ts';
+import type { VoiceReply, ConversationExchange, ConversationCheckpoint } from './conversation-contract.ts';
 
 const { appDataDirectory } = createRequire(import.meta.url)('./app-data.cjs') as {
   appDataDirectory: (env?: NodeJS.ProcessEnv) => string;
@@ -24,6 +24,7 @@ export type AppStorage = {
   conversation: ConversationService;
   prepare: () => Promise<void>;
   commitReply: (reply: VoiceReply, link?: ImageLink, canCommit?: () => boolean) => Promise<void>;
+  interruptTurn: (checkpoint: ConversationCheckpoint, partial?: VoiceReply) => void;
   importHistory: (id: string, exchanges: ConversationExchange[]) => Promise<ConversationExchange[]>;
   restorePrevious: (canCommit?: () => boolean) => Promise<boolean>;
 };
@@ -39,6 +40,7 @@ export function createAppStorage(mode: 'local' | 'realtime' | 'imagegen', direct
     retention: new ConversationRetention(home, directory), artifacts: new ArtifactStore(directory),
     get conversation() { return conversation; },
     commitReply: (reply, link, canCommit) => conversation.commitExchange(reply, link, canCommit),
+    interruptTurn: (checkpoint, partial) => conversation.interruptTurn(checkpoint, partial),
     importHistory: (id, exchanges) => conversation.importHistory(id, exchanges),
     restorePrevious: canCommit => conversation.restorePrevious(canCommit),
     prepare: async () => {

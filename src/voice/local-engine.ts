@@ -1,6 +1,7 @@
 import { BaseVoiceEngine, type ConversationClient, type VoiceCallbacks, type VoiceResponseOptions } from '../voice-engine.ts';
 import type { Transcriber, SpeechPlayer } from '../conversation-contract.ts';
-import { speechText } from '../answer-format.js';
+import { StreamingSpeechQueue } from '../streaming-speech.ts';
+import { progressCallbacks } from '../reply-progress.ts';
 
 export class LocalVoiceEngine extends BaseVoiceEngine {
   readonly mode = 'local' as const;
@@ -35,20 +36,38 @@ export class LocalVoiceEngine extends BaseVoiceEngine {
     if (!raw || !raw.replace(/\*[^*]+\*/g, '').trim()) throw new Error('Nie rozpoznano mowy. Sprawdź mikrofon i spróbuj ponownie.');
     callbacks.onUpdate?.('thinking', { question: raw });
     const turnStarted = performance.now();
-    const reply = await this.respond(raw, signal, 'voice', options.imageId, callbacks.onImages);
-    check();
-    callbacks.onTiming?.('Codex (cleanup + answer)', performance.now() - turnStarted);
-    if (reply.startupMs !== undefined) callbacks.onTiming?.('Codex: request accepted', reply.startupMs);
-    if (reply.turnMs !== undefined) callbacks.onTiming?.('Codex: turn to final answer', reply.turnMs);
-    if (!options.playback) return reply;
-    callbacks.onUpdate?.('preparing-speech', { question: reply.prompt, answer: reply.answer,
-      exchanges: this.currentExchanges });
-    const ttsStarted = performance.now();
-    await this.speaker.speak(speechText(reply.answer), signal, () => {
-      callbacks.onTiming?.('TTS startup to playback', performance.now() - ttsStarted);
-      callbacks.onPlaybackStart?.();
-    }, callbacks.onLevel);
-    check();
-    return reply;
+    const speech = options.playback ? new StreamingSpeechQueue(this.speaker, signal, {
+      onStart: () => {
+        callbacks.onTiming?.('Codex request to first playback', performance.now() - turnStarted);
+        callbacks.onPlaybackStart?.();
+      },
+      onLevel: callbacks.onLevel,
+      onError: callbacks.onPlaybackError,
+      onDivergence: () => callbacks.onNotice?.('Końcowa odpowiedź różni się od odczytanego fragmentu. Pełna treść jest widoczna w oknie rozmowy.'),
+    }) : undefined;
+    const onText: import('../conversation-contract.ts').ReplyProgress | undefined = callbacks.onUpdate || speech ? update => {
+      if (signal?.aborted) return;
+      callbacks.onUpdate?.(speech?.playbackStarted ? 'speaking' : 'thinking', { question: update.prompt ?? raw, answer: update.answer });
+      speech?.update(update.answer);
+    } : undefined;
+    try {
+      const reply = await this.respond(raw, signal, 'voice', options.imageId,
+        ...progressCallbacks(callbacks.onImages, onText));
+      check();
+      callbacks.onTiming?.('Codex (cleanup + answer)', performance.now() - turnStarted);
+      if (reply.firstTextMs !== undefined) callbacks.onTiming?.('Codex: first text delta', reply.firstTextMs);
+      if (reply.startupMs !== undefined) callbacks.onTiming?.('Codex: request accepted', reply.startupMs);
+      if (reply.turnMs !== undefined) callbacks.onTiming?.('Codex: turn to final answer', reply.turnMs);
+      if (!speech) return reply;
+      callbacks.onUpdate?.(speech.playbackStarted ? 'speaking' : 'preparing-speech', {
+        question: reply.prompt, answer: reply.answer, exchanges: this.currentExchanges });
+      await speech.finish(reply.answer);
+      check();
+      return reply;
+    } catch (error) {
+      speech?.stop();
+      await speech?.finish('');
+      throw error;
+    } finally { speech?.dispose(); }
   }
 }

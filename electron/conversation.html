@@ -27,6 +27,7 @@
 <section id="transcript" aria-label="Ostatnie pytanie i odpowiedź" tabindex="0">
 <p id="empty">Przytrzymaj Copilot, aby zapytać.</p>
 <article id="question-block" aria-label="Twoje pytanie" hidden><p id="question"></p></article>
+<div id="input-images" aria-label="Obrazy w pytaniu" hidden></div>
 <article id="answer-block" aria-label="Odpowiedź" hidden><div id="answer"></div></article>
 <div id="images" aria-label="Wygenerowane obrazy"></div>
 </section>
@@ -39,14 +40,25 @@
 <div id="image-attachment" hidden>
 <img id="attachment-preview" alt="Załączony obraz">
 <span id="attachment-label">Załączony obraz<small>Zapytaj o obraz lub opisz zmiany. Możesz też mówić.</small></span>
-<button id="remove-attachment" type="button" aria-label="Usuń obraz z wiadomości">Usuń</button>
+<button id="remove-attachment" class="popup-action inline-action" type="button" aria-label="Usuń obraz z wiadomości" title="Usuń obraz z wiadomości">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 6L6 18M6 6l12 12"/></svg>
+</button>
 </div>
 <label class="sr-only" for="message">Kontynuuj rozmowę</label>
 <div id="message-slot">
-<textarea id="message" rows="1" maxlength="12000" placeholder="Napisz wiadomość…" enterkeyhint="send" aria-describedby="message-help status error"></textarea>
+<textarea id="message" rows="1" maxlength="12000" placeholder="Napisz wiadomość…" spellcheck="true" lang="pl" enterkeyhint="send" aria-describedby="message-help status error"></textarea>
 <p id="composer-status" role="status" hidden></p>
+<div id="composer-tools" role="group" aria-label="Załączniki">
+<button id="add-image" class="popup-action inline-action" type="button" aria-label="Dodaj obraz" title="Dodaj obraz PNG, JPEG lub WebP">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M16 5h6m-3-3v6m2 3.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5M21 15l-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/><circle cx="9" cy="9" r="2"/></g></svg>
+</button>
+<button id="capture-screen" class="popup-action inline-action" type="button" aria-label="Zaznacz ekran" title="Zaznacz fragment ekranu i zapytaj o niego">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7V5a2 2 0 0 1 2-2h2m10 0h2a2 2 0 0 1 2 2v2m0 10v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/></svg>
+</button>
 </div>
-<span id="message-help" class="sr-only">Enter wysyła wiadomość. Shift+Enter dodaje nową linię.</span>
+</div>
+<span id="attachment-progress" class="sr-only" role="status" hidden>Dodaję obraz…</span>
+<span id="message-help" class="sr-only">Enter wysyła wiadomość. Shift+Enter dodaje nową linię. Ctrl+V wkleja tekst lub obraz.</span>
 </form>
 </div>
 </body>

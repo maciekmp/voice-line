@@ -17,6 +17,7 @@ function createConversationPresentation(initial = {}) {
           questionSource: active?.questionSource,
           threadId: conversation.id, question: active?.question || '', answer: active?.answer || '',
           images: active && 'images' in active ? active.images || [] : [],
+          inputImages: active?.inputImages || [],
           history: conversation.pending ? conversation.completed : conversation.completed.slice(0, -1) };
       } else {
         // Local health and optimistic input may change the display, never history.

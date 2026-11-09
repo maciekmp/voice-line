@@ -34,7 +34,7 @@ function fakeClock() {
     now = target;
   }, get timers() { return timers.size; } };
 }
-function fixture(desktop = false) {
+function fixture(desktop = false, options: Partial<ConstructorParameters<typeof ApplicationController>[0]> = {}) {
   const events: ApplicationEvent[] = [], calls: string[] = [], files: string[] = [], time = fakeClock();
   const reply = { prompt: 'Q', answer: 'A' };
   const engine: VoiceEngine = {
@@ -60,7 +60,7 @@ function fixture(desktop = false) {
   };
   const controller = new ApplicationController({ engine, recorder, clock: time.clock,
     emit: event => events.push(event), removeAudio: async wav => { files.push(wav); },
-    log: { log() {}, error() {} }, operationTimeoutMs: 1000 });
+    log: { log() {}, error() {} }, operationTimeoutMs: 1000, ...options });
   const voices = () => events.filter(event => event.type === 'voice');
   const input = new ApplicationInput(controller, event => events.push(event), { clock: time.clock });
   // Core-operation tests start recording directly; gesture scenarios use the real input adapter.
@@ -113,6 +113,82 @@ test('image selection must belong to the current conversation and reaches the en
   assert.equal(received, imageId);
   assert.equal(await f.controller.command({ command: 'text', text: 'zwykłe pytanie' }), true);
   assert.equal(received, undefined);
+});
+
+test('verified imported drafts survive snapshots, reject invalid replacements and reach text or voice', async t => {
+  const image = { id: 'b'.repeat(64), alt: 'Wycinek' };
+  const f = fixture(false, { verifyImage(value) { if (value.id !== image.id) throw new Error('missing blob'); return value; } });
+  t.after(() => f.controller.shutdown()); await f.controller.start();
+  assert.equal(await f.controller.command({ command: 'import-image', image }), true);
+  assert.deepEqual(f.controller.snapshot().selectedImage, image);
+  assert.deepEqual(f.controller.snapshot().selectedImage, image);
+  assert.equal(await f.controller.command({ command: 'import-image', image: { ...image, id: 'c'.repeat(64) } }), false);
+  assert.deepEqual(f.controller.snapshot().selectedImage, image);
+  let selected: string | undefined;
+  f.engine.respond = async (text, _signal, _source, id) => { selected = id; return { prompt: text, answer: 'A' }; };
+  assert.equal(await f.controller.command({ command: 'text', text: 'Co tu widać?' }), true);
+  assert.equal(selected, image.id); assert.equal(f.controller.snapshot().selectedImage, null);
+  await f.controller.command({ command: 'import-image', image });
+  f.engine.respondAudio = async (_wav, _signal, callbacks, options) => {
+    selected = options?.imageId;
+    assert.deepEqual(f.controller.snapshot().conversation.pending?.inputImages, [image]);
+    callbacks?.onUpdate?.('thinking', { question: 'Co tu widać?' }); return { prompt: 'Q', answer: 'A' };
+  };
+  f.application.beginRecording(); f.application.confirmRecording(); await f.application.releaseRecording();
+  assert.equal(selected, image.id);
+  f.engine.currentExchanges.push({ question: 'Q', answer: 'A', inputImages: [image] });
+  assert.equal(await f.controller.command({ command: 'select-image', imageId: image.id }), true);
+  await f.controller.command({ command: 'reset' }); assert.equal(f.controller.snapshot().selectedImage, null);
+});
+
+test('typed progress updates pending text and ignores late updates after cancellation', async t => {
+  const f = fixture(); t.after(() => f.controller.shutdown()); await f.controller.start();
+  const response = deferred<VoiceReply>(); let progress!: NonNullable<Parameters<VoiceEngine['respond']>[5]>;
+  f.engine.respond = async (_text, _signal, _source, _image, _images, onText) => { progress = onText!; return response.promise; };
+  const work = f.controller.command({ command: 'text', text: 'Q' }); await flush();
+  const count = f.voices().length;
+  progress({ prompt: 'Pytanie', answer: 'Pierwsze' });
+  progress({ prompt: 'Pytanie', answer: 'Pierwsze zdanie.' });
+  assert.equal(f.voices().length, count);
+  f.time.advance(40);
+  assert.equal(f.voices().length, count + 1);
+  assert.equal(f.controller.snapshot().conversation.pending?.answer, 'Pierwsze zdanie.');
+  await f.controller.command({ command: 'cancel' });
+  const before = f.events.length; progress({ answer: 'stale' });
+  assert.equal(f.events.length, before); response.resolve(f.reply); await work;
+});
+
+test('generation failure after early audio retains the fragment and input image', async t => {
+  const image = { id: 'b'.repeat(64), alt: 'Wycinek' };
+  const f = fixture(false, { verifyImage: value => value }); t.after(() => f.controller.shutdown()); await f.controller.start();
+  await f.controller.command({ command: 'import-image', image });
+  let saved: VoiceReply | undefined;
+  f.engine.interruptTurn = (_checkpoint, partial) => { saved = partial; };
+  f.engine.respondAudio = async (_wav, _signal, callbacks = {}) => {
+    callbacks.onUpdate?.('thinking', { question: 'Q', answer: 'Pierwsze.' });
+    callbacks.onPlaybackStart?.();
+    callbacks.onUpdate?.('thinking', { answer: 'Pierwsze. Kolejne.' });
+    assert.equal(f.controller.snapshot().state, 'speaking');
+    throw new Error('provider disconnected');
+  };
+  f.application.beginRecording(); f.application.confirmRecording(); await f.application.releaseRecording();
+  assert.equal(saved?.answer, 'Pierwsze. Kolejne.'); assert.equal(saved?.interrupted, true);
+  assert.deepEqual(saved?.inputImages, [image]); assert.equal(f.controller.snapshot().state, 'error');
+});
+
+test('TTS failure leaves text ready and a final update notice survives completion', async t => {
+  const f = fixture(); t.after(() => f.controller.shutdown()); await f.controller.start();
+  f.engine.respondAudio = async (_wav, _signal, callbacks = {}) => {
+    callbacks.onUpdate?.('thinking', { question: 'Q', answer: 'fragment' });
+    callbacks.onPlaybackError?.(new Error('audio output lost'));
+    callbacks.onNotice?.('Odpowiedź została zaktualizowana.');
+    f.engine.currentExchanges.push({ question: 'Q', answer: 'pełny tekst' }); return f.reply;
+  };
+  f.application.beginRecording(); f.application.confirmRecording(); await f.application.releaseRecording();
+  const snapshot = f.controller.snapshot();
+  assert.equal(snapshot.ready, true); assert.equal(snapshot.capabilities.playback.state, 'error');
+  assert.equal(snapshot.conversation.completed.at(-1)?.answer, 'pełny tekst');
+  assert.match(snapshot.message!, /zaktualizowana/);
 });
 
 test('selected image reaches voice input and clears when the edit is submitted or reset', async t => {
@@ -417,8 +493,10 @@ test('worker separates pending from completed, replaces stream text and drops pe
   assert.equal(f.voices().at(-1)?.conversation.pending?.answer, '');
   await f.controller.command({ command: 'release' }); await flush();
   callbacks.onUpdate?.('thinking', { question: 'new', answer: 'part' });
+  f.time.advance(40);
   const partial = f.voices().at(-1)!.conversation;
   callbacks.onUpdate?.('speaking', { answer: 'full' });
+  f.time.advance(40);
   const full = f.voices().at(-1)!.conversation;
   assert.equal(full.pending?.id, partial.pending?.id);
   assert.ok(full.pending!.revision > partial.pending!.revision);

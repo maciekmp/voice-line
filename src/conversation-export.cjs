@@ -8,7 +8,13 @@ async function conversationMarkdown(exchanges, imageDirectory) {
   }
   const sections = ['# Rozmowa\n'];
   for (const exchange of exchanges) {
-    sections.push(`## Ty\n\n${exchange.question}\n\n## Asystent\n\n${exchange.answer}${exchange.interrupted ? '\n\n_Odpowiedź przerwana._' : ''}\n`);
+    sections.push(`## Ty\n\n${exchange.question}\n`);
+    for (const image of exchange.inputImages || []) {
+      const bytes = await readImage(imageDirectory, image.id);
+      const alt = String(image.alt || 'Załączony obraz').replace(/[\[\]\r\n]/g, ' ');
+      sections.push(`![${alt}](data:image/png;base64,${bytes.toString('base64')})\n`);
+    }
+    sections.push(`## Asystent\n\n${exchange.answer}${exchange.interrupted ? '\n\n_Odpowiedź przerwana._' : ''}\n`);
     for (const image of exchange.images || []) {
       const bytes = await readImage(imageDirectory, image.id);
       const alt = String(image.alt || 'Wygenerowany obraz').replace(/[\[\]\r\n]/g, ' ');

@@ -14,6 +14,7 @@ import type { AppStorage } from './app-storage.ts';
 import { loadCodexConfig, type CodexConfig } from './app-config.ts';
 import { stableExchangeId } from './conversation-format.ts';
 import { codexThreadId, turnId, type CodexThreadId, type TurnId } from './conversation-identifiers.ts';
+import { ReplyDecoder } from './reply-decoder.ts';
 
 export type CodexConnection = { home?: string; apiKey?: string; storage?: AppStorage; config?: CodexConfig; rawLog?: CodexRawLog };
 
@@ -27,6 +28,12 @@ type ActiveTurn = {
   previews: import('./conversation-contract.ts').GeneratedImage[];
   imageProgress: Promise<void>;
   onImages?: import('./conversation-contract.ts').ImageProgress;
+  onText?: import('./conversation-contract.ts').ReplyProgress;
+  messages: Map<string, { decoder: ReplyDecoder; phase?: string; last?: string }>;
+  early: any[];
+  generatingImage: boolean;
+  startedAt: number;
+  firstTextMs?: number;
   cancelled: boolean;
   state: 'running' | 'cancelling' | 'finished' | 'disconnected';
   finished: Promise<void>;
@@ -73,7 +80,10 @@ export class CodexAppServer {
   get currentExchanges() { return this.session.currentExchanges; }
   get canRestorePrevious(): boolean { return this.session.canRestorePrevious; }
   expireConversation(): void { this.session.expire(); }
-  interruptTurn(checkpoint: ConversationCheckpoint, partial?: VoiceReply): void { this.session.interruptTurn(checkpoint, partial); }
+  interruptTurn(checkpoint: ConversationCheckpoint, partial?: VoiceReply): void {
+    if (this.connection.storage) this.connection.storage.interruptTurn(checkpoint, partial);
+    else this.session.interruptTurn(checkpoint, partial);
+  }
   async restorePrevious(signal?: AbortSignal): Promise<boolean> {
     await this.start();
     await this.cleanHistory();
@@ -167,7 +177,7 @@ export class CodexAppServer {
       if (this.lifecycle !== lifecycle || this.transport !== transport) throw new Error('Codex startup stopped');
     };
     try {
-      await this.request('initialize', { clientInfo: { name: 'voice_line', title: 'Voice Line', version: '0.3.0' },
+      await this.request('initialize', { clientInfo: { name: 'voice_line', title: 'Voice Line', version: '0.6.0' },
         capabilities: { experimentalApi: true } });
       ensureCurrent();
       this.send({ method: 'initialized', params: {} });
@@ -261,8 +271,34 @@ export class CodexAppServer {
     this.onNotification(message.method, message.params);
     const turn = this.turn;
     if (!turn || message.params?.threadId !== turn.threadId) return;
+    if (!turn.id && ['item/started', 'item/completed', 'item/agentMessage/delta', 'turn/completed'].includes(message.method)) {
+      turn.early.push(message); return;
+    }
     if (turn.id && message.params.turnId && message.params.turnId !== turn.id) return;
+    if (turn.state === 'finished' || turn.state === 'disconnected') return;
+    if (!turn.cancelled && message.method === 'item/started') {
+      const item = message.params.item;
+      if (item?.type === 'imageGeneration') turn.generatingImage = true;
+      if (item?.type === 'agentMessage' && typeof item.id === 'string') {
+        turn.messages.set(item.id, { decoder: new ReplyDecoder(), phase: item.phase });
+      }
+    }
+    if (!turn.cancelled && message.method === 'item/agentMessage/delta' && typeof message.params.delta === 'string'
+      && typeof message.params.itemId === 'string') {
+      const id = message.params.itemId;
+      const item = turn.messages.get(id) ?? { decoder: new ReplyDecoder() };
+      turn.messages.set(id, item);
+      if (item.phase !== 'commentary' && !turn.generatingImage) {
+        const progress = item.decoder.push(message.params.delta);
+        if (progress) {
+          if (progress.answer && turn.firstTextMs === undefined) turn.firstTextMs = performance.now() - turn.startedAt;
+          const fingerprint = JSON.stringify(progress);
+          if (item.last !== fingerprint) { item.last = fingerprint; turn.onText?.(progress); }
+        }
+      }
+    }
     if (message.method === 'item/completed' && message.params.item?.type === 'imageGeneration') {
+      turn.generatingImage = true;
       const item = message.params.item;
       turn.images.push(item);
       if (tryImageFromProtocol(item)) {
@@ -276,8 +312,15 @@ export class CodexAppServer {
         void turn.imageProgress.catch(() => {});
       }
     }
-    if (message.method === 'item/completed' && message.params.item?.type === 'agentMessage') {
-      turn.text = message.params.item.text ?? turn.text;
+    if (!turn.cancelled && message.method === 'item/completed' && message.params.item?.type === 'agentMessage'
+      && (message.params.item.phase ?? turn.messages.get(message.params.item.id)?.phase) !== 'commentary') {
+      const item = message.params.item;
+      turn.text = item.text ?? turn.text;
+      if (typeof item.text === 'string' && !turn.generatingImage) {
+        const progress = new ReplyDecoder().push(item.text);
+        const previous = turn.messages.get(item.id);
+        if (progress && previous?.last !== JSON.stringify(progress)) turn.onText?.(progress);
+      }
     }
     if (message.method === 'turn/completed' && (!turn.id || message.params.turn?.id === turn.id)) {
       turn.state = 'finished';
@@ -304,25 +347,25 @@ export class CodexAppServer {
   protected onNotification(_method: string, _params: any): void {}
   protected onServerExit(_error: Error): void {}
 
-  async respond(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress): Promise<VoiceReply> {
-    return this.runTurn(raw, signal, false, questionSource, imageId, onImages);
+  async respond(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress, onText?: import('./conversation-contract.ts').ReplyProgress): Promise<VoiceReply> {
+    return this.runTurn(raw, signal, false, questionSource, imageId, onImages, onText);
   }
 
-  async generateImage(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress): Promise<VoiceReply> {
+  async generateImage(raw: string, signal?: AbortSignal, questionSource: import('./conversation-contract.ts').QuestionSource = 'text', imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress, onText?: import('./conversation-contract.ts').ReplyProgress): Promise<VoiceReply> {
     await this.requireChatGPTImageAuth();
     if (!(await this.request('modelProvider/capabilities/read', {})).imageGeneration) {
       throw new Error('ImageGen nie jest dostępny dla tego połączenia Codex.');
     }
-    return this.runTurn(raw, signal, true, questionSource, imageId, onImages);
+    return this.runTurn(raw, signal, true, questionSource, imageId, onImages, onText);
   }
 
-  private async runTurn(raw: string, signal: AbortSignal | undefined, image: boolean, questionSource: import('./conversation-contract.ts').QuestionSource, imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress): Promise<VoiceReply> {
-    const operation = this.operation.then(() => this.performTurn(raw, signal, image, questionSource, imageId, onImages));
+  private async runTurn(raw: string, signal: AbortSignal | undefined, image: boolean, questionSource: import('./conversation-contract.ts').QuestionSource, imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress, onText?: import('./conversation-contract.ts').ReplyProgress): Promise<VoiceReply> {
+    const operation = this.operation.then(() => this.performTurn(raw, signal, image, questionSource, imageId, onImages, onText));
     this.operation = operation.catch(() => {});
     return operation;
   }
 
-  private async performTurn(raw: string, signal: AbortSignal | undefined, image: boolean, questionSource: import('./conversation-contract.ts').QuestionSource, imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress): Promise<VoiceReply> {
+  private async performTurn(raw: string, signal: AbortSignal | undefined, image: boolean, questionSource: import('./conversation-contract.ts').QuestionSource, imageId?: string, onImages?: import('./conversation-contract.ts').ImageProgress, onText?: import('./conversation-contract.ts').ReplyProgress): Promise<VoiceReply> {
     if (signal?.aborted) throw new Error('Cancelled');
     await this.start();
     await this.cleanHistory();
@@ -345,7 +388,8 @@ export class CodexAppServer {
       void completion.catch(() => {});
       let finish!: () => void;
       const finished = new Promise<void>(res => { finish = res; });
-      const turn: ActiveTurn = { threadId: this.currentCodexThreadId!, text: '', images: [], previews: [], imageProgress: Promise.resolve(), onImages,
+      const turn: ActiveTurn = { threadId: this.currentCodexThreadId!, text: '', images: [], previews: [], imageProgress: Promise.resolve(), onImages, onText,
+        messages: new Map(), early: [], generatingImage: image, startedAt: performance.now(),
         cancelled: false, state: 'running', finished, finish, completion, resolve, reject };
       this.turn = turn;
       const abort = () => {
@@ -373,6 +417,7 @@ export class CodexAppServer {
         const startupMs = performance.now() - startedAt;
         turn.id = typeof reply?.turn?.id === 'string' ? turnId(reply.turn.id) : undefined;
         if (!turn.id) throw new Error('Codex app-server returned no turn ID');
+        for (const message of turn.early.splice(0)) this.onMessage(message);
         if (turn.cancelled) abort();
         await completion;
         await turn.imageProgress;
@@ -382,6 +427,8 @@ export class CodexAppServer {
         catch { throw new Error(`Codex returned invalid JSON: ${turn.text}`); }
         if (typeof parsed.prompt !== 'string' || typeof parsed.answer !== 'string') throw new Error(`Codex returned an incomplete voice reply. Raw response: ${turn.text}`);
         parsed.questionSource = questionSource;
+        if (imageId) parsed.inputImages = [{ id: imageId, alt: 'Załączony obraz' }];
+        else delete parsed.inputImages;
         parsed.exchangeId = this.exchangeIdentity(`codex:${turn.threadId}:${turn.id}`);
         const validImages = turn.images.filter(item => tryImageFromProtocol(item));
         if ((image || turn.images.length) && !validImages.length) {
@@ -396,7 +443,8 @@ export class CodexAppServer {
         if (!parsed.answer.trim()) throw new Error(`Codex returned an incomplete voice reply. Raw response: ${turn.text}`);
         if (!this.session.matchesOperation(operation)) throw new Error('Conversation changed');
         await this.commitReply(parsed, undefined, () => !turn.cancelled && !signal?.aborted && this.session.matchesOperation(operation));
-        return { ...parsed, startupMs, turnMs: performance.now() - startedAt - startupMs };
+        return { ...parsed, startupMs, turnMs: performance.now() - startedAt - startupMs,
+          ...(turn.firstTextMs !== undefined && { firstTextMs: turn.firstTextMs }) };
       } finally {
         clearTimeout(timeout);
         await turn.imageProgress.catch(() => {});

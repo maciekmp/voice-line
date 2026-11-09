@@ -16,6 +16,7 @@ const desktopApi = {
   composerFocus(focused) { ipcRenderer.send('voice:composer-focus', focused); },
   text(text, imageId) { return ipcRenderer.invoke('voice:text', imageId === undefined ? text : { text, imageId }); },
   selectImage(id) { return ipcRenderer.invoke('voice:image-selection', id); },
+  addImage(source) { return ipcRenderer.invoke('voice:image-import', source); },
   copyCode(text) { return ipcRenderer.invoke('voice:copy-code', text); },
   imagePreview(id) { return ipcRenderer.invoke('voice:image-preview', id); },
   saveImage(id) { return ipcRenderer.invoke('voice:image-save', id); },

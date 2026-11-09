@@ -107,12 +107,12 @@ test('legacy history import commits all shared image and task references with th
   fs.writeFileSync(join(home, 'session.json'), JSON.stringify({ threadId: id, lastAnswerAt: Date.now() }));
   const storage = createAppStorage('realtime', root);
   const history = [
-    { question: 'Q1', answer: 'A1', images: [{ id: 'a'.repeat(64), alt: 'first' }], imageTask: { threadId: id, turnId: 'turn_1' } },
+    { question: 'Q1', answer: 'A1', images: [{ id: 'a'.repeat(64), alt: 'first' }], inputImages: [{ id: 'c'.repeat(64), alt: 'attached' }], imageTask: { threadId: id, turnId: 'turn_1' } },
     { question: 'Q2', answer: 'A2', images: [{ id: 'b'.repeat(64), alt: 'second' }], imageTask: { threadId: '22222222-2222-2222-2222-222222222222', turnId: 'turn_2' } },
   ];
   const imported = await storage.importHistory(id, history);
   const index = JSON.parse(fs.readFileSync(join(home, 'history-index.json'), 'utf8'))[id];
-  assert.deepEqual(index.images, ['a'.repeat(64), 'b'.repeat(64)]);
+  assert.deepEqual(index.images, ['a'.repeat(64), 'c'.repeat(64), 'b'.repeat(64)]);
   assert.deepEqual(index.tasks, history.map(exchange => exchange.imageTask.threadId));
   assert.ok(imported.every(exchange => exchange.id));
   assert.deepEqual(createAppStorage('realtime', root).session.currentExchanges, imported);

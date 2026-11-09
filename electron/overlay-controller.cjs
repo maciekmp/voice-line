@@ -3,12 +3,12 @@ const ACTIVE = new Set(['listening', 'transcribing', 'thinking', 'preparing-spee
 const EDITABLE = new Set(['compose', 'compact', 'chat']);
 function createOverlayController({ onChange, completionDelay = 5000, timers = globalThis }) {
   let voiceState = 'starting', mode = 'hidden', pinned = false, composerFocused = false;
-  let completionExpiry, revision = 0, last = '';
+  let completionExpiry, revision = 0, last = '', holds = 0, hidingHolds = 0;
   const hovered = new Set();
   function snapshot() { return { mode, pinned }; }
   function publish(focus = false) {
-    const value = snapshot(), key = JSON.stringify(value);
-    if (key !== last || focus) { last = key; onChange(value, { focus }); }
+    const value = snapshot(), key = JSON.stringify([value, hidingHolds > 0]);
+    if (key !== last || focus) { last = key; onChange(value, { focus, suspended: hidingHolds > 0 }); }
   }
   function cancelCompletion() { revision++; timers.clearTimeout(completionExpiry); completionExpiry = undefined; }
   function dismiss() {
@@ -21,7 +21,7 @@ function createOverlayController({ onChange, completionDelay = 5000, timers = gl
     completionExpiry = timers.setTimeout(() => {
       if (revision !== expected) return;
       completionExpiry = undefined;
-      if (!hovered.size && !pinned && !composerFocused) dismiss();
+      if (!holds && !hovered.size && !pinned && !composerFocused) dismiss();
     }, completionDelay);
   }
   function compose(interrupted = false) {
@@ -31,6 +31,18 @@ function createOverlayController({ onChange, completionDelay = 5000, timers = gl
     publish(true);
   }
   return {
+    hold({ hide = true } = {}) {
+      holds++; cancelCompletion();
+      if (hide) { hidingHolds++; hovered.clear(); composerFocused = false; }
+      publish();
+      let released = false;
+      return (focus = true) => {
+        if (released) return;
+        released = true; holds--;
+        if (hide) hidingHolds--;
+        publish(!holds && focus);
+      };
+    },
     snapshot, compose, toggle: () => compose(),
     intent(action) {
       if (action === 'voice-input') {

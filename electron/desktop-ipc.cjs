@@ -18,7 +18,8 @@ function registerDesktopIpc(ipcMain, host) {
     ipcMain.on(channel, listener); listeners.push([channel, listener]);
   };
   const handle = (channel, callback) => {
-    const invalidResult = channel === 'voice:image-preview' ? null : channel === 'voice:image-save' ? 'error' : false;
+    const invalidResult = channel === 'voice:image-preview' ? null : channel === 'voice:image-save' ? 'error'
+      : channel === 'voice:image-import' ? { status: 'error', message: 'Nieprawidłowe źródło obrazu.' } : false;
     ipcMain.handle(channel, normalize(channel, callback, invalidResult)); handlers.push(channel);
   };
   function trusted(event) {
@@ -59,6 +60,10 @@ function registerDesktopIpc(ipcMain, host) {
     if (!trusted(event) || host.exitStarted || !host.engine?.connected) return false;
     const result = await host.engine.request({ command: 'select-image', imageId });
     return result.accepted;
+  });
+  handle('voice:image-import', async (event, source) => {
+    if (!trusted(event) || host.exitStarted || !host.imageImporter) return { status: 'error', message: 'Nie można teraz dodać obrazu.' };
+    return host.imageImporter.add(source);
   });
   handle('voice:image-preview', async (event, id) => {
     if (!host.panelWindow || host.panelWindow.isDestroyed() || event.sender !== host.panelWindow.webContents || host.exitStarted) return null;

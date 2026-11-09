@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, screen, ipcMain, clipboard, dialog } = require('electron');
+const { app, BrowserWindow, Menu, Tray, nativeImage, screen, desktopCapturer, ipcMain, clipboard, dialog } = require('electron');
 const path = require('node:path');
 const { mkdirSync } = require('node:fs');
 const { spawn } = require('node:child_process');
@@ -11,6 +11,9 @@ const { createWorkerEventReceiver } = require('./desktop-worker.cjs');
 const { appDataDirectory } = require('./app-data.cjs');
 const { conversationMarkdown } = require('./conversation-export.cjs');
 const { loadVisualPreferences, saveVisualPreferences, visualIndicatorMenu } = require('./visual-preferences.cjs');
+const { createImageImporter } = require('./image-import.cjs');
+const { createChromiumImageDecoder } = require('./image-decoder.cjs');
+const { createScreenCapture } = require('./screen-capture.cjs');
 
 const smokeTest = process.argv.includes('--smoke-test');
 const dataDirectory = process.argv.includes('--preview')
@@ -41,9 +44,11 @@ const conversationPresentation = createConversationPresentation(voice);
 const preview = process.argv.includes('--preview');
 let testNativePointer = false;
 let pointerPoll;
+let imageImporter;
 
 function sendVoice(update = {}) {
   voice = conversationPresentation.update(update);
+  imageImporter?.stateChanged();
   overlay.voice(voice.state);
   for (const window of [panelWindow]) {
     if (window && !window.isDestroyed()) window.webContents.send('voice:snapshot', voice);
@@ -106,10 +111,12 @@ function startEngine() {
 }
 
 const overlay = createOverlayController({
-  onChange(value, { focus }) {
+  onChange(value, { focus, suspended }) {
     if (process.argv.includes('--app-debug')) console.log('[overlay]', { ...value, focus });
+    if (exitStarted) return;
     if (panelWindow && !panelWindow.isDestroyed()) {
-      if (value.mode === 'hidden') {
+      if (suspended) windows.holdPanel();
+      else if (value.mode === 'hidden') {
         if (panelWindow.isVisible()) windows.hidePanel();
       } else if (value.mode !== windows.mode || !panelWindow.isVisible() || focus) windows.openPanel(value.mode, focus);
       panelWindow.webContents.send('voice:pinned', value.pinned);
@@ -117,9 +124,9 @@ const overlay = createOverlayController({
   },
 });
 function openPanel(focus = true) { overlay.open(Boolean(focus)); }
-function hidePanel() { overlay.dismiss(); }
+function hidePanel() { imageImporter?.cancel(); overlay.dismiss(); }
 const windows = createWindowAdapter({
-  screen, BrowserWindow, root: __dirname, PANEL_MAX_HEIGHT,
+  screen, BrowserWindow, Menu, root: __dirname, PANEL_MAX_HEIGHT,
   get panelWindow() { return panelWindow; }, set panelWindow(value) { panelWindow = value; },
   hover: (surface, entered) => overlay.hover(surface, entered),
   exiting: () => exitStarted, dismiss: hidePanel,
@@ -133,6 +140,13 @@ let exitFinished = false;
 let exitTimer;
 let previewPoll;
 let previewLevel = .5;
+const screenCapture = createScreenCapture({ BrowserWindow, desktopCapturer, screen, ipcMain, root: __dirname });
+imageImporter = createImageImporter({
+  clipboard, dialog, nativeImage, imageDirectory, overlay, capture: screenCapture,
+  decode: createChromiumImageDecoder({ BrowserWindow, ipcMain, root: __dirname }),
+  get panelWindow() { return panelWindow; }, get engine() { return engine; },
+  get voice() { return voice; }, get exitStarted() { return exitStarted; },
+});
 
 function finishExit() {
   if (!exitStarted || exitFinished) return;
@@ -144,6 +158,7 @@ function finishExit() {
 const disposeDesktopIpc = registerDesktopIpc(ipcMain, {
   clipboard, dialog, overlay, openPanel, hidePanel, positionPanel, sendVoice, sendSettings,
   imageDirectory, panelHeights: windows.heights, PANEL_MAX_HEIGHT, smokeTest, preview, engineSupervisor,
+  imageImporter,
   get panelWindow() { return panelWindow; },
   get exitStarted() { return exitStarted; }, get voice() { return voice; }, get engine() { return engine; },
   get panelMode() { return windows.mode; },
@@ -158,6 +173,8 @@ app.on('before-quit', event => {
   event.preventDefault();
   if (exitStarted) return;
   exitStarted = true;
+  imageImporter.cancel();
+  screenCapture.cancel();
   overlay.dispose();
   windows.dispose();
   clearInterval(pointerPoll);
@@ -217,20 +234,6 @@ function menu() {
   ]);
 }
 
-function trayImage() {
-  // Small native bitmap of the orb; no external assets or network requests.
-  const bitmap = Buffer.alloc(16 * 16 * 4);
-  for (let y = 0; y < 16; y++) {
-    for (let x = 0; x < 16; x++) {
-      if (Math.hypot(x - 7.5, y - 7.5) > 7.3) continue;
-      const color = y < 6 ? [232, 97, 51] : y < 9 ? [255, 250, 247] : [250, 194, 179];
-      bitmap.set([...color, 255], (y * 16 + x) * 4); // Native BGRA.
-    }
-  }
-  return nativeImage.createFromBitmap(bitmap, { width: 16, height: 16 });
-}
-
-
 if (!smokeTest && !app.requestSingleInstanceLock()) {
   app.quit();
 } else {
@@ -250,7 +253,7 @@ if (!smokeTest && !app.requestSingleInstanceLock()) {
           app, panelWindow, clipboard, dialog, nativeImage, screen, profileDirectory, sessionDirectory,
           PANEL_MAX_HEIGHT, imageDirectory, outputDirectory, visualPreferencesFile,
           sendVoice, sendSettings, onEngineMessage, openPanel, hidePanel,
-          samplePointer, overlay, positionPanel, menu, saveCurrentConversation,
+          samplePointer, overlay, positionPanel, menu, saveCurrentConversation, imageImporter, screenCapture,
           get voice() { return voice; }, get panelHeight() { return windows.height; },
           get indicator() { return indicator; }, set indicator(value) { indicator = value; },
           get paused() { return paused; }, set paused(value) { paused = value; },
@@ -261,7 +264,8 @@ if (!smokeTest && !app.requestSingleInstanceLock()) {
       }
       catch (error) { console.error(error); app.exit(1); }
     } else {
-      tray = new Tray(trayImage());
+      // The ICO contains native sizes for Windows display scaling (16–256 px).
+      tray = new Tray(path.join(__dirname, 'assets', 'tray.ico'));
       tray.setToolTip('Voice Line');
       tray.setContextMenu(menu());
       tray.on('click', openPanel);

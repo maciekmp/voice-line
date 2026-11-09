@@ -10,6 +10,25 @@ node_modules/
 output/
 preview/
 
+# Local production records accompanying the documentation media.
+/docs/media/artwork-provenance.json
+/docs/media/narration-manifest.json
+/docs/media/soundtrack-manifest.json
+/docs/media/Piper-model-card.txt
+
+# Local diagnostics, raw audio, crash dumps and credentials.
+*.log
+*.pcm
+*.dmp
+auth.json
+credentials.json
+.session*.json
+.realtime-session*.json
+.imagegen-session*.json
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
 # Archived prototype artifacts; never include their credentials or recordings in Git.
 .chatgpt-button/
 .chatgpt-button-session.json

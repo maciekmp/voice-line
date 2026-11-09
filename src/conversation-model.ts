@@ -23,10 +23,12 @@ export function exchangeFingerprint(exchange: ConversationExchange): string {
   return createHash('sha256').update(JSON.stringify([exchange.question, exchange.answer,
     (exchange.images ?? []).map(image => [image.id, image.alt]),
     exchange.imageTask ? [exchange.imageTask.threadId, exchange.imageTask.turnId] : null,
-    ...(exchange.interrupted ? ['interrupted'] : [])])).digest('hex');
+    ...(exchange.interrupted ? ['interrupted'] : []),
+    ...(exchange.inputImages?.length ? [['inputImages', exchange.inputImages.map(image => [image.id, image.alt])]] : [])])).digest('hex');
 }
 export function copyExchange(exchange: ConversationExchange): ConversationExchange {
   return { ...exchange, ...(exchange.images && { images: exchange.images.map(image => ({ ...image })) }),
+    ...(exchange.inputImages && { inputImages: exchange.inputImages.map(image => ({ ...image })) }),
     ...(exchange.imageTask && { imageTask: { ...exchange.imageTask } }) };
 }
 export function validExchange(item: unknown): item is ConversationExchange {
@@ -38,7 +40,8 @@ export function answerSession(state: SessionState, reply: VoiceReply, now: numbe
     ...(reply.questionSource && { questionSource: reply.questionSource }),
     ...(reply.interrupted && { interrupted: true }),
     ...(reply.exchangeId && { id: reply.exchangeId, revision: 1 }),
-    ...(reply.images?.length && { images: reply.images }), ...(reply.imageTask && { imageTask: reply.imageTask }) };
+    ...(reply.images?.length && { images: reply.images }), ...(reply.inputImages?.length && { inputImages: reply.inputImages }),
+    ...(reply.imageTask && { imageTask: reply.imageTask }) };
   if (!validExchange(exchange)) throw new Error('Invalid conversation exchange');
   const fingerprint = exchangeFingerprint(exchange);
   const receipt = reply.exchangeId && state.receipts[state.threadId]?.[reply.exchangeId];
@@ -50,7 +53,7 @@ export function answerSession(state: SessionState, reply: VoiceReply, now: numbe
   if (existing) {
     if (JSON.stringify(existing) !== JSON.stringify(exchange)) {
       // Compare fields in a fixed order; hydrated objects may have a different key order.
-      const canonical = (entry: ConversationExchange) => JSON.stringify([entry.question, entry.answer, entry.images ?? [], entry.imageTask ?? null]);
+      const canonical = (entry: ConversationExchange) => JSON.stringify([entry.question, entry.answer, entry.images ?? [], entry.imageTask ?? null, entry.inputImages ?? []]);
       if (canonical(existing) !== canonical(exchange)) throw new Error('Conflicting conversation exchange ID');
     }
     return state;

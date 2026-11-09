@@ -5,12 +5,12 @@ const { createOverlayController } = require('../../electron/overlay-controller.c
 function setup() {
   let time = 0, id = 0;
   const tasks = new Map();
-  const changes = [];
-  const controller = createOverlayController({ onChange: value => changes.push(value), timers: {
+  const changes = [], presentations = [];
+  const controller = createOverlayController({ onChange: (value, state) => { changes.push(value); presentations.push({ ...value, ...state }); }, timers: {
     setTimeout(callback, delay) { const key = ++id; tasks.set(key, { at: time + delay, callback }); return key; },
     clearTimeout(key) { tasks.delete(key); },
   } });
-  return { controller, changes, advance(ms) {
+  return { controller, changes, presentations, advance(ms) {
     time += ms;
     for (const [key, task] of [...tasks]) if (task.at <= time) { tasks.delete(key); task.callback(); }
   } };
@@ -100,4 +100,50 @@ test('departure never starts a timer and a new operation cancels previous comple
 test('errors persist, including when following an active operation', () => {
   const {controller:c,advance}=setup(); c.voice('thinking'); c.voice('error'); advance(10000);
   assert.equal(c.snapshot().mode,'peek'); c.dismiss(); c.voice('error'); assert.equal(c.snapshot().mode,'hidden');
+});
+test('external interaction preserves mode and pin and cancels stale completion timers', () => {
+  const { controller: c, advance } = setup();
+  c.open(); c.togglePin(); c.voice('thinking'); c.voice('idle');
+  const release = c.hold();
+  advance(10000);
+  assert.deepEqual(c.snapshot(), { mode: 'chat', pinned: true });
+  release(); release();
+  advance(10000);
+  assert.deepEqual(c.snapshot(), { mode: 'chat', pinned: true });
+});
+test('file-style holds keep the panel visible while preventing completion expiry', () => {
+  const { controller: c, presentations, advance } = setup();
+  c.open();
+  const release = c.hold({ hide: false });
+  c.voice('thinking'); c.voice('idle');
+  advance(5000);
+  assert.equal(c.snapshot().mode, 'chat');
+  assert.equal(presentations.at(-1).suspended, false);
+  release(false);
+  advance(10000);
+  assert.deepEqual(c.snapshot(), { mode: 'chat', pinned: false });
+});
+test('nested interaction holds hide only while a hiding hold remains', () => {
+  const { controller: c, presentations, advance } = setup();
+  c.open(); c.togglePin();
+  const visible = c.hold({ hide: false });
+  const hiddenOne = c.hold();
+  const hiddenTwo = c.hold({ hide: true });
+  assert.equal(presentations.at(-1).suspended, true);
+  hiddenOne(); hiddenOne();
+  assert.equal(presentations.at(-1).suspended, true);
+  hiddenTwo(false);
+  assert.equal(presentations.at(-1).suspended, false);
+  assert.equal(presentations.at(-1).focus, false, 'Remaining file-style hold does not steal focus');
+  c.voice('thinking'); c.voice('idle'); advance(5000);
+  assert.deepEqual(c.snapshot(), { mode: 'chat', pinned: true });
+  visible();
+  assert.equal(presentations.at(-1).suspended, false);
+});
+test('releasing a visible hold cannot reopen an explicitly dismissed panel', () => {
+  const { controller: c, presentations } = setup();
+  c.open(); const release = c.hold({ hide: false });
+  c.dismiss(); release();
+  assert.deepEqual(c.snapshot(), { mode: 'hidden', pinned: false });
+  assert.equal(presentations.at(-1).mode, 'hidden');
 });

@@ -3,12 +3,15 @@ import { renderImages, refreshImageVisibility, imagePreviewCache } from './image
 import { createHistoryRenderer } from './history-renderer.js';
 import { AudioIndicator } from './audio-indicator.js';
 import { decorateNotice, setMessageIcon, setQuestionIcon } from './message-icons.js';
+import { renderInputImages } from './input-images.js';
 
 /** @typedef {{pin: HTMLButtonElement, previous: HTMLButtonElement, retry: HTMLButtonElement,
  * composer: HTMLFormElement, message: HTMLTextAreaElement, 'composer-status': HTMLElement, history: HTMLElement, status: HTMLElement,
  * error: HTMLElement, empty: HTMLElement, question: HTMLElement, answer: HTMLElement, images: HTMLElement,
  * 'question-block': HTMLElement, 'answer-block': HTMLElement, 'image-attachment': HTMLElement,
- * 'attachment-preview': HTMLImageElement, 'remove-attachment': HTMLButtonElement}} Elements */
+ * 'attachment-preview': HTMLImageElement, 'remove-attachment': HTMLButtonElement,
+ * 'add-image': HTMLButtonElement, 'capture-screen': HTMLButtonElement, 'attachment-progress': HTMLElement,
+ * 'input-images': HTMLElement}} Elements */
 /** @template {keyof Elements} K @param {K} id @returns {Elements[K]} */
 const get = id => {
   const element = document.getElementById(id);
@@ -45,12 +48,14 @@ let resizing = false;
 /** @type {import('../src/conversation-contract.ts').GeneratedImage | undefined} */
 let selectedImage;
 let selectingImage = false;
+let interactionEpoch = 0;
 /** @param {import('../src/conversation-contract.ts').GeneratedImage | undefined} image @param {boolean} [changeDraft] */
 function selectImage(image, changeDraft = true) {
   selectedImage = image;
   if (changeDraft) draftRevision++;
   get('image-attachment').hidden = !image;
   get('attachment-preview').removeAttribute('src');
+  get('attachment-preview').alt = image?.alt || 'Załączony obraz';
   get('message').placeholder = image ? 'Zapytaj o obraz lub opisz zmiany…' : 'Napisz wiadomość…';
   if (image) imagePreviewCache.get(image.id).then(url => {
     if (selectedImage !== image) return;
@@ -67,23 +72,54 @@ async function toggleImage(image) {
   if (pending || selectingImage || busy() || !snapshot.ready) return;
   if (get('composer').hidden) window.voiceDesktop.open();
   await requestImageSelection(selectedImage?.id === image.id ? undefined : image);
-  get('message').focus({ preventScroll: true });
+  if (!busy()) get('message').focus({ preventScroll: true });
 }
 /** @param {import('../src/conversation-contract.ts').GeneratedImage | undefined} image */
 async function requestImageSelection(image) {
   const conversationId = snapshot.conversation?.id ?? snapshot.threadId;
+  const epoch = interactionEpoch;
   selectingImage = true; updateComposer();
   try {
     const accepted = await window.voiceDesktop.selectImage(image?.id ?? null);
-    if (conversationId !== (snapshot.conversation?.id ?? snapshot.threadId)) return;
+    if (conversationId !== (snapshot.conversation?.id ?? snapshot.threadId) || epoch !== interactionEpoch || busy()) return;
     if (!accepted) throw new Error('Image selection rejected');
-    selectImage(image);
+    if (snapshot.selectedImage === undefined) selectImage(image);
+    else draftRevision++;
   } catch {
     errorText.textContent = 'Nie zmieniono wyboru obrazu. Poczekaj na zakończenie odpowiedzi i spróbuj ponownie.';
     get('error').hidden = false;
   } finally { selectingImage = false; updateComposer(); }
 }
 get('remove-attachment').addEventListener('click', async () => { await requestImageSelection(undefined); get('message').focus({ preventScroll: true }); });
+/** @param {import('../src/desktop-contract.ts').ImageImportSource} source */
+async function addImage(source) {
+  if (pending || selectingImage || busy() || !snapshot.ready) return;
+  const conversationId = snapshot.conversation?.id ?? snapshot.threadId;
+  const epoch = interactionEpoch;
+  selectingImage = true; updateComposer();
+  try {
+    const result = await window.voiceDesktop.addImage(source);
+    if (conversationId !== (snapshot.conversation?.id ?? snapshot.threadId) || epoch !== interactionEpoch || busy()) return;
+    if (result.status === 'imported') {
+      if (snapshot.selectedImage === undefined) selectImage(result.image);
+      else draftRevision++;
+    }
+    else if (result.status === 'error') {
+      errorText.textContent = result.message || 'Nie udało się dodać obrazu.'; get('error').hidden = false;
+    }
+  } catch {
+    errorText.textContent = 'Nie udało się dodać obrazu. Spróbuj ponownie.'; get('error').hidden = false;
+  } finally {
+    selectingImage = false; updateComposer();
+    if (epoch === interactionEpoch && !busy()) get('message').focus({ preventScroll: true });
+  }
+}
+get('add-image').addEventListener('click', () => { void addImage('file'); });
+get('capture-screen').addEventListener('click', () => { void addImage('screen'); });
+get('message').addEventListener('paste', event => {
+  if (!Array.from(event.clipboardData?.items || []).some(item => item.type.startsWith('image/'))) return;
+  event.preventDefault(); void addImage('clipboard');
+});
 const historyRenderer = createHistoryRenderer(get('history'), { onSelect: toggleImage });
 const statusText = decorateNotice(get('status'), 'info');
 const errorText = decorateNotice(get('error'), 'error');
@@ -99,6 +135,9 @@ window.addEventListener('blur', () => window.voiceDesktop.composerFocus(false));
 /** @type {string | undefined} */
 let renderedAnswer;
 let renderedImages = '';
+let renderedInputImages = '';
+/** @type {(() => void) | undefined} */
+let disposeInputImages;
 function reportSize() {
   // Layout and content change in the same renderer task, before the next paint.
   // The native viewport stays fixed; IPC only updates its interaction region.
@@ -175,7 +214,9 @@ function updateComposer() {
   get('status').hidden = inlineStatus || (!snapshot.interrupted && Boolean(snapshot.answer) && !['thinking', 'starting'].includes(snapshot.state || '')) || !statusText.textContent;
   get('composer').setAttribute('aria-busy', String(pending || busy()));
   get('remove-attachment').disabled = pending || selectingImage || busy();
-  for (const button of document.querySelectorAll('button.image-select')) {
+  get('add-image').disabled = get('capture-screen').disabled = pending || selectingImage || busy() || !snapshot.ready;
+  get('attachment-progress').hidden = !selectingImage;
+  for (const button of document.querySelectorAll('button.image-select, button.input-image-thumbnail')) {
     const select = /** @type {HTMLButtonElement} */ (button);
     select.setAttribute('aria-pressed', String(select.dataset.imageId === selectedImage?.id));
     select.disabled = pending || selectingImage || busy() || !snapshot.ready || select.dataset.unavailable === 'true';
@@ -186,7 +227,7 @@ function updateComposer() {
       : 'Wróć do poprzedniej rozmowy';
 }
 function resizeMessage() {
-  const minimum = document.body.dataset.mode === 'compose' ? 64 : 40;
+  const minimum = parseFloat(getComputedStyle(get('message')).minHeight);
   get('message').style.height = `${minimum}px`;
   get('message').style.height = `${Math.min(140, Math.max(minimum, get('message').scrollHeight))}px`;
 }
@@ -228,9 +269,12 @@ const labels = {
 };
 window.voiceDesktop.onVoice(value => {
   const changedConversation = (snapshot.conversation?.id ?? snapshot.threadId) !== (value.conversation?.id ?? value.threadId);
+  if (changedConversation || snapshot.operationId !== value.operationId) interactionEpoch++;
   snapshot = value;
-  if (selectedImage && (changedConversation || value.selectedImageId === null || !(value.conversation?.completed ?? []).some(
-    exchange => exchange.images?.some(image => image.id === selectedImage?.id)))) selectImage(undefined, false);
+  if (value.selectedImage !== undefined) {
+    if (selectedImage?.id !== value.selectedImage?.id || selectedImage?.alt !== value.selectedImage?.alt) selectImage(value.selectedImage || undefined, false);
+  } else if (selectedImage && (changedConversation || value.selectedImageId === null || !(value.conversation?.completed ?? []).some(
+    exchange => [...(exchange.images || []), ...(exchange.inputImages || [])].some(image => image.id === selectedImage?.id)))) selectImage(undefined, false);
   audioIndicator.voice(value);
   const history = value.history || [];
   historyRenderer.update(history, { conversationId: value.conversation?.id, revision: value.conversation?.revision });
@@ -255,6 +299,12 @@ window.voiceDesktop.onVoice(value => {
   get('empty').hidden = Boolean(value.question || value.answer || value.message || value.state !== 'idle');
   const imagesKey = JSON.stringify(value.images || []);
   if (imagesKey !== renderedImages) { renderedImages = imagesKey; renderImages(get('images'), value.images, { onSelect: toggleImage }); }
+  const inputImages = value.inputImages || value.conversation?.pending?.inputImages || (!value.conversation?.pending ? value.conversation?.completed.at(-1)?.inputImages : []) || [];
+  const inputKey = JSON.stringify(inputImages);
+  if (inputKey !== renderedInputImages) {
+    renderedInputImages = inputKey; disposeInputImages?.();
+    disposeInputImages = renderInputImages(get('input-images'), inputImages, { onSelect: toggleImage });
+  }
   updateComposer();
   anchorLatest();
   reportSize();
