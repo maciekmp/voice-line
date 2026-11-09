@@ -2,7 +2,7 @@
 
 A Windows desktop prototype for quick voice and text conversations with Codex. Hold the Copilot key to speak, release it to send, and hear the answer while reading along in a small Electron panel. Press again to interrupt. Tap the key to type a question and receive a silent reply.
 
-LOCAL mode uses whisper.cpp for speech recognition and Windows SAPI or Piper for speech playback. **Codex answers online** using the existing signed-in account; LOCAL describes speech processing. The current assistant instructions request Polish answers. The repository remains private and is not a packaged public release.
+LOCAL mode uses whisper.cpp for speech recognition and Windows SAPI or Piper for speech playback. **Codex answers online** using the existing signed-in account; LOCAL describes speech processing. The current assistant instructions request Polish answers. The source code is public under MIT. This is a source-based Windows prototype, not a packaged release.
 
 [![Watch the 2:12 Voice Line explainer](docs/media/explainer-cover.jpg)](docs/media/voice-line-explainer-en-captioned.mp4)
 
@@ -122,7 +122,7 @@ Select a test with `npm.cmd test -- test-app-storage.ts`. The `probe:imagegen` a
 - Some natural-language image requests can return an incomplete answer or claim success without an image. Use `/image <description>` to select the explicit generation path.
 - Attachments are limited to one image per question and 32 MiB before/after conversion. PDF/DOCX imports and continuous screen monitoring are unsupported; old image pixels are resent only when explicitly attached again.
 - History is temporary. Storage, audio kept by `SAVE_AUDIO=1`, debug output and exports require care when sharing.
-- Source code is licensed under MIT; see [LICENSE](LICENSE). Third-party components, models, voices and documentation media require their own rights/attribution review before redistribution. The repository remains private pending a separate publication decision.
+- Source code is licensed under MIT; see [LICENSE](LICENSE). Third-party components, models, voices and documentation media require their own rights/attribution review before redistribution. The owner approved publication of the repository and selected documentation media on 9 November 2026.
 
 ## License
 
