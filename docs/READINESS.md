@@ -6,13 +6,15 @@
 - The owner confirmed that the selected documentation materials were reviewed and that the intended real Windows voice workflow works. These are owner confirmations, separate from the automated checks below.
 - MIT was selected for source code and original text documentation; see [LICENSE](../LICENSE). Third-party models, voices and documentation media are not automatically covered by that grant.
 - Git history has been retained without rewriting. Historical identifying metadata remains as described in the security review.
-- Repository visibility remains private. Publication and any media redistribution require a separate decision.
+- The owner authorized publication on 9 November 2026; the repository is now public, including its retained history and selected documentation media. This does not grant blanket redistribution rights to third-party media.
 
 The original report below records the local review checkpoint; statements about not yet pushing or running GitHub CI refer to that earlier checkpoint.
 
+## Original local review checkpoint
+
 Reviewed on **9 November 2026** in the existing Windows checkout, starting from
 application commit `0549748`, on `chore/publication-readiness`. No repository was
-cloned, no changes were pushed, and repository visibility was not changed.
+cloned. At that checkpoint, changes had not yet been pushed and repository visibility had not yet been changed.
 No `AGENTS.md` was present in the repository or its ancestor directories.
 The owner's existing `BACKLOG.md` edits and untracked `scripts/promo/` were kept
 outside these changes. Original screenshots, videos and local runtime data were
@@ -74,7 +76,7 @@ captures or inject native keyboard events. Those checks were rerun successfully
 with the necessary local/network permissions. The first minimum-Node test exposed
 the cancellation issue described above; the final suite passed after its fix.
 
-Not exercised: live model inference, real ImageGen, paid realtime API requests,
+Not exercised by the local automated review recorded above: live model inference, real ImageGen, paid realtime API requests,
 physical Copilot hardware, microphone-to-Whisper recognition quality, real SAPI
 speech, Piper voice quality, a signed installer, or an updater. No passing result
 is claimed for these scenarios.
@@ -95,24 +97,26 @@ The workflow retains `contents: read` and disables persisted checkout credential
 Weekly [Dependabot configuration](../.github/dependabot.yml) covers npm and GitHub
 Actions; it does not enable automatic merging.
 
-These workflow edits were validated locally. **The updated workflow has not been
-run on GitHub**, because this work was not pushed.
+At the original local checkpoint, these workflow edits had only been validated
+locally. Subsequently, the Windows checks passed on GitHub for Node 22.18.0 and
+26.x, and [PR #1](https://github.com/maciekmp/voice-line/pull/1) was merged into `master`.
 
-## Remaining publication decisions and limits
+## Publication decisions and remaining limits
 
 1. **Historical privacy:** the [history/security review](SECURITY-REVIEW.md)
-   found no confirmed secret with its bounded pattern checks, but historical
-   commits retain a Windows profile path and identifying author/committer email.
-   Decide whether those disclosures are acceptable before publication. History
-   was not rewritten. Remote-only refs, Actions logs/artifacts and release
-   attachments were not inspected.
-2. **Licensing and media:** no project license has been selected. Review the
-   chosen license, generated artwork and Piper voice attribution/redistribution
-   before a public release. A full listening/frame-by-frame privacy review of
-   the selected film and any other material chosen for release remains pending.
-3. **Live acceptance testing:** perform the real Windows voice workflow with the
-   intended keyboard, microphone, speech model, voices and account. Realtime
-   protocol/model support is experimental and version dependent.
+   found no confirmed secret with its bounded pattern checks. The owner accepted
+   publication with the historical Windows profile path and identifying
+   author/committer metadata retained; history was not rewritten. Remote-only
+   refs, Actions logs/artifacts and release attachments were not inspected.
+2. **Licensing and media:** source code and original text documentation use
+   [MIT](../LICENSE). The owner confirmed review of the selected documentation
+   materials and approved their publication. Third-party models, voices, generated
+   artwork and other media are not automatically covered by the MIT grant; check
+   their attribution and redistribution conditions before reusing them.
+3. **Live acceptance testing:** the owner confirmed the intended real Windows
+   voice workflow works. This is separate from the automated results above and
+   does not verify every provider or hardware combination. Realtime protocol/model
+   support remains experimental and version dependent.
 4. **One writer per data root:** Electron and the terminal share an in-process
    storage coordinator only. Run one host per `APP_DATA_DIR`, or use separate
    roots; there is no cross-process transaction lock.
@@ -121,7 +125,6 @@ run on GitHub**, because this work was not pushed.
    speech still sends transcripts/context/images online. Review account tools
    and readable local history, retained audio, exports and debug output before
    handling sensitive content.
-6. **Distribution:** source publication and a packaged Windows release are
-   different milestones. Signing, installer/update tooling and installer testing
-   are absent. The private repository should remain private until the owner makes
-   a separate publication decision.
+6. **Distribution:** the source repository is public. A packaged Windows release
+   is a separate milestone: signing, installer/update tooling and installer
+   testing are absent.
