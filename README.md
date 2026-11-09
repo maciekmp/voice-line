@@ -122,4 +122,8 @@ Select a test with `npm.cmd test -- test-app-storage.ts`. The `probe:imagegen` a
 - Some natural-language image requests can return an incomplete answer or claim success without an image. Use `/image <description>` to select the explicit generation path.
 - Attachments are limited to one image per question and 32 MiB before/after conversion. PDF/DOCX imports and continuous screen monitoring are unsupported; old image pixels are resent only when explicitly attached again.
 - History is temporary. Storage, audio kept by `SAVE_AUDIO=1`, debug output and exports require care when sharing.
-- No project license has been selected. Public release also requires a decision about media redistribution/attribution and resolution of the [security/history review](docs/SECURITY-REVIEW.md). The repository remains private.
+- Source code is licensed under MIT; see [LICENSE](LICENSE). Third-party components, models, voices and documentation media require their own rights/attribution review before redistribution. The repository remains private pending a separate publication decision.
+
+## License
+
+Voice Line source code and original text documentation are licensed under the [MIT License](LICENSE), copyright 2026 Maciej Płusa. Third-party software, models and voices retain their own licenses. The MIT grant does not assert redistribution rights over screenshots, video, narration, generated artwork or other media; see [documentation media](docs/media/README.md).
