@@ -1,5 +1,15 @@
 # Publication readiness review
 
+## Status update — 9 November 2026
+
+- PR #1 was merged into `master`; GitHub Windows checks passed on Node 22.18.0 and 26.x.
+- The owner confirmed that the selected documentation materials were reviewed and that the intended real Windows voice workflow works. These are owner confirmations, separate from the automated checks below.
+- MIT was selected for source code and original text documentation; see [LICENSE](../LICENSE). Third-party models, voices and documentation media are not automatically covered by that grant.
+- Git history has been retained without rewriting. Historical identifying metadata remains as described in the security review.
+- Repository visibility remains private. Publication and any media redistribution require a separate decision.
+
+The original report below records the local review checkpoint; statements about not yet pushing or running GitHub CI refer to that earlier checkpoint.
+
 Reviewed on **9 November 2026** in the existing Windows checkout, starting from
 application commit `0549748`, on `chore/publication-readiness`. No repository was
 cloned, no changes were pushed, and repository visibility was not changed.
