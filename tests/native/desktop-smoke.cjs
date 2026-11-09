@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createDesktopFixture } = require('../helpers/desktop-fixture.cjs');
+const { synchronizeRenderer } = require('../helpers/renderer-sync.cjs');
 
 async function verifyDesktop(host) {
   const { app, panelWindow, clipboard, dialog, nativeImage, profileDirectory, sessionDirectory,
@@ -23,6 +24,33 @@ async function verifyDesktop(host) {
   };
   const wait = (ms = 150) => new Promise(resolve => setTimeout(resolve, ms));
   const evaluate = code => panelWindow.webContents.executeJavaScript(code);
+  async function sampleDeliveredAudio(message) {
+    // executeJavaScript is not a delivery barrier for webContents.send. Capture
+    // the level inside the IPC callback, after the production audio listener,
+    // so this still checks immediate attack from a single delivered sample.
+    await evaluate(`(() => {
+      window.audioLevelSample = null;
+      window.stopAudioLevelSample = window.voiceDesktop.onLevel(input => {
+        window.stopAudioLevelSample();
+        window.audioLevelSample = { input,
+          level: Number(document.querySelector('#audio-indicator').style.getPropertyValue('--audio-level')),
+          variant: document.querySelector('#audio-indicator').dataset.variant,
+          hidden: document.hidden, reducedMotion: matchMedia('(prefers-reduced-motion: reduce)').matches };
+      });
+    })()`);
+    try {
+      onEngineMessage(message);
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const sample = await evaluate('window.audioLevelSample');
+        if (sample) return sample;
+        await wait(10);
+      }
+      assert.fail('Timed out waiting for the renderer to receive audio IPC');
+    } finally {
+      await evaluate('window.stopAudioLevelSample(); delete window.stopAudioLevelSample; delete window.audioLevelSample;');
+    }
+  }
   assert.equal(app.getPath('userData'), profileDirectory);
   assert.equal(app.getPath('sessionData'), sessionDirectory);
   assert.equal(panelWindow.webContents.session.getStoragePath(), sessionDirectory);
@@ -56,8 +84,9 @@ async function verifyDesktop(host) {
         'Effects retain a single selected choice');
       sendVoice({ state: 'listening', question: 'Test audio', answer: '' });
       await panelWindow.webContents.debugger.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
-      onEngineMessage({ type: 'level', source: 'listening', level: .12 });
-      assert.ok(await audioLevel() > .3, variant + ': quiet microphone syllables respond immediately');
+      const quietSample = await sampleDeliveredAudio({ type: 'level', source: 'listening', level: .12 });
+      assert.equal(quietSample.input, .12, 'The renderer received the single quiet microphone sample');
+      assert.ok(quietSample.level > .3, variant + ': quiet microphone syllables respond immediately: ' + JSON.stringify(quietSample));
       onEngineMessage({ type: 'level', source: 'listening', level: 1 });
       await wait(450);
       assert.ok(await audioLevel() > .9, variant + ': measured audio drives feedback');
@@ -845,4 +874,8 @@ async function verifyDesktop(host) {
     cache: sessionDirectory, bounds: panelWindow.getBounds(), captures: outputDirectory }));
 }
 
-module.exports = { verifyDesktop };
+module.exports = { verifyDesktop: async host => {
+  const cleanup = await synchronizeRenderer(host.panelWindow.webContents);
+  try { await verifyDesktop(host); }
+  finally { await cleanup(); }
+} };
